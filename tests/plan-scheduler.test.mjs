@@ -24,7 +24,8 @@ import {
   resetNode,
   renderVisualizerHtml,
   runWorker,
-  startNode
+  startNode,
+  summarizeGraph
 } from "../scripts/plan-scheduler.mjs";
 import { buildPlanarLayout, renderPlanarSvg } from "../scripts/sp-layout.mjs";
 
@@ -33,6 +34,8 @@ const execFileAsync = promisify(execFile);
 function fixtureGraph() {
   return {
     graphVersion: 1,
+    title: "Fixture Implementation Plan",
+    description: "Coordinate fixture work across a series root, parallel branches, and a final gate.",
     scheduler: { leaseSeconds: 1 },
     graph: {
       root: "ROOT",
@@ -58,6 +61,24 @@ async function withTempGraph(fn) {
     await rm(dir, { recursive: true, force: true });
   }
 }
+
+async function waitFor(predicate, timeoutMs = 5000) {
+  const startedAt = Date.now();
+  while (Date.now() - startedAt < timeoutMs) {
+    const value = await predicate();
+    if (value) {
+      return value;
+    }
+    await new Promise((resolveWait) => setTimeout(resolveWait, 50));
+  }
+  throw new Error("Timed out waiting for condition");
+}
+
+test("graph summary includes plan metadata", () => {
+  const summary = summarizeGraph(fixtureGraph());
+  assert.equal(summary.title, "Fixture Implementation Plan");
+  assert.equal(summary.description, "Coordinate fixture work across a series root, parallel branches, and a final gate.");
+});
 
 test("series-parallel readiness exposes only legal leaf nodes", async () => {
   await withTempGraph(async (graphPath) => {
@@ -235,6 +256,88 @@ test("visualizer answer API answers a blocked task", async () => {
   });
 });
 
+test("visualizer worker API starts managed workers from shared settings", async () => {
+  await withTempGraph(async (graphPath, dir) => {
+    const fakeRunnerPath = join(dir, "fake-managed-runner.mjs");
+    await writeFile(fakeRunnerPath, "console.log('managed worker saw ' + (process.argv.at(-1).includes('Node: A') ? 'A' : 'unknown'));\n", "utf8");
+
+    const visualizer = await createVisualizerServer({ graphPath, port: 0, defaultWorkerCwd: dir });
+    try {
+      const startResponse = await fetch(`${visualizer.url}/api/workers/start`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          count: 2,
+          sessionPrefix: "ui",
+          cwd: dir,
+          once: true,
+          codexCommand: process.execPath,
+          codexArgs: [fakeRunnerPath]
+        })
+      });
+      assert.equal(startResponse.status, 200);
+      const started = await startResponse.json();
+      assert.equal(started.started.length, 2);
+      assert.deepEqual(started.started.map((worker) => worker.session), ["ui-01", "ui-02"]);
+
+      const manager = await waitFor(async () => {
+        const payload = await (await fetch(`${visualizer.url}/api/graph`)).json();
+        return payload.workerManager.workers.length === 2 && payload.workerManager.workers.every((worker) => worker.status === "exited")
+          ? payload.workerManager
+          : undefined;
+      });
+      assert.equal(manager.defaults.cwd, dir);
+      assert.ok(manager.workers.some((worker) => worker.logTail.some((entry) => entry.text.includes("managed worker saw A"))));
+
+      const graph = await readGraph(graphPath);
+      assert.equal(graph.graph.nodes.A.status, "done");
+    } finally {
+      await visualizer.close();
+    }
+  });
+});
+
+test("visualizer worker API stops daemon workers", async () => {
+  await withTempGraph(async (graphPath, dir) => {
+    const graph = fixtureGraph();
+    for (const node of Object.values(graph.graph.nodes)) {
+      node.status = "done";
+    }
+    await writeFile(graphPath, `${JSON.stringify(graph, null, 2)}\n`, "utf8");
+
+    const visualizer = await createVisualizerServer({ graphPath, port: 0, defaultWorkerCwd: dir });
+    try {
+      await fetch(`${visualizer.url}/api/workers/start`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          count: 1,
+          sessionPrefix: "daemon",
+          cwd: dir,
+          quiet: true,
+          idleMs: 1000,
+          codexCommand: process.execPath,
+          codexArgs: ["-e", "console.log('unused')"]
+        })
+      });
+      let manager = await (await fetch(`${visualizer.url}/api/workers`)).json();
+      assert.equal(manager.workers.length, 1);
+      assert.equal(manager.workers[0].status, "running");
+
+      const stopResponse = await fetch(`${visualizer.url}/api/workers/stop-all`, { method: "POST" });
+      assert.equal(stopResponse.status, 200);
+
+      manager = await waitFor(async () => {
+        const payload = await (await fetch(`${visualizer.url}/api/workers`)).json();
+        return payload.workers[0]?.status === "exited" ? payload : undefined;
+      });
+      assert.equal(manager.workers[0].signal, "SIGTERM");
+    } finally {
+      await visualizer.close();
+    }
+  });
+});
+
 test("expired leases are released back to pending", async () => {
   await withTempGraph(async (graphPath) => {
     await claimNode(graphPath, { session: "codex-A", leaseSeconds: 1 });
@@ -394,7 +497,11 @@ test("CLI decompose updates a claimed leaf graph", async () => {
 test("prompt command renders an external template", async () => {
   await withTempGraph(async (graphPath, dir) => {
     const templatePath = join(dir, "task-template.md");
-    await writeFile(templatePath, "Session={{session}} Node={{nodeId}} Title={{nodeTitle}} Report={{reportPath}}\n", "utf8");
+    await writeFile(
+      templatePath,
+      "Session={{session}} Node={{nodeId}} Title={{nodeTitle}} Plan={{planTitle}} Description={{planDescription}} Report={{reportPath}}\n",
+      "utf8"
+    );
 
     const prompt = await buildWorkerPrompt(graphPath, {
       nodeId: "A",
@@ -406,6 +513,8 @@ test("prompt command renders an external template", async () => {
     assert.match(prompt, /Session=codex-A/);
     assert.match(prompt, /Node=A/);
     assert.match(prompt, /Title=Bootstrap/);
+    assert.match(prompt, /Plan=Fixture Implementation Plan/);
+    assert.match(prompt, /Description=Coordinate fixture work across a series root, parallel branches, and a final gate\./);
     assert.match(prompt, /Report=reports\/A.md/);
 
     const { stdout } = await execFileAsync(process.execPath, [
@@ -424,7 +533,8 @@ test("prompt command renders an external template", async () => {
       "--report",
       "reports/A.md"
     ]);
-    assert.match(stdout, /Session=codex-A Node=A Title=Bootstrap Report=reports\/A.md/);
+    assert.match(stdout, /Session=codex-A Node=A Title=Bootstrap Plan=Fixture Implementation Plan/);
+    assert.match(stdout, /Description=Coordinate fixture work across a series root, parallel branches, and a final gate\. Report=reports\/A.md/);
   });
 });
 
@@ -561,6 +671,8 @@ test("visualizer builds graph payload and real-time HTML shell", async () => {
     assert.match(html, /EventSource\("\/events"\)/);
     assert.match(html, /Ready Leaf Nodes/);
     assert.match(html, /Active Sessions/);
+    assert.match(html, /Worker Manager/);
+    assert.match(html, /\/api\/workers\/start/);
     assert.match(html, /id="graph"/);
 
     await claimNode(graphPath, { session: "codex-A", nodeId: "A" });
@@ -569,6 +681,7 @@ test("visualizer builds graph payload and real-time HTML shell", async () => {
     assert.deepEqual(payload.ready.map((node) => node.id), []);
     assert.deepEqual(payload.working.map((node) => node.id), ["A"]);
     assert.equal(payload.working[0].session, "codex-A");
+    assert.deepEqual(payload.workerManager.workers, []);
     assert.match(payload.graphSvg, /<svg class="sp-graph"/);
   });
 });

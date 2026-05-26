@@ -7,7 +7,7 @@ It is designed for operator-supervised work where many Codex CLI workers, script
 independent tasks, keep moving in parallel, ask for human attention only when needed, and leave behind durable reports.
 The graph remains inspectable, versionable, and recoverable from plain files.
 
-`plan.graph.json` is the source of truth. The checked-in graph is a compact launch-checklist example: small enough to scan, but large enough to show series order, parallel branches, nested branch-local sequencing, and a post-build integration gate. `plan.html` is the generated readable view.
+`plan.graph.json` is the source of truth. Its top-level `title` and `description` orient agents and tools before they inspect the graph topology. The checked-in graph is a compact launch-checklist example: small enough to scan, but large enough to show series order, parallel branches, nested branch-local sequencing, and a post-build integration gate. `plan.html` is the generated readable view.
 
 ## Operating model
 
@@ -102,6 +102,14 @@ npm run worker -- --session codex-A --cwd /Users/jasonhan/Documents/Blackjack > 
 npm run worker -- --session codex-B --cwd /Users/jasonhan/Documents/Blackjack > runs/logs/codex-B.log 2>&1 &
 npm run worker -- --session codex-C --cwd /Users/jasonhan/Documents/Blackjack > runs/logs/codex-C.log 2>&1 &
 ```
+
+Or start the visualizer with a default repository path and use the Worker Manager panel to launch and stop a pool from the browser:
+
+```bash
+npm run serve -- --graph /path/to/plan.graph.json --cwd /Users/jasonhan/Documents/Blackjack --port 8787
+```
+
+The worker manager stores the repository path, session prefix, count, Codex command, and Codex arguments in the browser. Starting ten or fifty workers is one form submission instead of ten or fifty shell commands, and each managed worker appears with its process id, state, and recent output.
 
 Add `--graph /path/to/plan.graph.json` to those commands, or set `PLAN_GRAPH`, when running a graph outside this package directory.
 

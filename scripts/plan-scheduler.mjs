@@ -101,6 +101,8 @@ export function summarizeGraph(graph) {
 
   return {
     graphVersion: graph.graphVersion,
+    title: graph.title,
+    description: graph.description,
     totalNodes: Object.keys(graph.graph.nodes).length,
     root: graph.graph.root,
     counts
@@ -281,6 +283,8 @@ export async function buildWorkerPrompt(graphPath, { nodeId, session, runId, tem
     session: session || node.lease?.session || "codex",
     reportPath: reportPath || defaultReportPath(nodeId, runId || node.lease?.runId || "manual"),
     schedulerCommand: `node ${resolve(rootDir, "scripts/plan-scheduler.mjs")}`,
+    planTitle: graph.title || "",
+    planDescription: graph.description || "",
     nodeTitle: node.title || nodeId,
     nodeKind: node.kind || "task",
     nodeStatus: node.status || "pending",
@@ -565,11 +569,12 @@ export function renderVisualizerHtml() {
     }
     .layout {
       display: grid;
-      grid-template-columns: 1fr 340px;
+      grid-template-columns: minmax(0, 1fr) 340px;
       gap: 18px;
       align-items: start;
     }
     .panel {
+      min-width: 0;
       background: var(--paper);
       border: 1px solid var(--line);
       border-radius: 8px;
@@ -674,43 +679,65 @@ export function renderVisualizerHtml() {
       margin-top: 16px;
       padding-top: 16px;
     }
-    .ready-list,
-    .working-list {
+    .manager-form {
       display: grid;
-      gap: 8px;
+      gap: 9px;
       margin-top: 12px;
     }
-    .ready-item,
-    .working-item {
-      border: 1px solid var(--line);
-      border-radius: 8px;
-      padding: 9px;
-      background: #fbfcfd;
-    }
-    .working-item .badge {
-      display: inline-block;
-      margin-bottom: 5px;
-    }
-    .answer-form {
+    .field-row {
       display: grid;
+      grid-template-columns: 1fr 1fr;
       gap: 8px;
-      margin-top: 10px;
     }
-    .answer-form textarea {
+    .field {
+      display: grid;
+      gap: 4px;
+    }
+    label {
+      color: var(--muted);
+      font-size: 12px;
+      font-weight: 800;
+      text-transform: uppercase;
+    }
+    input,
+    textarea {
       width: 100%;
-      min-height: 76px;
-      resize: vertical;
       border: 1px solid var(--line);
       border-radius: 8px;
-      padding: 8px;
+      padding: 7px 8px;
       color: var(--ink);
       font: inherit;
       font-size: 13px;
       line-height: 1.35;
       background: #fff;
     }
-    .answer-form button {
-      justify-self: end;
+    textarea {
+      min-height: 68px;
+      resize: vertical;
+    }
+    .checkbox-row {
+      display: flex;
+      gap: 12px;
+      align-items: center;
+      flex-wrap: wrap;
+    }
+    .checkbox-row label {
+      display: flex;
+      gap: 6px;
+      align-items: center;
+      text-transform: none;
+      font-size: 13px;
+    }
+    .checkbox-row input {
+      width: auto;
+    }
+    .button-row {
+      display: flex;
+      gap: 8px;
+      justify-content: flex-end;
+      flex-wrap: wrap;
+    }
+    button {
       border: 0;
       border-radius: 8px;
       padding: 7px 12px;
@@ -721,10 +748,62 @@ export function renderVisualizerHtml() {
       font-weight: 800;
       cursor: pointer;
     }
-    .answer-form button:disabled {
+    button.secondary {
+      border: 1px solid var(--line);
+      background: #fff;
+      color: var(--ink);
+    }
+    button.danger {
+      background: var(--failed);
+    }
+    button:disabled {
       cursor: wait;
       opacity: 0.65;
     }
+    .ready-list,
+    .working-list,
+    .worker-list {
+      display: grid;
+      gap: 8px;
+      margin-top: 12px;
+    }
+    .ready-item,
+    .working-item,
+    .worker-item {
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 9px;
+      background: #fbfcfd;
+    }
+    .working-item .badge,
+    .worker-item .badge {
+      display: inline-block;
+      margin-bottom: 5px;
+    }
+    .worker-heading {
+      display: flex;
+      justify-content: space-between;
+      gap: 8px;
+      align-items: flex-start;
+    }
+    .log-tail {
+      margin-top: 8px;
+      max-height: 96px;
+      overflow: auto;
+      border-radius: 8px;
+      background: #101820;
+      color: #dbe7f2;
+      padding: 8px;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      font-size: 11px;
+      white-space: pre-wrap;
+    }
+    .answer-form {
+      display: grid;
+      gap: 8px;
+      margin-top: 10px;
+    }
+    .answer-form button { justify-self: end; }
     @media (max-width: 900px) {
       header, .layout { display: block; }
       .summary { justify-content: flex-start; margin-top: 12px; }
@@ -747,6 +826,49 @@ export function renderVisualizerHtml() {
     </section>
     <aside class="panel">
       <section class="sidebar-section">
+        <h2 style="margin: 0 0 8px; font-size: 18px;">Worker Manager</h2>
+        <div id="worker-manager-summary" class="meta"></div>
+        <form id="worker-manager-form" class="manager-form">
+          <div class="field-row">
+            <div class="field">
+              <label for="worker-count">Workers</label>
+              <input id="worker-count" name="count" type="number" min="1" max="100" step="1" value="4">
+            </div>
+            <div class="field">
+              <label for="worker-prefix">Session Prefix</label>
+              <input id="worker-prefix" name="sessionPrefix" value="codex">
+            </div>
+          </div>
+          <div class="field">
+            <label for="worker-cwd">Repository</label>
+            <input id="worker-cwd" name="cwd" autocomplete="off">
+          </div>
+          <div class="field-row">
+            <div class="field">
+              <label for="worker-command">Command</label>
+              <input id="worker-command" name="codexCommand" value="codex">
+            </div>
+            <div class="field">
+              <label for="worker-idle-ms">Idle Ms</label>
+              <input id="worker-idle-ms" name="idleMs" type="number" min="250" step="250" value="5000">
+            </div>
+          </div>
+          <div class="field">
+            <label for="worker-codex-args">Args</label>
+            <textarea id="worker-codex-args" name="codexArgs">exec</textarea>
+          </div>
+          <div class="checkbox-row">
+            <label><input type="checkbox" name="quiet"> Quiet</label>
+            <label><input type="checkbox" name="once"> Once</label>
+          </div>
+          <div class="button-row">
+            <button class="secondary" type="button" id="stop-all-workers">Stop All</button>
+            <button type="submit">Start</button>
+          </div>
+        </form>
+        <div id="workers" class="worker-list"></div>
+      </section>
+      <section class="sidebar-section">
         <h2 style="margin: 0 0 8px; font-size: 18px;">Active Sessions</h2>
         <p>Claimed, running, blocked, review, and failed nodes.</p>
         <div id="working" class="working-list"></div>
@@ -760,6 +882,8 @@ export function renderVisualizerHtml() {
   </div>
 </main>
 <script>
+  let workerDefaultsHydrated = false;
+
   function escapeHtml(value) {
     return String(value)
       .replaceAll("&", "&amp;")
@@ -802,6 +926,58 @@ export function renderVisualizerHtml() {
     }).join("");
   }
 
+  function hydrateWorkerDefaults(manager) {
+    if (workerDefaultsHydrated || !manager) {
+      return;
+    }
+    workerDefaultsHydrated = true;
+    const saved = JSON.parse(localStorage.getItem("spgWorkerManager") || "{}");
+    document.getElementById("worker-cwd").value = saved.cwd || manager.defaults.cwd || "";
+    document.getElementById("worker-prefix").value = saved.sessionPrefix || manager.defaults.sessionPrefix || "codex";
+    document.getElementById("worker-command").value = saved.codexCommand || manager.defaults.codexCommand || "codex";
+    document.getElementById("worker-codex-args").value = Array.isArray(saved.codexArgs) ? saved.codexArgs.join("\\n") : "exec";
+    document.getElementById("worker-count").value = saved.count || 4;
+    document.getElementById("worker-idle-ms").value = saved.idleMs || 5000;
+    document.querySelector("[name=quiet]").checked = Boolean(saved.quiet);
+    document.querySelector("[name=once]").checked = Boolean(saved.once);
+  }
+
+  function statusClass(status) {
+    if (status === "running" || status === "stopping") {
+      return "running";
+    }
+    if (status === "exited") {
+      return "done";
+    }
+    return "failed";
+  }
+
+  function renderWorkerManager(manager) {
+    hydrateWorkerDefaults(manager);
+    const workers = manager?.workers || [];
+    const running = workers.filter((worker) => worker.status === "running" || worker.status === "stopping").length;
+    document.getElementById("worker-manager-summary").textContent = running + " running / " + workers.length + " managed";
+    if (!workers.length) {
+      document.getElementById("workers").innerHTML = '<p>No managed workers.</p>';
+      return;
+    }
+    document.getElementById("workers").innerHTML = workers.map((worker) => {
+      const pid = worker.pid ? '<div class="meta">pid: ' + escapeHtml(worker.pid) + '</div>' : "";
+      const cwd = worker.cwd ? '<div class="meta">repo: ' + escapeHtml(worker.cwd) + '</div>' : "";
+      const exit = worker.exitCode !== undefined && worker.exitCode !== null ? '<div class="meta">exit: ' + escapeHtml(worker.exitCode) + '</div>' : "";
+      const signal = worker.signal ? '<div class="meta">signal: ' + escapeHtml(worker.signal) + '</div>' : "";
+      const log = worker.logTail?.length ? '<div class="log-tail">' + escapeHtml(worker.logTail.map((entry) => entry.text).join("")) + '</div>' : "";
+      const stop = worker.status === "running" || worker.status === "stopping"
+        ? '<button class="danger" type="button" data-stop-worker="' + escapeHtml(worker.id) + '">Stop</button>'
+        : "";
+      return '<div class="worker-item">' +
+        '<div class="worker-heading"><div><span class="badge status-' + statusClass(worker.status) + '">' + escapeHtml(worker.status) + '</span>' +
+        '<div><strong>' + escapeHtml(worker.session) + '</strong></div></div>' + stop + '</div>' +
+        pid + cwd + exit + signal + log +
+        '</div>';
+    }).join("");
+  }
+
   function renderSummary(summary) {
     const counts = summary.counts || {};
     return Object.keys(counts).sort().map((status) => '<span class="pill">' + escapeHtml(status) + ': ' + counts[status] + '</span>').join("");
@@ -813,6 +989,7 @@ export function renderVisualizerHtml() {
     document.getElementById("graph").innerHTML = payload.graphSvg;
     document.getElementById("working").innerHTML = renderWorking(payload.working);
     document.getElementById("ready").innerHTML = renderReady(payload.ready);
+    renderWorkerManager(payload.workerManager);
   }
 
   async function load() {
@@ -850,6 +1027,58 @@ export function renderVisualizerHtml() {
     }
   });
 
+  document.getElementById("worker-manager-form").addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const form = event.currentTarget;
+    const body = {
+      count: Number(form.count.value || 1),
+      sessionPrefix: form.sessionPrefix.value.trim() || "codex",
+      cwd: form.cwd.value.trim(),
+      codexCommand: form.codexCommand.value.trim() || "codex",
+      codexArgs: form.codexArgs.value.split(/\\r?\\n/).map((line) => line.trim()).filter(Boolean),
+      idleMs: Number(form.idleMs.value || 5000),
+      quiet: form.quiet.checked,
+      once: form.once.checked
+    };
+    localStorage.setItem("spgWorkerManager", JSON.stringify(body));
+    const button = form.querySelector("button[type=submit]");
+    button.disabled = true;
+    try {
+      const response = await fetch("/api/workers/start", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(body)
+      });
+      if (!response.ok) {
+        throw new Error(await response.text());
+      }
+      await load();
+    } catch (error) {
+      document.getElementById("subtitle").textContent = "Worker start failed: " + (error.message || String(error));
+    } finally {
+      button.disabled = false;
+    }
+  });
+
+  document.addEventListener("click", async (event) => {
+    const stopButton = event.target.closest("[data-stop-worker]");
+    if (!stopButton) {
+      return;
+    }
+    stopButton.disabled = true;
+    await fetch("/api/workers/stop", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ id: stopButton.dataset.stopWorker })
+    });
+    await load();
+  });
+
+  document.getElementById("stop-all-workers").addEventListener("click", async () => {
+    await fetch("/api/workers/stop-all", { method: "POST" });
+    await load();
+  });
+
   load();
   const events = new EventSource("/events");
   events.onmessage = (event) => render(JSON.parse(event.data));
@@ -861,11 +1090,198 @@ export function renderVisualizerHtml() {
 </html>`;
 }
 
-export async function createVisualizerServer({ graphPath = defaultGraphPath, port = 8787, host = "127.0.0.1" } = {}) {
+function createWorkerManager({ graphPath, defaultCwd, onChange } = {}) {
+  const workers = new Map();
+  let counter = 0;
+
+  function nextWorkerId() {
+    counter += 1;
+    return `worker-${Date.now()}-${counter}`;
+  }
+
+  function nextSession(prefix) {
+    const base = safeFilePart(prefix || "codex");
+    let index = 1;
+    const existing = new Set([...workers.values()].map((worker) => worker.session));
+    while (existing.has(`${base}-${String(index).padStart(2, "0")}`)) {
+      index += 1;
+    }
+    return `${base}-${String(index).padStart(2, "0")}`;
+  }
+
+  function appendLog(worker, stream, chunk) {
+    worker.logTail.push({ at: new Date().toISOString(), stream, text: String(chunk) });
+    if (worker.logTail.length > 80) {
+      worker.logTail.splice(0, worker.logTail.length - 80);
+    }
+  }
+
+  function notify() {
+    Promise.resolve(onChange?.()).catch(() => {});
+  }
+
+  function startWorkers(options = {}) {
+    const count = Math.max(1, Math.min(100, Number(options.count || 1)));
+    const started = [];
+    for (let index = 0; index < count; index += 1) {
+      const id = nextWorkerId();
+      const session = nextSession(options.sessionPrefix);
+      const cwd = resolve(options.cwd || defaultCwd || dirname(graphPath));
+      const workerArgs = [
+        fileURLToPath(import.meta.url),
+        "worker",
+        "--graph",
+        graphPath,
+        "--session",
+        session,
+        "--cwd",
+        cwd
+      ];
+
+      if (options.once) {
+        workerArgs.push("--once");
+      }
+      if (options.quiet) {
+        workerArgs.push("--quiet");
+      }
+      if (options.nodeId) {
+        workerArgs.push("--node", String(options.nodeId));
+      }
+      if (options.idleMs) {
+        workerArgs.push("--idle-ms", String(options.idleMs));
+      }
+      if (options.leaseSeconds) {
+        workerArgs.push("--lease", String(options.leaseSeconds));
+      }
+      if (options.templatePath) {
+        workerArgs.push("--template", String(options.templatePath));
+      }
+      if (options.codexCommand) {
+        workerArgs.push("--codex-command", String(options.codexCommand));
+      }
+
+      const codexArgs = Array.isArray(options.codexArgs) && options.codexArgs.length > 0
+        ? options.codexArgs
+        : ["exec"];
+      for (const arg of codexArgs) {
+        workerArgs.push("--codex-arg", String(arg));
+      }
+
+      const child = spawn(process.execPath, workerArgs, {
+        cwd: rootDir,
+        env: process.env,
+        stdio: ["ignore", "pipe", "pipe"]
+      });
+      const worker = {
+        id,
+        session,
+        pid: child.pid,
+        status: "running",
+        cwd,
+        startedAt: new Date().toISOString(),
+        command: process.execPath,
+        args: workerArgs,
+        child,
+        logTail: []
+      };
+      workers.set(id, worker);
+      started.push(publicWorker(worker));
+
+      child.stdout?.on("data", (chunk) => {
+        appendLog(worker, "stdout", chunk);
+        notify();
+      });
+      child.stderr?.on("data", (chunk) => {
+        appendLog(worker, "stderr", chunk);
+        notify();
+      });
+      child.on("error", (error) => {
+        worker.status = "error";
+        worker.error = error.message;
+        worker.finishedAt = new Date().toISOString();
+        notify();
+      });
+      child.on("exit", (code, signal) => {
+        worker.status = "exited";
+        worker.exitCode = code;
+        worker.signal = signal;
+        worker.finishedAt = new Date().toISOString();
+        delete worker.child;
+        notify();
+      });
+    }
+
+    notify();
+    return started;
+  }
+
+  function stopWorker(id) {
+    const worker = workers.get(id);
+    if (!worker) {
+      throw new Error(`Unknown worker: ${id}`);
+    }
+    if (worker.child && worker.status === "running") {
+      worker.status = "stopping";
+      worker.stoppingAt = new Date().toISOString();
+      worker.child.kill("SIGTERM");
+    }
+    notify();
+    return publicWorker(worker);
+  }
+
+  function stopAll() {
+    const stopped = [];
+    for (const worker of workers.values()) {
+      if (worker.child && worker.status === "running") {
+        worker.status = "stopping";
+        worker.stoppingAt = new Date().toISOString();
+        worker.child.kill("SIGTERM");
+      }
+      stopped.push(publicWorker(worker));
+    }
+    notify();
+    return stopped;
+  }
+
+  function status() {
+    return {
+      defaults: {
+        cwd: defaultCwd || dirname(graphPath),
+        sessionPrefix: "codex",
+        codexCommand: "codex"
+      },
+      workers: [...workers.values()]
+        .map(publicWorker)
+        .sort((left, right) => left.startedAt.localeCompare(right.startedAt))
+    };
+  }
+
+  return { startWorkers, stopWorker, stopAll, status };
+}
+
+function publicWorker(worker) {
+  return {
+    id: worker.id,
+    session: worker.session,
+    pid: worker.pid,
+    status: worker.status,
+    cwd: worker.cwd,
+    startedAt: worker.startedAt,
+    finishedAt: worker.finishedAt,
+    stoppingAt: worker.stoppingAt,
+    exitCode: worker.exitCode,
+    signal: worker.signal,
+    error: worker.error,
+    logTail: worker.logTail
+  };
+}
+
+export async function createVisualizerServer({ graphPath = defaultGraphPath, port = 8787, host = "127.0.0.1", defaultWorkerCwd } = {}) {
   const clients = new Set();
+  let workerManager;
 
   async function send(client) {
-    const data = JSON.stringify(await buildVisualizerPayload(graphPath));
+    const data = JSON.stringify(await buildVisualizerPayload(graphPath, workerManager));
     client.write(`data: ${data}\n\n`);
   }
 
@@ -879,6 +1295,12 @@ export async function createVisualizerServer({ graphPath = defaultGraphPath, por
     }
   }
 
+  workerManager = createWorkerManager({
+    graphPath,
+    defaultCwd: defaultWorkerCwd || dirname(graphPath),
+    onChange: broadcast
+  });
+
   const server = createServer(async (req, res) => {
     try {
       const url = new URL(req.url || "/", `http://${host}:${port}`);
@@ -891,7 +1313,39 @@ export async function createVisualizerServer({ graphPath = defaultGraphPath, por
 
       if (req.method === "GET" && url.pathname === "/api/graph") {
         res.writeHead(200, { "content-type": "application/json; charset=utf-8", "cache-control": "no-store" });
-        res.end(JSON.stringify(await buildVisualizerPayload(graphPath)));
+        res.end(JSON.stringify(await buildVisualizerPayload(graphPath, workerManager)));
+        return;
+      }
+
+      if (req.method === "GET" && url.pathname === "/api/workers") {
+        res.writeHead(200, { "content-type": "application/json; charset=utf-8", "cache-control": "no-store" });
+        res.end(JSON.stringify(workerManager.status()));
+        return;
+      }
+
+      if (req.method === "POST" && url.pathname === "/api/workers/start") {
+        const body = await readRequestJson(req);
+        const started = workerManager.startWorkers(body);
+        await broadcast();
+        res.writeHead(200, { "content-type": "application/json; charset=utf-8", "cache-control": "no-store" });
+        res.end(JSON.stringify({ started, workerManager: workerManager.status() }));
+        return;
+      }
+
+      if (req.method === "POST" && url.pathname === "/api/workers/stop") {
+        const body = await readRequestJson(req);
+        const worker = workerManager.stopWorker(body.id);
+        await broadcast();
+        res.writeHead(200, { "content-type": "application/json; charset=utf-8", "cache-control": "no-store" });
+        res.end(JSON.stringify({ worker, workerManager: workerManager.status() }));
+        return;
+      }
+
+      if (req.method === "POST" && url.pathname === "/api/workers/stop-all") {
+        const stopped = workerManager.stopAll();
+        await broadcast();
+        res.writeHead(200, { "content-type": "application/json; charset=utf-8", "cache-control": "no-store" });
+        res.end(JSON.stringify({ stopped, workerManager: workerManager.status() }));
         return;
       }
 
@@ -949,6 +1403,7 @@ export async function createVisualizerServer({ graphPath = defaultGraphPath, por
     server,
     url: `http://${host}:${server.address().port}`,
     close: async () => {
+      workerManager.stopAll();
       watcher.close();
       for (const client of clients) {
         client.end();
@@ -959,14 +1414,18 @@ export async function createVisualizerServer({ graphPath = defaultGraphPath, por
   };
 }
 
-export async function buildVisualizerPayload(graphPath = defaultGraphPath) {
+export async function buildVisualizerPayload(graphPath = defaultGraphPath, workerManager) {
   const graph = await readGraph(graphPath);
   return {
     graph,
     graphSvg: renderPlanarSvg(graph),
     ready: listReadyLeafNodes(graph),
     working: listWorkingNodes(graph),
-    summary: summarizeGraph(graph)
+    summary: summarizeGraph(graph),
+    workerManager: workerManager?.status?.() || {
+      defaults: { cwd: dirname(graphPath), sessionPrefix: "codex", codexCommand: "codex" },
+      workers: []
+    }
   };
 }
 
@@ -1604,7 +2063,7 @@ async function main() {
   node scripts/plan-scheduler.mjs worker --session codex-A [--graph plan.graph.json] [--once] [--quiet] [--cwd /path/to/workspace] [--template prompts/codex-worker-task.md]
   node scripts/plan-scheduler.mjs reconcile [--graph plan.graph.json]
   node scripts/plan-scheduler.mjs release-expired
-  node scripts/plan-scheduler.mjs serve [--port 8787] [--host 127.0.0.1]`);
+  node scripts/plan-scheduler.mjs serve [--port 8787] [--host 127.0.0.1] [--cwd /path/to/workspace]`);
     return;
   }
 
@@ -1778,7 +2237,8 @@ async function main() {
     const visualizer = await createVisualizerServer({
       graphPath,
       host: args.host || "127.0.0.1",
-      port: args.port ? Number(args.port) : 8787
+      port: args.port ? Number(args.port) : 8787,
+      defaultWorkerCwd: args.cwd ? resolve(args.cwd) : dirname(graphPath)
     });
     console.log(`Plan scheduler visualizer: ${visualizer.url}`);
     return;

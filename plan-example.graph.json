@@ -2,6 +2,7 @@
   "schemaVersion": 1,
   "graphVersion": 44,
   "title": "Example: Launch Checklist Plan",
+  "description": "A compact launch-checklist plan that demonstrates a series kickoff, a parallel build phase, nested branch-local sequencing, an integration gate, and post-gate wrap-up.",
   "statusModel": [
     "pending",
     "ready",
