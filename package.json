@@ -1,0 +1,21 @@
+{
+  "name": "series-parallel-graph-scheduler",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "bin": {
+    "spg-scheduler": "./scripts/plan-scheduler.mjs",
+    "spg-render-plan": "./scripts/render-plan.mjs"
+  },
+  "scripts": {
+    "ready": "node scripts/plan-scheduler.mjs ready",
+    "summary": "node scripts/plan-scheduler.mjs summary",
+    "serve": "node scripts/plan-scheduler.mjs serve",
+    "worker": "node scripts/plan-scheduler.mjs worker",
+    "render": "node scripts/render-plan.mjs",
+    "test": "node --test --test-timeout 10000 tests/plan-scheduler.test.mjs"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}

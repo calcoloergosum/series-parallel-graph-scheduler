@@ -1,0 +1,573 @@
+{
+  "schemaVersion": 1,
+  "graphVersion": 44,
+  "title": "Example: Launch Checklist Plan",
+  "statusModel": [
+    "pending",
+    "ready",
+    "claimed",
+    "running",
+    "blocked",
+    "review",
+    "done",
+    "failed"
+  ],
+  "scheduler": {
+    "stateFile": "plan.graph.json",
+    "htmlView": "plan.html",
+    "runsDir": "runs",
+    "reportsDir": "reports",
+    "leaseSeconds": 1800,
+    "claimPolicy": "A session may claim only ready leaf nodes. Parent nodes describe series or parallel composition; child leaves are the units of work.",
+    "slackPolicy": "Use chat for attention and approvals. Canonical state remains in this graph file."
+  },
+  "graph": {
+    "root": "ROOT",
+    "nodes": {
+      "ROOT": {
+        "title": "Ship a small customer-facing launch",
+        "kind": "series",
+        "status": "done",
+        "children": [
+          "KICKOFF",
+          "BUILD",
+          "G1",
+          "WRAP"
+        ],
+        "completedAt": "2026-05-26T10:28:11.955Z",
+        "history": [
+          {
+            "at": "2026-05-26T10:28:11.955Z",
+            "event": "subtree_done"
+          }
+        ]
+      },
+      "KICKOFF": {
+        "title": "Agree on scope and acceptance checks",
+        "kind": "task",
+        "status": "done",
+        "history": [
+          {
+            "at": "2026-05-26T09:07:46.932Z",
+            "event": "claimed",
+            "session": "codex-noop-A",
+            "runId": "run_20260526_090746931_KICKOFF_12a7862d"
+          },
+          {
+            "at": "2026-05-26T09:07:46.981Z",
+            "event": "running"
+          },
+          {
+            "at": "2026-05-26T09:07:47.076Z",
+            "event": "failed"
+          },
+          {
+            "at": "2026-05-26T09:11:00.000Z",
+            "event": "reset_after_worker_command_fix"
+          },
+          {
+            "at": "2026-05-26T09:10:33.274Z",
+            "event": "claimed",
+            "session": "codex-noop-A",
+            "runId": "run_20260526_091033273_KICKOFF_c08d5902"
+          },
+          {
+            "at": "2026-05-26T09:10:33.314Z",
+            "event": "running"
+          },
+          {
+            "at": "2026-05-26T09:10:38.725Z",
+            "event": "done"
+          }
+        ],
+        "startedAt": "2026-05-26T09:10:33.314Z",
+        "completedAt": "2026-05-26T09:10:38.724Z",
+        "report": "reports/KICKOFF-run_20260526_091033273_KICKOFF_c08d5902.md"
+      },
+      "BUILD": {
+        "title": "Build the launch slice",
+        "kind": "parallel",
+        "status": "done",
+        "children": [
+          "WEB",
+          "API",
+          "DOCS"
+        ],
+        "completedAt": "2026-05-26T10:28:11.955Z",
+        "history": [
+          {
+            "at": "2026-05-26T10:28:11.955Z",
+            "event": "subtree_done"
+          }
+        ]
+      },
+      "WEB": {
+        "title": "Web experience branch",
+        "kind": "series",
+        "status": "done",
+        "children": [
+          "WEB1",
+          "WEB2"
+        ],
+        "completedAt": "2026-05-26T10:28:11.954Z",
+        "history": [
+          {
+            "at": "2026-05-26T10:28:11.955Z",
+            "event": "subtree_done"
+          }
+        ]
+      },
+      "WEB1": {
+        "title": "Create the launch page shell",
+        "kind": "task",
+        "status": "done",
+        "history": [
+          {
+            "at": "2026-05-26T09:11:12.743Z",
+            "event": "claimed",
+            "session": "codex-noop-A",
+            "runId": "run_20260526_091112742_WEB1_63e14552"
+          },
+          {
+            "at": "2026-05-26T09:11:12.785Z",
+            "event": "running"
+          },
+          {
+            "at": "2026-05-26T09:11:17.436Z",
+            "event": "done"
+          }
+        ],
+        "startedAt": "2026-05-26T09:11:12.785Z",
+        "completedAt": "2026-05-26T09:11:17.436Z",
+        "report": "reports/WEB1-run_20260526_091112742_WEB1_63e14552.md"
+      },
+      "WEB2": {
+        "title": "Wire the feedback form to the API contract",
+        "kind": "task",
+        "status": "done",
+        "history": [
+          {
+            "at": "2026-05-26T09:11:17.817Z",
+            "event": "claimed",
+            "session": "codex-noop-A",
+            "runId": "run_20260526_091117817_WEB2_54ff42b4"
+          },
+          {
+            "at": "2026-05-26T09:11:17.867Z",
+            "event": "running"
+          },
+          {
+            "at": "2026-05-26T09:11:23.798Z",
+            "event": "done"
+          }
+        ],
+        "startedAt": "2026-05-26T09:11:17.867Z",
+        "completedAt": "2026-05-26T09:11:23.797Z",
+        "report": "reports/WEB2-run_20260526_091117817_WEB2_54ff42b4.md"
+      },
+      "API": {
+        "title": "Feedback API branch",
+        "kind": "series",
+        "status": "done",
+        "children": [
+          "API1",
+          "API_PARALLEL",
+          "API4"
+        ],
+        "completedAt": "2026-05-26T10:28:11.955Z",
+        "history": [
+          {
+            "at": "2026-05-26T10:28:11.955Z",
+            "event": "subtree_done"
+          }
+        ]
+      },
+      "API1": {
+        "title": "Define request and response contract",
+        "kind": "task",
+        "status": "done",
+        "history": [
+          {
+            "at": "2026-05-26T09:11:24.132Z",
+            "event": "claimed",
+            "session": "codex-noop-A",
+            "runId": "run_20260526_091124132_API1_759afed4"
+          },
+          {
+            "at": "2026-05-26T09:11:24.220Z",
+            "event": "running"
+          },
+          {
+            "at": "2026-05-26T09:11:28.214Z",
+            "event": "done"
+          }
+        ],
+        "startedAt": "2026-05-26T09:11:24.220Z",
+        "completedAt": "2026-05-26T09:11:28.214Z",
+        "report": "reports/API1-run_20260526_091124132_API1_759afed4.md"
+      },
+      "API_PARALLEL": {
+        "title": "API internals",
+        "kind": "parallel",
+        "status": "done",
+        "children": [
+          "API2",
+          "API3"
+        ],
+        "completedAt": "2026-05-26T10:28:11.955Z",
+        "history": [
+          {
+            "at": "2026-05-26T10:28:11.955Z",
+            "event": "subtree_done"
+          }
+        ]
+      },
+      "API2": {
+        "title": "Add input validation",
+        "kind": "task",
+        "status": "done",
+        "history": [
+          {
+            "at": "2026-05-26T09:11:28.565Z",
+            "event": "claimed",
+            "session": "codex-noop-A",
+            "runId": "run_20260526_091128565_API2_d1893c1e"
+          },
+          {
+            "at": "2026-05-26T09:11:28.611Z",
+            "event": "running"
+          },
+          {
+            "at": "2026-05-26T09:11:33.035Z",
+            "event": "done"
+          }
+        ],
+        "startedAt": "2026-05-26T09:11:28.611Z",
+        "completedAt": "2026-05-26T09:11:33.035Z",
+        "report": "reports/API2-run_20260526_091128565_API2_d1893c1e.md"
+      },
+      "API3": {
+        "title": "Persist feedback records",
+        "kind": "task",
+        "status": "done",
+        "history": [
+          {
+            "at": "2026-05-26T09:11:33.360Z",
+            "event": "claimed",
+            "session": "codex-noop-A",
+            "runId": "run_20260526_091133360_API3_b3ff4818"
+          },
+          {
+            "at": "2026-05-26T09:11:33.401Z",
+            "event": "running"
+          },
+          {
+            "at": "2026-05-26T09:11:38.684Z",
+            "event": "done"
+          }
+        ],
+        "startedAt": "2026-05-26T09:11:33.401Z",
+        "completedAt": "2026-05-26T09:11:38.684Z",
+        "report": "reports/API3-run_20260526_091133360_API3_b3ff4818.md"
+      },
+      "API4": {
+        "title": "Add API smoke test",
+        "kind": "task",
+        "status": "done",
+        "history": [
+          {
+            "at": "2026-05-26T09:11:39.012Z",
+            "event": "claimed",
+            "session": "codex-noop-A",
+            "runId": "run_20260526_091139012_API4_ee7c0a0c"
+          },
+          {
+            "at": "2026-05-26T09:11:39.052Z",
+            "event": "running"
+          },
+          {
+            "at": "2026-05-26T09:11:46.136Z",
+            "event": "done"
+          }
+        ],
+        "startedAt": "2026-05-26T09:11:39.052Z",
+        "completedAt": "2026-05-26T09:11:46.136Z",
+        "report": "reports/API4-run_20260526_091139012_API4_ee7c0a0c.md"
+      },
+      "DOCS": {
+        "title": "Write operator runbook",
+        "kind": "task",
+        "status": "done",
+        "history": [
+          {
+            "at": "2026-05-26T09:11:46.558Z",
+            "event": "claimed",
+            "session": "codex-noop-A",
+            "runId": "run_20260526_091146558_DOCS_d3c7378b"
+          },
+          {
+            "at": "2026-05-26T09:11:46.601Z",
+            "event": "running"
+          },
+          {
+            "at": "2026-05-26T09:11:51.307Z",
+            "event": "done"
+          }
+        ],
+        "startedAt": "2026-05-26T09:11:46.601Z",
+        "completedAt": "2026-05-26T09:11:51.307Z",
+        "report": "reports/DOCS-run_20260526_091146558_DOCS_d3c7378b.md"
+      },
+      "G1": {
+        "title": "Gate: end-to-end feedback loop works",
+        "kind": "gate",
+        "status": "done",
+        "history": [
+          {
+            "at": "2026-05-26T09:11:51.641Z",
+            "event": "claimed",
+            "session": "codex-noop-A",
+            "runId": "run_20260526_091151641_G1_a52df494"
+          },
+          {
+            "at": "2026-05-26T09:11:51.681Z",
+            "event": "running"
+          },
+          {
+            "at": "2026-05-26T09:11:59.964Z",
+            "event": "done"
+          }
+        ],
+        "startedAt": "2026-05-26T09:11:51.681Z",
+        "completedAt": "2026-05-26T09:11:59.963Z",
+        "report": "reports/G1-run_20260526_091151641_G1_a52df494.md"
+      },
+      "WRAP": {
+        "title": "Release wrap-up",
+        "kind": "series",
+        "status": "done",
+        "children": [
+          "WRAP1",
+          "WRAP_PARALLEL",
+          "WRAP4"
+        ],
+        "completedAt": "2026-05-26T10:28:11.955Z",
+        "history": [
+          {
+            "at": "2026-05-26T10:28:11.955Z",
+            "event": "subtree_done"
+          }
+        ]
+      },
+      "WRAP1": {
+        "title": "Run staging checklist",
+        "kind": "task",
+        "status": "done",
+        "history": [
+          {
+            "at": "2026-05-26T09:12:00.414Z",
+            "event": "claimed",
+            "session": "codex-noop-A",
+            "runId": "run_20260526_091200414_WRAP1_9aed2340"
+          },
+          {
+            "at": "2026-05-26T09:12:00.460Z",
+            "event": "running"
+          },
+          {
+            "at": "2026-05-26T09:12:06.034Z",
+            "event": "done"
+          }
+        ],
+        "startedAt": "2026-05-26T09:12:00.460Z",
+        "completedAt": "2026-05-26T09:12:06.034Z",
+        "report": "reports/WRAP1-run_20260526_091200414_WRAP1_9aed2340.md"
+      },
+      "WRAP_PARALLEL": {
+        "title": "Final review branches",
+        "kind": "parallel",
+        "status": "done",
+        "children": [
+          "WRAP2",
+          "WRAP3"
+        ],
+        "completedAt": "2026-05-26T10:28:11.955Z",
+        "history": [
+          {
+            "at": "2026-05-26T10:28:11.955Z",
+            "event": "subtree_done"
+          }
+        ]
+      },
+      "WRAP2": {
+        "title": "Accessibility pass",
+        "kind": "task",
+        "status": "done",
+        "history": [
+          {
+            "at": "2026-05-26T09:12:06.383Z",
+            "event": "claimed",
+            "session": "codex-noop-A",
+            "runId": "run_20260526_091206383_WRAP2_89269f18"
+          },
+          {
+            "at": "2026-05-26T09:12:06.430Z",
+            "event": "running"
+          },
+          {
+            "at": "2026-05-26T09:12:10.419Z",
+            "event": "done"
+          }
+        ],
+        "startedAt": "2026-05-26T09:12:06.430Z",
+        "completedAt": "2026-05-26T09:12:10.419Z",
+        "report": "reports/WRAP2-run_20260526_091206383_WRAP2_89269f18.md"
+      },
+      "WRAP3": {
+        "title": "Verify launch metrics event",
+        "kind": "task",
+        "status": "done",
+        "history": [
+          {
+            "at": "2026-05-26T09:12:10.751Z",
+            "event": "claimed",
+            "session": "codex-noop-A",
+            "runId": "run_20260526_091210751_WRAP3_e9098e8f"
+          },
+          {
+            "at": "2026-05-26T09:12:10.790Z",
+            "event": "running"
+          },
+          {
+            "at": "2026-05-26T09:12:14.948Z",
+            "event": "done"
+          }
+        ],
+        "startedAt": "2026-05-26T09:12:10.790Z",
+        "completedAt": "2026-05-26T09:12:14.948Z",
+        "report": "reports/WRAP3-run_20260526_091210751_WRAP3_e9098e8f.md"
+      },
+      "WRAP4": {
+        "title": "Publish release note",
+        "kind": "task",
+        "status": "done",
+        "history": [
+          {
+            "at": "2026-05-26T09:12:15.312Z",
+            "event": "claimed",
+            "session": "codex-noop-A",
+            "runId": "run_20260526_091215312_WRAP4_45f4915d"
+          },
+          {
+            "at": "2026-05-26T09:12:15.353Z",
+            "event": "running"
+          },
+          {
+            "at": "2026-05-26T09:12:21.033Z",
+            "event": "done"
+          }
+        ],
+        "startedAt": "2026-05-26T09:12:15.353Z",
+        "completedAt": "2026-05-26T09:12:21.033Z",
+        "report": "reports/WRAP4-run_20260526_091215312_WRAP4_45f4915d.md"
+      }
+    }
+  },
+  "document": {
+    "pageTitle": "Series-Parallel Graph Scheduler Example",
+    "nav": [
+      {
+        "label": "Report",
+        "href": "report.html"
+      },
+      {
+        "label": "Policy",
+        "href": "policy.html"
+      }
+    ],
+    "meta": [
+      {
+        "label": "Source",
+        "value": "Generated from plan.graph.json"
+      },
+      {
+        "label": "Scope",
+        "value": "Small customer-facing launch"
+      },
+      {
+        "label": "Method",
+        "value": "Nested series-parallel graph"
+      }
+    ],
+    "intro": [
+      "This compact example is intentionally small enough to read in one sitting, but it still demonstrates the scheduler's useful shape: a series kickoff, a parallel build phase, nested series work inside a branch, an integration gate, and a post-gate wrap-up.",
+      "At the start, only KICKOFF is ready. Once it is done, WEB1, API1, and DOCS become independently claimable. Later, API2 and API3 can run in parallel after API1 completes, while WEB and DOCS continue on their own paths."
+    ],
+    "notation": {
+      "heading": "Notation",
+      "columns": [
+        "Notation",
+        "Meaning"
+      ],
+      "rows": [
+        [
+          "<code>S(a, b, c)</code>",
+          "Series composition. Complete <code>a</code>, then <code>b</code>, then <code>c</code>."
+        ],
+        [
+          "<code>P(a, b, c)</code>",
+          "Parallel composition. <code>a</code>, <code>b</code>, and <code>c</code> can proceed independently after their local prerequisites."
+        ],
+        [
+          "<code>Gx</code>",
+          "Integration gate. A contract point where separate branches must work together before later work opens."
+        ]
+      ]
+    },
+    "sections": [
+      {
+        "heading": "Root Graph",
+        "paragraphs": [
+          "The whole plan is a series: align on scope, build independent branches, pass an end-to-end gate, then complete release wrap-up."
+        ],
+        "flow": "S(\n  KICKOFF: Agree on scope and acceptance checks,\n  P(\n    WEB: Web experience branch,\n    API: Feedback API branch,\n    DOCS: Write operator runbook\n  ),\n  G1: Feedback loop works end-to-end,\n  WRAP: Release wrap-up\n)"
+      },
+      {
+        "heading": "Build Phase",
+        "paragraphs": [
+          "The build phase is where the scheduler earns its keep. Three branches can move at once, but each branch can still enforce its own local order."
+        ],
+        "flow": "BUILD = P(\n  S(WEB1: page shell, WEB2: feedback form integration),\n  S(API1: API contract, P(API2: validation, API3: persistence), API4: smoke test),\n  DOCS: operator runbook\n)"
+      },
+      {
+        "heading": "Gate And Wrap-Up",
+        "paragraphs": [
+          "The gate waits for the complete build subtree. After the gate is done, staging starts first, then accessibility and metrics verification can split before the release note closes the plan."
+        ],
+        "flow": "WRAP = S(\n  WRAP1: staging checklist,\n  P(WRAP2: accessibility pass, WRAP3: metrics event verification),\n  WRAP4: release note\n)"
+      }
+    ],
+    "gates": {
+      "heading": "Integration Gates",
+      "columns": [
+        "Gate",
+        "Depends On",
+        "Unlocks"
+      ],
+      "rows": [
+        [
+          "G1: End-to-end feedback loop",
+          "WEB2, API4, and DOCS are complete.",
+          "WRAP1 can start, followed by final review and release-note work."
+        ]
+      ]
+    },
+    "callouts": [
+      {
+        "type": "callout",
+        "strong": "Try it:",
+        "bodyHtml": "Run <code>npm run ready</code>, complete <code>KICKOFF</code>, then run <code>npm run ready</code> again. The ready list expands from one task into independent WEB, API, and DOCS leaves."
+      }
+    ]
+  }
+}

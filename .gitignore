@@ -1,0 +1,21 @@
+.env
+.env.*
+!.env.example
+
+node_modules/
+
+# Scheduler runtime output
+plan.graph.json
+plan.html
+runs/
+logs/
+reports/
+*.log
+*.tmp
+*.lock
+plan.graph.json.lock/
+
+# OS/editor noise
+.DS_Store
+.idea/
+.vscode/
