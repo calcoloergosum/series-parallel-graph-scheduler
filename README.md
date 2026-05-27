@@ -456,8 +456,9 @@ In `--isolation git`, the worker validates the remote before claim, initializes
 or refreshes `runs/git/cache/repo.git`, creates a fresh clone under
 `runs/workspaces/<safe-session>/<safe-node-id>/<safe-run-id>`, checks out a
 unique `spg/node/<node-id>/<run-id>` branch, runs the child command inside that
-clone, and records the clone, base ref, work ref, and output ref in the report.
-Operators do not pre-create the cache repository or workspaces.
+clone, auto-commits any dirty workspace changes on successful exit, and records
+the clone, base ref, work ref, and output ref in the report. Operators do not
+pre-create the cache repository or workspaces.
 
 Parent composition is buffered through Git refs instead of a shared branch.
 `series` parents pass each child output ref to the next child and publish the

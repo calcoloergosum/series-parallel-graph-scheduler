@@ -752,7 +752,8 @@ export async function finalizeWorkerRun(
         name: published.outputRef,
         commit: published.commit,
         source: noOp ? "no-op-base" : "worker-commit",
-        noOp
+        noOp,
+        ...(published.autoCommitted ? { autoCommitted: true } : {})
       };
     } catch (error) {
       finalizedRun = {
@@ -900,6 +901,9 @@ export function formatWorkerReport({
     }
     if (refMetadata?.outputRef?.noOp === true) {
       sections.push(`- No-op output: true`);
+    }
+    if (refMetadata?.outputRef?.autoCommitted === true) {
+      sections.push(`- Auto-committed workspace changes: true`);
     }
     if (isolation?.integrationRef) {
       sections.push(`- Integration ref: ${reportInlineValue(isolation.integrationRef)}`);

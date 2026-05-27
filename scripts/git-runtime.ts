@@ -83,6 +83,7 @@ export interface PublishOutputRefResult {
   workRef: string;
   outputRef: string;
   commit: string;
+  autoCommitted?: boolean;
 }
 
 export class GitRuntimeError extends Error {
@@ -244,12 +245,13 @@ export async function publishOutputRef({
   outputRef = workRef,
   git = runGitCommand
 }: PublishOutputRefOptions): Promise<PublishOutputRefResult> {
+  const autoCommitted = await commitDirtyWorkspace({ cloneCwd, workRef, git });
   const commit = await revParseCommit({ cloneCwd, ref: workRef, git });
   await git({
     args: ["-C", cloneCwd, "push", "origin", `${workRef}:${outputRef}`],
     failurePrefix: `Worker isolation output ref publication failed for ${outputRef}:`
   });
-  return { workRef, outputRef, commit };
+  return { workRef, outputRef, commit, ...(autoCommitted ? { autoCommitted } : {}) };
 }
 
 export function buildNodeWorkBranchName(nodeId: string, runId: string): string {
@@ -352,6 +354,44 @@ async function revParseCommit({ cloneCwd, ref, git }: { cloneCwd: string; ref: s
     failurePrefix: `Worker isolation ref resolution failed for ${ref}:`
   });
   return result.stdout.trim();
+}
+
+async function commitDirtyWorkspace({
+  cloneCwd,
+  workRef,
+  git
+}: {
+  cloneCwd: string;
+  workRef: string;
+  git: GitRunner;
+}): Promise<boolean> {
+  const status = await git({
+    args: ["-C", cloneCwd, "status", "--porcelain=v1", "--untracked-files=all"],
+    failurePrefix: `Worker isolation workspace status failed for ${workRef}:`
+  });
+  if (!status.stdout.trim()) {
+    return false;
+  }
+
+  await git({
+    args: ["-C", cloneCwd, "add", "-A"],
+    failurePrefix: `Worker isolation workspace staging failed for ${workRef}:`
+  });
+  await git({
+    args: [
+      "-C",
+      cloneCwd,
+      "-c",
+      "user.name=Series Parallel Graph Scheduler",
+      "-c",
+      "user.email=spg-scheduler@example.invalid",
+      "commit",
+      "-m",
+      `spg worker output ${workRef}`
+    ],
+    failurePrefix: `Worker isolation workspace commit failed for ${workRef}:`
+  });
+  return true;
 }
 
 export function validateGitRemote(remote: unknown): string {

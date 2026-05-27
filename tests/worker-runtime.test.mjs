@@ -1557,6 +1557,59 @@ test("concurrent git-isolated workers use distinct clones, branches, and output 
   });
 });
 
+test("git-isolated worker auto-commits dirty successful workspace before publishing", async () => {
+  await withLocalBareRemote(async ({ dir, remotePath }) => {
+    const graphDir = join(dir, "graph");
+    const graphPath = join(graphDir, "plan.graph.json");
+    const fakeRunnerPath = join(dir, "fake-dirty-isolated-runner.mjs");
+    await mkdir(graphDir);
+    await writeWorkerIsolationGraph(graphPath, remotePath);
+    await writeFile(
+      fakeRunnerPath,
+      [
+        "import { mkdirSync, writeFileSync } from 'node:fs';",
+        "const prompt = process.argv.at(-1) || '';",
+        "const nodeId = prompt.match(/^- Node: (.+)$/m)?.[1] || 'unknown';",
+        "const runId = prompt.match(/^- Run: (.+)$/m)?.[1] || 'unknown';",
+        "mkdirSync('docs', { recursive: true });",
+        "writeFileSync(`worker-output-${nodeId}.txt`, `node=${nodeId}\nrun=${runId}\n`);",
+        "writeFileSync('docs/uncommitted.md', `# ${nodeId}\n`);",
+        "console.log(`dirty node=${nodeId}`);"
+      ].join("\n"),
+      "utf8"
+    );
+
+    const result = await runWorker(graphPath, {
+      session: "iso-dirty",
+      once: true,
+      isolation: "git",
+      stream: false,
+      codexCommand: process.execPath,
+      codexArgs: [fakeRunnerPath]
+    });
+
+    assert.equal(result.results[0].status, "done");
+    const graph = await readGraph(graphPath);
+    const node = graph.graph.nodes.A;
+    assert.equal(node.status, "done");
+    assert.equal(node.outputRef.name, node.workRef.name);
+    assert.equal(node.outputRef.noOp, false);
+    assert.equal(node.outputRef.source, "worker-commit");
+    assert.equal(node.outputRef.autoCommitted, true);
+    assert.notEqual(node.outputRef.commit, node.baseRef.commit);
+
+    assert.match(await gitShow(node.workspace.bareRepo, node.outputRef.name, "worker-output-A.txt"), /node=A/);
+    assert.equal(await gitShow(node.workspace.bareRepo, node.outputRef.name, "docs/uncommitted.md"), "# A\n");
+
+    const status = await execFileAsync("git", ["status", "--porcelain=v1"], { cwd: node.workspace.cloneCwd });
+    assert.equal(status.stdout, "");
+
+    const report = await readFile(join(graphDir, node.report), "utf8");
+    assert.match(report, /- Auto-committed workspace changes: true/);
+    assert.doesNotMatch(report, /- No-op output: true/);
+  });
+});
+
 test("git-isolated no-op worker still publishes the run output ref at the base commit", async () => {
   await withLocalBareRemote(async ({ dir, remotePath }) => {
     const graphDir = join(dir, "graph");

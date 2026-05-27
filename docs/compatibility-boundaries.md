@@ -410,6 +410,7 @@ The worker command should continue to:
 - Spawn worker and Codex subprocesses with argument arrays and no shell interpolation. User-controlled command strings, args, remotes, paths, and prompt text must never be concatenated into a shell command by the scheduler.
 - Inherit the scheduler process environment for worker and Codex subprocesses. The scheduler is not an environment sandbox; operators should use OS accounts, containers, or wrapper commands to narrow environment access when needed.
 - Renew its lease while Codex is running.
+- In Git-isolated mode, auto-commit dirty workspace changes after a successful child process and before publishing the output ref. Clean no-op work still publishes the run output ref at the base commit.
 - Treat no ready work as `{ idle: true, results: [] }` in `--once` mode.
 - Return worker results with `nodeId`, `runId`, `status`, `summary`, `code`, and `slack` when a node is finalized.
 - Use the child process working directory from `--cwd`, or the graph directory by default.
@@ -466,8 +467,9 @@ Operator-facing examples must show how to set `scheduler.remote`, may show
 `--remote` as a per-process override, and must state that cache and clone setup is
 automatic once a concrete Git remote is available.
 
-Each isolated worker run checks out a unique node branch and publishes the
-resulting node output ref without pushing directly to the shared base branch:
+Each isolated worker run checks out a unique node branch, auto-commits dirty
+workspace changes after a successful child process, and publishes the resulting
+node output ref without pushing directly to the shared base branch:
 
 ```text
 spg/node/<node-id>/<run-id>

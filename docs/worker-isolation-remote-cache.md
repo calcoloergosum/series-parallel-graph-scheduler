@@ -140,8 +140,10 @@ isolated worker prepares the claimed run in this order:
 4. Create the work branch from the resolved base commit:
    `refs/heads/spg/node/<ref-node-id>/<run-id>`.
 5. Run the child command with the workspace as its current working directory.
-6. On a successful child result, publish the work branch back to the local bare
-   repository as the node `outputRef`.
+6. On a successful child result, stage and commit any dirty workspace changes
+   to the work branch using the scheduler commit identity.
+7. Publish the work branch back to the local bare repository as the node
+   `outputRef`.
 
 The public branch pattern is:
 
