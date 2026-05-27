@@ -88,10 +88,11 @@ The visualizer exposes these write-capable HTTP routes. They are unauthenticated
 - `POST /api/workers/stop`: sends `SIGTERM` to one managed worker process.
 - `POST /api/workers/stop-all`: sends `SIGTERM` to every managed worker process.
 - `POST /api/node/claim`, `/start`, `/renew`, `/done`, `/block`, `/answer`, `/fail`, `/reset`, `/reset-subtree`, `/reset-reachable`, and `/decompose`: expose the matching scheduler node mutations through injected runtime handlers. `POST /api/answer` remains a legacy alias for `POST /api/node/answer`.
+- `POST /api/graph/reconcile` and `POST /api/leases/release-expired`: expose graph-level operational recovery commands through injected runtime handlers.
 
 Read-only visualizer routes are `GET /`, `GET /index.html`, `GET /api/graph`, `GET /api/workers`, and `GET /events`. They can still disclose graph state, report paths, worker process ids, repository paths, and recent worker output.
 
-When the visualizer is bound to a non-loopback host, read-only routes are intentionally reachable without a token by every client that can connect to the host and port. The write token is not an authentication system for read access; it only gates worker start, worker stop, stop-all, and node mutations.
+When the visualizer is bound to a non-loopback host, read-only routes are intentionally reachable without a token by every client that can connect to the host and port. The write token is not an authentication system for read access; it only gates worker start, worker stop, stop-all, node mutations, and graph-level recovery mutations.
 
 Safe exposed visualizer command:
 
@@ -132,7 +133,7 @@ client can use unauthenticated write controls.
 | Mode | Rating | Rationale |
 | --- | --- | --- |
 | `serve --host 127.0.0.1` or default `npm run serve` | Medium | The unauthenticated API is reachable only from the local machine, but any local process, browser extension, or same-browser web context that can reach loopback may read state or submit mutating requests while the server is running. |
-| `serve --host 0.0.0.0 --visualizer-write-token TOKEN` | High | Read-only graph and worker state remain reachable from other machines, but start, stop, and node mutation routes return HTTP 403 unless the request includes the token. |
+| `serve --host 0.0.0.0 --visualizer-write-token TOKEN` | High | Read-only graph and worker state remain reachable from other machines, but start, stop, node mutation, and graph-level recovery routes return HTTP 403 unless the request includes the token. |
 | `serve --host 0.0.0.0 --unsafe-visualizer-write` | Critical | The unauthenticated start, stop, node mutation, graph, worker, and log-tail surfaces become reachable from other machines on accessible networks. Use only when every reachable client is trusted. |
 
 ## Trust Boundary Evidence Map

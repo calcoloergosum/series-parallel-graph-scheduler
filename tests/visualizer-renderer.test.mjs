@@ -1,6 +1,52 @@
 import test from "node:test";
 import { assert, assertInvalidFixtureFailure, blockNode, buildPlanarLayout, buildSlackNotificationText, buildVisualizerPayload, claimNode, copyGraphFixtureToTemp, createServer, createVisualizerServer, execFileAsync, existsSync, fixtureGraph, formatWorkerReport, invalidGraphValidatorOutcomes, isLocalVisualizerHost, join, mkdtemp, readFile, readGraph, readdir, renderPlanarSvg, renderVisualizerHtml, rendererDocumentFixture, rendererScriptPath, rm, runVisualizerClientScript, schedulerScriptPath, sendSlackNotification, tmpdir, visualizerHostSecurityWarning, waitFor, withTempGraph, writeFile } from "./helpers/plan-scheduler-harness.mjs";
 
+async function openSseJsonStream(baseUrl) {
+  const controller = new AbortController();
+  const response = await fetch(`${baseUrl}/events`, { signal: controller.signal });
+  assert.equal(response.status, 200);
+  assert.ok(response.body);
+
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+
+  return {
+    async nextJson() {
+      while (true) {
+        const separatorIndex = buffer.indexOf("\n\n");
+        if (separatorIndex >= 0) {
+          const rawEvent = buffer.slice(0, separatorIndex);
+          buffer = buffer.slice(separatorIndex + 2);
+          const data = rawEvent
+            .split("\n")
+            .filter((line) => line.startsWith("data:"))
+            .map((line) => line.slice("data:".length).trimStart())
+            .join("\n");
+          if (data) {
+            return JSON.parse(data);
+          }
+          continue;
+        }
+
+        const { done, value } = await reader.read();
+        if (done) {
+          throw new Error("SSE stream closed before the next event");
+        }
+        buffer += decoder.decode(value, { stream: true });
+      }
+    },
+    async close() {
+      controller.abort();
+      try {
+        await reader.cancel();
+      } catch {
+        // The abort above may already have closed the stream.
+      }
+    }
+  };
+}
+
 test("invalid graph fixtures fail scheduler and renderer paths before writes", async (t) => {
   for (const outcome of invalidGraphValidatorOutcomes()) {
     await t.test(outcome.fixture, async () => {
@@ -170,6 +216,75 @@ test("visualizer node mutation routes use scheduler transitions", async () => {
   });
 });
 
+test("visualizer graph and lease operational routes refresh renderer output and broadcast SSE", async () => {
+  await withTempGraph(async (graphPath, dir) => {
+    const graph = fixtureGraph();
+    graph.document = rendererDocumentFixture();
+    for (const nodeId of ["A", "B", "C", "G"]) {
+      graph.graph.nodes[nodeId].status = "done";
+    }
+    await writeFile(graphPath, `${JSON.stringify(graph, null, 2)}\n`, "utf8");
+
+    const visualizer = await createVisualizerServer({ graphPath, port: 0 });
+    const sse = await openSseJsonStream(visualizer.url);
+    try {
+      await sse.nextJson();
+      const response = await fetch(`${visualizer.url}/api/graph/reconcile`, { method: "POST" });
+      assert.equal(response.status, 200);
+
+      const result = await response.json();
+      assert.deepEqual(new Set(result.changed), new Set(["P", "ROOT"]));
+      assert.equal(result.summary.counts.done, 6);
+
+      const payload = await sse.nextJson();
+      assert.equal(payload.graph.graph.nodes.ROOT.status, "done");
+      assert.equal(payload.summary.counts.done, 6);
+      assert.equal(existsSync(join(dir, "plan.html")), true);
+    } finally {
+      await sse.close();
+      await visualizer.close();
+    }
+  });
+
+  await withTempGraph(async (graphPath, dir) => {
+    const graph = fixtureGraph();
+    graph.document = rendererDocumentFixture();
+    graph.graph.nodes.A.status = "running";
+    graph.graph.nodes.A.startedAt = "2000-01-01T00:00:00.000Z";
+    graph.graph.nodes.A.lease = {
+      session: "codex-expired",
+      runId: "run-expired",
+      claimedAt: "2000-01-01T00:00:00.000Z",
+      renewedAt: "2000-01-01T00:00:00.000Z",
+      expiresAt: "2000-01-01T00:00:01.000Z"
+    };
+    await writeFile(graphPath, `${JSON.stringify(graph, null, 2)}\n`, "utf8");
+    await writeFile(join(dir, "plan.html"), "stale renderer output", "utf8");
+
+    const visualizer = await createVisualizerServer({ graphPath, port: 0 });
+    const sse = await openSseJsonStream(visualizer.url);
+    try {
+      const initialPayload = await sse.nextJson();
+      assert.deepEqual(initialPayload.working.map((node) => node.id), ["A"]);
+
+      const response = await fetch(`${visualizer.url}/api/leases/release-expired`, { method: "POST" });
+      assert.equal(response.status, 200);
+
+      const result = await response.json();
+      assert.deepEqual(result.released, ["A"]);
+      assert.equal(result.summary.counts.pending, 6);
+
+      const payload = await sse.nextJson();
+      assert.deepEqual(payload.working, []);
+      assert.deepEqual(payload.ready.map((node) => node.id), ["A"]);
+      assert.match(await readFile(join(dir, "plan.html"), "utf8"), /Invalid Graph/);
+    } finally {
+      await sse.close();
+      await visualizer.close();
+    }
+  });
+});
+
 test("visualizer warns when worker controls bind beyond loopback", async () => {
   assert.equal(isLocalVisualizerHost("127.0.0.1"), true);
   assert.equal(isLocalVisualizerHost("localhost"), true);
@@ -252,6 +367,15 @@ test("visualizer write token protects mutation routes", async () => {
       });
       assert.equal(forbiddenNodeReset.status, 403);
 
+      const forbiddenGraphReconcile = await fetch(`${url}/api/graph/reconcile`, { method: "POST" });
+      assert.equal(forbiddenGraphReconcile.status, 403);
+
+      const forbiddenReleaseExpired = await fetch(`${url}/api/leases/release-expired`, {
+        method: "POST",
+        headers: { "x-spg-visualizer-token": "wrong-token" }
+      });
+      assert.equal(forbiddenReleaseExpired.status, 403);
+
       const answerResponse = await fetch(`${url}/api/answer`, {
         method: "POST",
         headers: { "content-type": "application/json", "authorization": "Bearer secret-token" },
@@ -259,6 +383,12 @@ test("visualizer write token protects mutation routes", async () => {
       });
       assert.equal(answerResponse.status, 200);
       assert.equal((await answerResponse.json()).answer, "Yes, use cache.");
+
+      const reconcileResponse = await fetch(`${url}/api/graph/reconcile`, {
+        method: "POST",
+        headers: { "x-spg-visualizer-token": "secret-token" }
+      });
+      assert.equal(reconcileResponse.status, 200);
 
       const stopAllResponse = await fetch(`${url}/api/workers/stop-all`, {
         method: "POST",

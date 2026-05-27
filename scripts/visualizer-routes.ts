@@ -17,6 +17,8 @@ import type {
   NodeMutationResult,
   PlanGraphFile,
   ReadyNode,
+  ReconcileGraphResult,
+  ReleaseExpiredLeasesResult,
   RenewLeaseResult,
   ResetNodeResult,
   ResetSubtreeResult,
@@ -109,6 +111,8 @@ export interface VisualizerRuntime {
     session?: string;
     runId?: string;
   }): Promise<DecomposeNodeResult>;
+  reconcileGraphStatus(graphPath: string): Promise<ReconcileGraphResult>;
+  releaseExpiredLeases(graphPath: string): Promise<ReleaseExpiredLeasesResult>;
   renderPlanAfterUpdate(graphPath: string): Promise<void>;
   sendSlackNotification(
     graphPath: string,
@@ -504,6 +508,32 @@ export async function createVisualizerServer({
         };
         await runtime.renderPlanAfterUpdate(graphPath);
         result.slack = await runtime.sendSlackNotification(graphPath, operationalEvents.decomposed, { nodeId });
+        await broadcast();
+        res.writeHead(200, { "content-type": "application/json; charset=utf-8", "cache-control": "no-store" });
+        res.end(JSON.stringify(result));
+        return;
+      }
+
+      if (req.method === "POST" && url.pathname === "/api/graph/reconcile") {
+        if (!authorizeWriteRequest(req, res, requiredWriteToken)) {
+          return;
+        }
+        await readRequestJson(req);
+        const result = await runtime.reconcileGraphStatus(graphPath);
+        await runtime.renderPlanAfterUpdate(graphPath);
+        await broadcast();
+        res.writeHead(200, { "content-type": "application/json; charset=utf-8", "cache-control": "no-store" });
+        res.end(JSON.stringify(result));
+        return;
+      }
+
+      if (req.method === "POST" && url.pathname === "/api/leases/release-expired") {
+        if (!authorizeWriteRequest(req, res, requiredWriteToken)) {
+          return;
+        }
+        await readRequestJson(req);
+        const result = await runtime.releaseExpiredLeases(graphPath);
+        await runtime.renderPlanAfterUpdate(graphPath);
         await broadcast();
         res.writeHead(200, { "content-type": "application/json; charset=utf-8", "cache-control": "no-store" });
         res.end(JSON.stringify(result));

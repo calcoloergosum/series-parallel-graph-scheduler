@@ -286,6 +286,8 @@ function visualizerRuntime() {
     resetSubtree,
     resetReachable,
     decomposeNode,
+    reconcileGraphStatus,
+    releaseExpiredLeases,
     renderPlanAfterUpdate,
     sendSlackNotification: (
       graphPath: string,
