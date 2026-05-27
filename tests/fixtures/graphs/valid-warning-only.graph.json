@@ -1,0 +1,75 @@
+{
+  "graphVersion": 1,
+  "title": "Valid Warning Only Fixture",
+  "graph": {
+    "root": "ROOT",
+    "nodes": {
+      "ROOT": {
+        "title": "Warning root",
+        "kind": "series",
+        "status": "pending",
+        "children": [
+          "CUSTOM_KIND",
+          "TASK_PARENT",
+          "GATE_PARENT",
+          "DONE_WITH_LEASE"
+        ]
+      },
+      "CUSTOM_KIND": {
+        "title": "Future wrapper",
+        "kind": "future-wrapper",
+        "status": "waiting-for-signal",
+        "children": [
+          "CUSTOM_CHILD"
+        ]
+      },
+      "CUSTOM_CHILD": {
+        "title": "Future wrapper child",
+        "kind": "task",
+        "status": "pending"
+      },
+      "TASK_PARENT": {
+        "title": "Task parent",
+        "kind": "task",
+        "status": "pending",
+        "children": [
+          "TASK_CHILD"
+        ]
+      },
+      "TASK_CHILD": {
+        "title": "Task child",
+        "kind": "task",
+        "status": "pending"
+      },
+      "GATE_PARENT": {
+        "title": "Gate parent",
+        "kind": "gate",
+        "status": "pending",
+        "children": [
+          "GATE_CHILD"
+        ]
+      },
+      "GATE_CHILD": {
+        "title": "Gate child",
+        "kind": "task",
+        "status": "pending"
+      },
+      "DONE_WITH_LEASE": {
+        "title": "Done node with old lease metadata",
+        "kind": "task",
+        "status": "done",
+        "lease": {
+          "session": "legacy-worker",
+          "runId": "run_valid_warning_only",
+          "claimedAt": "2026-05-27T00:00:00.000Z",
+          "expiresAt": "2999-01-01T00:00:00.000Z"
+        }
+      },
+      "ORPHAN": {
+        "title": "Unreachable warning node",
+        "kind": "task",
+        "status": "snoozed"
+      }
+    }
+  }
+}

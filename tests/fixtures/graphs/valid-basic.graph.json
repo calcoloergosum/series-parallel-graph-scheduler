@@ -1,0 +1,86 @@
+{
+  "graphVersion": 1,
+  "title": "Valid Basic Fixture",
+  "description": "Valid graph covering non-empty series and parallel topology, timestamps, leases, and history.",
+  "scheduler": {
+    "leaseSeconds": 60
+  },
+  "document": {
+    "pageTitle": "Valid Basic Fixture",
+    "intro": [
+      "Renderer fixture."
+    ],
+    "sections": [
+      {
+        "heading": "Fixture",
+        "paragraphs": [
+          "This graph should render."
+        ]
+      }
+    ]
+  },
+  "graph": {
+    "root": "ROOT",
+    "nodes": {
+      "ROOT": {
+        "title": "Root series",
+        "kind": "series",
+        "status": "pending",
+        "children": [
+          "SETUP",
+          "FANOUT",
+          "FINAL_GATE",
+          "CLAIMED"
+        ]
+      },
+      "SETUP": {
+        "title": "Setup",
+        "kind": "task",
+        "status": "pending",
+        "startedAt": "2026-05-27T00:00:00.000Z",
+        "history": [
+          {
+            "at": "2026-05-27T00:00:00.000Z",
+            "event": "created"
+          }
+        ]
+      },
+      "FANOUT": {
+        "title": "Parallel fanout",
+        "kind": "parallel",
+        "status": "pending",
+        "children": [
+          "LEFT",
+          "RIGHT"
+        ]
+      },
+      "LEFT": {
+        "title": "Left branch",
+        "kind": "task",
+        "status": "pending"
+      },
+      "RIGHT": {
+        "title": "Right branch",
+        "kind": "task",
+        "status": "pending"
+      },
+      "FINAL_GATE": {
+        "title": "Final gate",
+        "kind": "gate",
+        "status": "pending"
+      },
+      "CLAIMED": {
+        "title": "Claimed legacy-compatible work",
+        "kind": "task",
+        "status": "claimed",
+        "lease": {
+          "session": "codex-fixture",
+          "runId": "run_valid_fixture",
+          "claimedAt": "2026-05-27T00:00:00.000Z",
+          "expiresAt": "2999-01-01T00:00:00.000Z",
+          "renewedAt": "2026-05-27T00:01:00.000Z"
+        }
+      }
+    }
+  }
+}

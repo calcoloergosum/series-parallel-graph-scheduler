@@ -1,0 +1,12 @@
+{
+  "graph": {
+    "root": "MISSING_ROOT",
+    "nodes": {
+      "ROOT": {
+        "title": "Root",
+        "kind": "task",
+        "status": "pending"
+      }
+    }
+  }
+}

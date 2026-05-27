@@ -1,36 +1,51 @@
+import { execFileSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
+import { mkdir } from "node:fs/promises";
+import { dirname, join } from "node:path";
 
-import type {
-  AnswerNodeResult,
-  DecomposeNodeResult,
-  GraphNode,
-  LeaseClaimResult,
-  NodeId,
-  NodeKind,
-  NodeMutationResult,
-  NodeStatus,
-  PlanGraphFile,
-  ReconcileGraphResult,
-  ReleaseExpiredLeasesResult,
-  RenewLeaseResult,
-  ResetNodeResult,
-  ResetSubtreeResult
-} from "./contracts.js";
-import { defaultGraphPath, readGraph, withGraphLock, writeGraphAtomic } from "./graph-io.js";
 import {
-  autoReleasableStatuses,
+  knownNodeStatuses,
+  type AnswerNodeResult,
+  type DecomposeNodeResult,
+  type GraphNode,
+  type LeaseClaimResult,
+  type NodeId,
+  type NodeIntegrationInputRefMetadata,
+  type NodeKind,
+  type NodeMutationResult,
+  type NodeStatus,
+  type NodeWorkspaceMetadata,
+  type PlanGraphFile,
+  type ReconcileGraphResult,
+  type ReleaseExpiredLeasesResult,
+  type RenewLeaseResult,
+  type ResetNodeResult,
+  type ResetSubtreeResult,
+  type WorkerRunRefMetadata
+} from "./contracts.js";
+
+import { defaultGraphPath, readGraph, withGraphLock, writeGraphAtomic, writeReportFile } from "./graph-io.js";
+import {
   findAncestorIds,
   getNode,
   isLeaf,
   listReadyLeafNodes,
+  resolveNodeBaseRef,
   summarizeGraph,
   terminalStatuses
 } from "./graph-traversal.js";
+import {
+  operationalEvents,
+  redactOperationalEventDetails,
+  type OperationalEventName
+} from "./operational-events.js";
+import { errorMessage, safeFilePart } from "./shared-utils.js";
 
 export interface ClaimNodeOptions {
   session?: string;
   nodeId?: NodeId;
   leaseSeconds?: number;
+  resolveBaseRef?: boolean;
 }
 
 export interface OwnedNodeOptions {
@@ -41,6 +56,7 @@ export interface OwnedNodeOptions {
 
 export interface CompleteNodeOptions extends OwnedNodeOptions {
   report?: string;
+  refMetadata?: WorkerRunRefMetadata;
 }
 
 export interface BlockNodeOptions extends OwnedNodeOptions {
@@ -57,10 +73,16 @@ export interface AnswerNodeOptions {
 export interface FailNodeOptions extends OwnedNodeOptions {
   reason?: string;
   report?: string;
+  refMetadata?: WorkerRunRefMetadata;
 }
 
 export interface RenewNodeLeaseOptions extends OwnedNodeOptions {
   leaseSeconds?: number;
+}
+
+export interface RecordWorkerRefMetadataOptions extends OwnedNodeOptions {
+  report?: string;
+  refMetadata?: WorkerRunRefMetadata;
 }
 
 export interface ResetNodeOptions {
@@ -74,6 +96,7 @@ export interface DecomposeChildDefinition {
   kind?: NodeKind;
   status?: NodeStatus;
   children?: NodeId[];
+  [metadata: string]: unknown;
 }
 
 export interface DecomposeNodeOptions extends OwnedNodeOptions {
@@ -91,12 +114,154 @@ interface UpdateNodeStatusOptions {
   status: NodeStatus;
   owner?: LeaseOwner;
   validate?: (graph: PlanGraphFile, node: GraphNode) => void;
-  patch?: (node: GraphNode, graph: PlanGraphFile) => void;
+  patch?: (node: GraphNode, graph: PlanGraphFile) => Record<string, unknown> | void;
 }
+
+export type SchedulerTransitionActor = "worker" | "operator" | "system";
+
+export interface SchedulerTransitionRule {
+  actor: SchedulerTransitionActor;
+  implementation: string;
+  scope: string;
+  allowedFrom: readonly string[];
+  additionalAllowedFrom?: string;
+  to: NodeStatus | "same";
+  lease: string;
+}
+
+const resettableKnownStatuses = knownNodeStatuses;
+
+// This table is the source of truth for command state guards in this module.
+// Keep generated transition docs and transition tests aligned with it.
+export const schedulerTransitionTable = {
+  claim: {
+    actor: "worker",
+    implementation: "claimNode",
+    scope: "ready leaf; claim also releases expired claimed/running leases before selecting work",
+    allowedFrom: ["pending"],
+    additionalAllowedFrom: "custom non-busy, non-terminal leaf statuses",
+    to: "claimed",
+    lease: "creates a new lease; no prior owner required"
+  },
+  start: {
+    actor: "worker",
+    implementation: "startNode",
+    scope: "leaf",
+    allowedFrom: ["claimed"],
+    to: "running",
+    lease: "requires matching session or run id when the node is leased; unleased legacy nodes are accepted"
+  },
+  renew: {
+    actor: "worker",
+    implementation: "renewNodeLease",
+    scope: "leased leaf",
+    allowedFrom: ["claimed", "running", "blocked", "review"],
+    to: "same",
+    lease: "requires an existing lease and matching session or run id"
+  },
+  done: {
+    actor: "worker",
+    implementation: "completeNode",
+    scope: "leaf",
+    allowedFrom: ["claimed", "running", "blocked", "review"],
+    to: "done",
+    lease: "requires matching session or run id when the node is leased; clears any lease"
+  },
+  block: {
+    actor: "worker",
+    implementation: "blockNode",
+    scope: "leaf",
+    allowedFrom: ["claimed", "running"],
+    to: "blocked",
+    lease: "requires matching session or run id when the node is leased; preserves any lease"
+  },
+  answer: {
+    actor: "operator",
+    implementation: "answerNode",
+    scope: "blocked leaf",
+    allowedFrom: ["blocked"],
+    to: "pending",
+    lease: "does not require owner credentials; clears any lease"
+  },
+  fail: {
+    actor: "worker",
+    implementation: "failNode",
+    scope: "leaf",
+    allowedFrom: ["claimed", "running", "blocked", "review"],
+    to: "failed",
+    lease: "requires matching session or run id when the node is leased; clears any lease"
+  },
+  reset: {
+    actor: "operator",
+    implementation: "resetNode",
+    scope: "leaf",
+    allowedFrom: resettableKnownStatuses,
+    additionalAllowedFrom: "custom statuses",
+    to: "pending",
+    lease: "does not require owner credentials; clears any lease"
+  },
+  "reset-subtree": {
+    actor: "operator",
+    implementation: "resetSubtree",
+    scope: "selected node and child-reachable descendants",
+    allowedFrom: resettableKnownStatuses,
+    additionalAllowedFrom: "custom statuses",
+    to: "pending",
+    lease: "does not require owner credentials; clears any lease in the reset set"
+  },
+  "reset-reachable": {
+    actor: "operator",
+    implementation: "resetReachable",
+    scope: "selected node, descendants, and later execution-reachable series work",
+    allowedFrom: resettableKnownStatuses,
+    additionalAllowedFrom: "custom statuses",
+    to: "pending",
+    lease: "does not require owner credentials; clears any lease in the reset set"
+  },
+  decompose: {
+    actor: "worker",
+    implementation: "decomposeNode",
+    scope: "leaf",
+    allowedFrom: ["claimed", "running"],
+    to: "pending",
+    lease: "requires matching session or run id when the node is leased; clears any lease and creates child nodes"
+  },
+  reconcile: {
+    actor: "system",
+    implementation: "reconcileGraphStatus",
+    scope: "non-leaf whose child subtrees are all done",
+    allowedFrom: ["pending", "claimed", "running", "blocked", "review", "failed"],
+    to: "done",
+    lease: "does not inspect or require leases"
+  },
+  "release-expired": {
+    actor: "system",
+    implementation: "releaseExpiredLeases",
+    scope: "nodes with expired leases",
+    allowedFrom: ["claimed", "running"],
+    to: "pending",
+    lease: "requires an expired lease; clears the lease"
+  }
+} as const satisfies Record<string, SchedulerTransitionRule>;
+
+const releaseExpiredAllowedStatuses = new Set<string>(schedulerTransitionTable["release-expired"].allowedFrom);
+const resetClearedFields = [
+  "lease",
+  "startedAt",
+  "completedAt",
+  "failedAt",
+  "failureReason",
+  "blockedAt",
+  "blockedReason",
+  "question",
+  "report",
+  "expiredAt"
+] as const;
+const compositionResetClearedFields = ["outputRef", "integrationRef"] as const;
 
 export async function claimNode(
   graphPath: string,
-  { session, nodeId, leaseSeconds }: ClaimNodeOptions = {}
+  { session, nodeId, leaseSeconds, resolveBaseRef }: ClaimNodeOptions = {}
 ): Promise<LeaseClaimResult> {
   return withGraphLock(graphPath, async () => {
     const graph = await readGraph(graphPath);
@@ -106,7 +271,7 @@ export async function claimNode(
 
     if (!target) {
       if (released.length > 0) {
-        reconcileCompletedSubtrees(graph);
+        await reconcileCompletedSubtrees(graph, graphPath);
         graph.graphVersion = (graph.graphVersion || 0) + 1;
         await writeGraphAtomic(graph, graphPath);
       }
@@ -115,10 +280,19 @@ export async function claimNode(
         : `No ready nodes to claim in graph ${graphPath}`);
     }
 
+    const resolvedBaseRef = resolveBaseRef ? resolveNodeBaseRef(graph, target.id) : undefined;
     const leaseDuration = leaseSeconds ?? graph.scheduler?.leaseSeconds ?? 1800;
     const now = new Date();
     const runId = `run_${now.toISOString().replaceAll(/[-:.]/g, "").replace("T", "_").replace("Z", "")}_${target.id}_${randomUUID().slice(0, 8)}`;
     const node = getNode(graph, target.id);
+    const previousStatus = node.status || "pending";
+    if (resolvedBaseRef) {
+      node.baseRef = {
+        ...node.baseRef,
+        ...resolvedBaseRef,
+        resolvedAt: now.toISOString()
+      };
+    }
     node.status = "claimed";
     node.lease = {
       session: session || "codex",
@@ -126,11 +300,19 @@ export async function claimNode(
       claimedAt: now.toISOString(),
       expiresAt: new Date(now.getTime() + leaseDuration * 1000).toISOString()
     };
-    appendHistory(node, "claimed", { session: node.lease.session, runId });
+    appendHistory(node, operationalEvents.claimed, {
+      previousStatus,
+      status: node.status,
+      session: node.lease.session,
+      runId,
+      leaseExpiresAt: node.lease.expiresAt,
+      baseRef: resolvedBaseRef?.name,
+      baseRefSource: resolvedBaseRef?.source
+    });
     graph.graphVersion = (graph.graphVersion || 0) + 1;
 
     await writeGraphAtomic(graph, graphPath);
-    return { nodeId: target.id, title: node.title, runId, lease: node.lease, releasedExpired: released, summary: summarizeGraph(graph) };
+    return { nodeId: target.id, title: node.title, runId, lease: node.lease, baseRef: node.baseRef, releasedExpired: released, summary: summarizeGraph(graph) };
   });
 }
 
@@ -141,20 +323,21 @@ export async function startNode(graphPath: string, { nodeId, session, runId }: O
     owner: { session, runId },
     validate: (graph, node) => {
       assertLeafNode(graph, nodeId);
-      assertStatus(node, ["claimed"], "start");
+      assertStatus(node, schedulerTransitionTable.start.allowedFrom, "start");
     },
     patch: (node) => {
       node.startedAt = new Date().toISOString();
       if (session && node.lease) {
         node.lease.session = session;
       }
+      return { startedAt: node.startedAt };
     }
   });
 }
 
 export async function completeNode(
   graphPath: string,
-  { nodeId, report, session, runId }: CompleteNodeOptions = {}
+  { nodeId, report, session, runId, refMetadata }: CompleteNodeOptions = {}
 ): Promise<NodeMutationResult> {
   return updateNodeStatus(graphPath, {
     nodeId,
@@ -162,16 +345,22 @@ export async function completeNode(
     owner: { session, runId },
     validate: (graph, node) => {
       assertLeafNode(graph, nodeId);
-      assertStatus(node, ["claimed", "running", "blocked", "review"], "complete");
+      assertStatus(node, schedulerTransitionTable.done.allowedFrom, "complete");
     },
     patch: (node) => {
       node.completedAt = new Date().toISOString();
+      applyWorkerRefMetadata(node, refMetadata, { session, runId, report, now: node.completedAt });
       if (report) {
         node.report = report;
       }
       delete node.lease;
       delete node.blockedReason;
       delete node.question;
+      return {
+        completedAt: node.completedAt,
+        report,
+        clearedFields: ["lease", "blockedReason", "question"]
+      };
     }
   });
 }
@@ -186,7 +375,7 @@ export async function blockNode(
     owner: { session, runId },
     validate: (graph, node) => {
       assertLeafNode(graph, nodeId);
-      assertStatus(node, ["claimed", "running"], "block");
+      assertStatus(node, schedulerTransitionTable.block.allowedFrom, "block");
     },
     patch: (node) => {
       node.blockedAt = new Date().toISOString();
@@ -194,6 +383,7 @@ export async function blockNode(
       if (question) {
         node.question = question;
       }
+      return { blockedAt: node.blockedAt, blockedReason: node.blockedReason, question };
     }
   });
 }
@@ -213,8 +403,9 @@ export async function answerNode(
     const graph = await readGraph(graphPath);
     const node = getNode(graph, nodeId);
     assertLeafNode(graph, nodeId);
-    assertStatus(node, ["blocked"], "answer");
+    assertStatus(node, schedulerTransitionTable.answer.allowedFrom, "answer");
 
+    const previousStatus = node.status || "pending";
     node.status = "pending";
     node.answer = String(answer);
     node.answeredAt = new Date().toISOString();
@@ -224,17 +415,24 @@ export async function answerNode(
       delete node.answeredBy;
     }
     delete node.lease;
-    appendHistory(node, "answered", { answer: node.answer, responder: node.answeredBy });
+    appendHistory(node, operationalEvents.answered, {
+      previousStatus,
+      status: node.status,
+      answer: node.answer,
+      responder: node.answeredBy,
+      answeredAt: node.answeredAt,
+      clearedFields: ["lease"]
+    });
 
     graph.graphVersion = (graph.graphVersion || 0) + 1;
     await writeGraphAtomic(graph, graphPath);
-    return { nodeId, status: node.status, answer: node.answer, summary: summarizeGraph(graph) } as AnswerNodeResult;
+    return { nodeId, status: "pending", answer: node.answer, summary: summarizeGraph(graph) };
   });
 }
 
 export async function failNode(
   graphPath: string,
-  { nodeId, reason, report, session, runId }: FailNodeOptions = {}
+  { nodeId, reason, report, session, runId, refMetadata }: FailNodeOptions = {}
 ): Promise<NodeMutationResult> {
   return updateNodeStatus(graphPath, {
     nodeId,
@@ -242,16 +440,45 @@ export async function failNode(
     owner: { session, runId },
     validate: (graph, node) => {
       assertLeafNode(graph, nodeId);
-      assertStatus(node, ["claimed", "running", "blocked", "review"], "fail");
+      assertStatus(node, schedulerTransitionTable.fail.allowedFrom, "fail");
     },
     patch: (node) => {
       node.failedAt = new Date().toISOString();
       node.failureReason = reason || "unspecified";
+      applyWorkerRefMetadata(node, refMetadata, { session, runId, report, now: node.failedAt });
       if (report) {
         node.report = report;
       }
       delete node.lease;
+      return {
+        failedAt: node.failedAt,
+        failureReason: node.failureReason,
+        report,
+        clearedFields: ["lease"]
+      };
     }
+  });
+}
+
+export async function recordWorkerRefMetadata(
+  graphPath: string,
+  { nodeId, report, session, runId, refMetadata }: RecordWorkerRefMetadataOptions = {}
+): Promise<NodeMutationResult> {
+  if (!nodeId) {
+    throw new Error("Missing node id");
+  }
+  if (!refMetadata) {
+    throw new Error("recordWorkerRefMetadata requires refMetadata");
+  }
+
+  return withGraphLock(graphPath, async () => {
+    const graph = await readGraph(graphPath);
+    const node = getNode(graph, nodeId);
+    assertLeaseOwner(node, { session, runId });
+    applyWorkerRefMetadata(node, refMetadata, { session, runId, report, now: new Date().toISOString() });
+    graph.graphVersion = (graph.graphVersion || 0) + 1;
+    await writeGraphAtomic(graph, graphPath);
+    return { nodeId, status: node.status || "pending", title: node.title, summary: summarizeGraph(graph) };
   });
 }
 
@@ -261,7 +488,7 @@ export async function releaseExpiredLeases(graphPath: string, now = new Date()):
     const released = releaseExpiredLeasesInGraph(graph, now);
 
     if (released.length > 0) {
-      reconcileCompletedSubtrees(graph);
+      await reconcileCompletedSubtrees(graph, graphPath);
       graph.graphVersion = (graph.graphVersion || 0) + 1;
       await writeGraphAtomic(graph, graphPath);
     }
@@ -285,13 +512,20 @@ export async function renewNodeLease(
     if (!node.lease) {
       throw new Error(`Cannot renew node without a lease: ${nodeId}`);
     }
-    assertStatus(node, ["claimed", "running", "blocked", "review"], "renew");
+    assertStatus(node, schedulerTransitionTable.renew.allowedFrom, "renew");
     assertLeaseOwner(node, { session, runId });
 
     const leaseDuration = leaseSeconds ?? graph.scheduler?.leaseSeconds ?? 1800;
     const now = new Date();
     node.lease.renewedAt = now.toISOString();
     node.lease.expiresAt = new Date(now.getTime() + leaseDuration * 1000).toISOString();
+    appendHistory(node, operationalEvents.renewed, {
+      status: node.status || "pending",
+      session,
+      runId,
+      renewedAt: node.lease.renewedAt,
+      leaseExpiresAt: node.lease.expiresAt
+    });
     graph.graphVersion = (graph.graphVersion || 0) + 1;
     await writeGraphAtomic(graph, graphPath);
     return { nodeId, lease: node.lease, summary: summarizeGraph(graph) };
@@ -308,15 +542,25 @@ export async function resetNode(graphPath: string, { nodeId, reason }: ResetNode
     const node = getNode(graph, nodeId);
     assertLeafNode(graph, nodeId);
 
-    resetNodeState(node, "reset", { reason: reason || "manual_reset" });
+    resetNodeState(node, operationalEvents.reset, {
+      resetScope: "node",
+      reason: reason || "manual_reset"
+    });
 
     const resetAncestors: NodeId[] = [];
     for (const ancestorId of findAncestorIds(graph, nodeId)) {
       const ancestor = getNode(graph, ancestorId);
       if (ancestor.status === "done") {
+        const previousStatus = ancestor.status;
         ancestor.status = "pending";
         delete ancestor.completedAt;
-        appendHistory(ancestor, "child_reset", { childId: nodeId });
+        const clearedFields = ["completedAt", ...clearCompositionRefMetadata(ancestor)];
+        appendHistory(ancestor, operationalEvents.childReset, {
+          previousStatus,
+          status: ancestor.status,
+          childId: nodeId,
+          clearedFields
+        });
         resetAncestors.push(ancestorId);
       }
     }
@@ -337,7 +581,8 @@ export async function resetSubtree(graphPath: string, { nodeId, reason }: ResetN
     const resetNodes = collectChildReachableNodeIds(graph, nodeId);
 
     for (const resetNodeId of resetNodes) {
-      resetNodeState(getNode(graph, resetNodeId), "reset_subtree", {
+      resetNodeState(getNode(graph, resetNodeId), operationalEvents.reset, {
+        resetScope: "subtree",
         reason: reason || "manual_subtree_reset",
         rootId: nodeId
       });
@@ -359,7 +604,8 @@ export async function resetReachable(graphPath: string, { nodeId, reason }: Rese
     const resetNodes = collectExecutionReachableNodeIds(graph, nodeId);
 
     for (const resetNodeId of resetNodes) {
-      resetNodeState(getNode(graph, resetNodeId), "reset_reachable", {
+      resetNodeState(getNode(graph, resetNodeId), operationalEvents.reset, {
+        resetScope: "reachable",
         reason: reason || "manual_reachable_reset",
         rootId: nodeId
       });
@@ -374,7 +620,7 @@ export async function resetReachable(graphPath: string, { nodeId, reason }: Rese
 export async function reconcileGraphStatus(graphPath = defaultGraphPath): Promise<ReconcileGraphResult> {
   return withGraphLock(graphPath, async () => {
     const graph = await readGraph(graphPath);
-    const changed = reconcileCompletedSubtrees(graph);
+    const changed = await reconcileCompletedSubtrees(graph, graphPath);
     if (changed.length > 0) {
       graph.graphVersion = (graph.graphVersion || 0) + 1;
       await writeGraphAtomic(graph, graphPath);
@@ -397,11 +643,13 @@ export async function decomposeNode(
     if (!isLeaf(graph, nodeId)) {
       throw new Error(`Cannot decompose non-leaf node: ${nodeId}`);
     }
-    assertStatus(node, ["claimed", "running"], "decompose");
+    assertStatus(node, schedulerTransitionTable.decompose.allowedFrom, "decompose");
     assertLeaseOwner(node, { session, runId });
 
     const normalizedChildren = normalizeChildDefinitions(children);
 
+    const previousStatus = node.status || "pending";
+    const previousKind = node.kind;
     node.kind = kind || "series";
     node.status = "pending";
     node.children = normalizedChildren.map((child) => child.id);
@@ -410,24 +658,31 @@ export async function decomposeNode(
     delete node.blockedAt;
     delete node.blockedReason;
     delete node.question;
-    appendHistory(node, "decomposed", { childIds: node.children, session, runId });
+    appendHistory(node, operationalEvents.decomposed, {
+      previousStatus,
+      status: node.status,
+      previousKind,
+      kind: node.kind,
+      childIds: node.children,
+      session,
+      runId,
+      clearedFields: ["lease", "startedAt", "blockedAt", "blockedReason", "question"]
+    });
 
     for (const child of normalizedChildren) {
       if (graph.graph.nodes[child.id]) {
         throw new Error(`Child node already exists: ${child.id}`);
       }
+      const { id: _id, ...childNode } = child;
       graph.graph.nodes[child.id] = {
-        title: child.title,
-        kind: child.kind || "task",
-        status: child.status || "pending",
-        children: child.children
+        ...childNode
       };
       if (!graph.graph.nodes[child.id].children) {
         delete graph.graph.nodes[child.id].children;
       }
     }
 
-    reconcileCompletedSubtrees(graph);
+    await reconcileCompletedSubtrees(graph, graphPath);
     graph.graphVersion = (graph.graphVersion || 0) + 1;
     await writeGraphAtomic(graph, graphPath);
     return { nodeId, children: node.children, summary: summarizeGraph(graph) };
@@ -444,24 +699,31 @@ async function updateNodeStatus(graphPath: string, { nodeId, status, owner, vali
     const node = getNode(graph, nodeId);
     validate?.(graph, node);
     assertLeaseOwner(node, owner);
+    const previousStatus = node.status || "pending";
     node.status = status;
-    patch?.(node, graph);
-    appendHistory(node, status);
-    reconcileCompletedSubtrees(graph);
+    const patchDetails = patch?.(node, graph) || {};
+    appendHistory(node, mutationEventForStatus(status), {
+      previousStatus,
+      status,
+      session: owner?.session,
+      runId: owner?.runId,
+      ...patchDetails
+    });
+    await reconcileCompletedSubtrees(graph, graphPath);
     graph.graphVersion = (graph.graphVersion || 0) + 1;
     await writeGraphAtomic(graph, graphPath);
     return { nodeId, status, title: node.title, summary: summarizeGraph(graph) };
   });
 }
 
-function reconcileCompletedSubtrees(graph: PlanGraphFile): NodeId[] {
+async function reconcileCompletedSubtrees(graph: PlanGraphFile, graphPath: string): Promise<NodeId[]> {
   const changed: NodeId[] = [];
   const rootId = graph.graph?.root;
   if (!rootId) {
     return changed;
   }
 
-  function visit(nodeId: NodeId, stack: NodeId[] = []): boolean {
+  async function visit(nodeId: NodeId, stack: NodeId[] = []): Promise<boolean> {
     if (stack.includes(nodeId)) {
       throw new Error(`Cycle detected in graph: ${[...stack, nodeId].join(" -> ")}`);
     }
@@ -471,18 +733,682 @@ function reconcileCompletedSubtrees(graph: PlanGraphFile): NodeId[] {
       return terminalStatuses.has(node.status ?? "pending");
     }
 
-    const childrenDone = node.children?.every((childId) => visit(childId, [...stack, nodeId])) ?? true;
+    const childResults: boolean[] = [];
+    for (const childId of node.children || []) {
+      childResults.push(await visit(childId, [...stack, nodeId]));
+    }
+    const childrenDone = childResults.every(Boolean);
     if (childrenDone && node.status !== "done") {
+      if (node.kind === "parallel") {
+        const publishResult = await publishParallelIntegrationIfRequired(graph, graphPath, nodeId, node);
+        if (publishResult === "unresolved") {
+          changed.push(nodeId);
+          return false;
+        }
+        if (publishResult === "parked") {
+          return false;
+        }
+      } else if (node.kind === "series") {
+        const publishResult = await publishSeriesAliasIfRequired(graph, graphPath, nodeId, node);
+        if (publishResult === "unresolved") {
+          changed.push(nodeId);
+          return false;
+        }
+        if (publishResult === "parked") {
+          return false;
+        }
+      }
+      const previousStatus = node.status || "pending";
       node.status = "done";
       node.completedAt ||= new Date().toISOString();
-      appendHistory(node, "subtree_done");
+      appendHistory(node, operationalEvents.subtreeDone, {
+        previousStatus,
+        status: node.status,
+        completedAt: node.completedAt,
+        childIds: node.children || []
+      });
       changed.push(nodeId);
     }
     return childrenDone && terminalStatuses.has(node.status ?? "pending");
   }
 
-  visit(rootId);
+  await visit(rootId);
   return changed;
+}
+
+type ParallelIntegrationPublishResult = "not-required" | "published" | "unresolved" | "parked";
+
+interface ParallelChildOutput {
+  nodeId: NodeId;
+  outputRef: string;
+  commit?: string;
+}
+
+interface GitCommandErrorDetails {
+  message: string;
+  stdout?: string;
+  stderr?: string;
+}
+
+type SeriesAliasPublishResult = "not-required" | "published" | "unresolved" | "parked";
+
+async function publishSeriesAliasIfRequired(
+  graph: PlanGraphFile,
+  graphPath: string,
+  parentId: NodeId,
+  node: GraphNode
+): Promise<SeriesAliasPublishResult> {
+  if (isUnresolvedCompositionBuffer(node, "series")) {
+    return "parked";
+  }
+
+  const finalChildId = node.children?.at(-1);
+  if (!finalChildId) {
+    return "not-required";
+  }
+
+  const children = node.children || [];
+  const childOutputs = children.map((childId) => {
+    const childOutput = getNode(graph, childId).outputRef;
+    return childOutput?.name
+      ? { nodeId: childId, outputRef: childOutput.name, commit: childOutput.commit }
+      : undefined;
+  });
+  const finalOutput = getNode(graph, finalChildId).outputRef;
+  const hasIsolationMetadata = Boolean(
+    node.baseRef?.name
+      || node.integrationRef?.name
+      || node.outputRef?.name
+      || finalOutput?.name
+      || childOutputs.some(Boolean)
+  );
+  if (!hasIsolationMetadata || !finalOutput?.name) {
+    if (hasIsolationMetadata) {
+      await blockSeriesAlias(graphPath, parentId, node, {
+        reason: `series final child is done without outputRef: ${finalChildId}`,
+        childOutputs: childOutputs.filter(Boolean) as ParallelChildOutput[],
+        missingChildId: finalChildId
+      });
+      return "unresolved";
+    }
+    return "not-required";
+  }
+
+  const missingChildId = children[childOutputs.findIndex((childOutput) => !childOutput)];
+  if (missingChildId) {
+    await blockSeriesAlias(graphPath, parentId, node, {
+      reason: `series child is done without outputRef: ${missingChildId}`,
+      childOutputs: childOutputs.filter(Boolean) as ParallelChildOutput[],
+      missingChildId
+    });
+    return "unresolved";
+  }
+
+  const orderedChildOutputs = childOutputs as ParallelChildOutput[];
+  const alreadyPublished = node.outputRef?.name === finalOutput.name
+    && node.outputRef?.commit === finalOutput.commit
+    && node.integrationRef?.kind === "series"
+    && node.integrationRef?.status === "clean"
+    && node.integrationRef?.publishedOutputRef === finalOutput.name;
+  if (alreadyPublished) {
+    return "not-required";
+  }
+
+  const publishedAt = new Date().toISOString();
+  node.integrationRef = {
+    ...(node.integrationRef || {}),
+    name: finalOutput.name,
+    kind: "series",
+    status: "clean",
+    inputRefs: integrationInputRefs(orderedChildOutputs),
+    publishedOutputRef: finalOutput.name,
+    commit: finalOutput.commit,
+    finalChildId,
+    source: "final-child-outputRef"
+  };
+  node.outputRef = {
+    ...node.outputRef,
+    name: finalOutput.name,
+    commit: finalOutput.commit,
+    runId: finalOutput.runId,
+    session: finalOutput.session,
+    report: finalOutput.report,
+    producedAt: publishedAt,
+    source: "series-alias",
+    aliasOfNodeId: finalChildId
+  };
+  appendHistory(node, operationalEvents.parentRefPublished, {
+    parentId,
+    kind: "series",
+    integrationRef: finalOutput.name,
+    outputRef: finalOutput.name,
+    commit: finalOutput.commit,
+    result: "clean",
+    finalChildId,
+    childOutputRef: finalOutput.name
+  });
+  return "published";
+}
+
+async function publishParallelIntegrationIfRequired(
+  graph: PlanGraphFile,
+  graphPath: string,
+  parentId: NodeId,
+  node: GraphNode
+): Promise<ParallelIntegrationPublishResult> {
+  if (isUnresolvedCompositionBuffer(node, "parallel")) {
+    return "parked";
+  }
+
+  const children = node.children || [];
+  const childOutputs = children.map((childId) => {
+    const childNode = getNode(graph, childId);
+    return childNode.outputRef?.name
+      ? { nodeId: childId, outputRef: childNode.outputRef.name, commit: childNode.outputRef.commit }
+      : undefined;
+  });
+  const hasIsolationMetadata = Boolean(node.baseRef?.name || node.integrationRef?.name || childOutputs.some(Boolean));
+  if (!hasIsolationMetadata || node.outputRef?.name) {
+    return "not-required";
+  }
+
+  const missingChildId = children[childOutputs.findIndex((childOutput) => !childOutput)];
+  if (missingChildId) {
+    await blockParallelIntegration(graphPath, parentId, node, {
+      reason: `parallel child is done without outputRef: ${missingChildId}`,
+      childOutputs: childOutputs.filter(Boolean) as ParallelChildOutput[],
+      missingChildId
+    });
+    return "unresolved";
+  }
+
+  const baseRef = parallelBaseRefName(graph, node);
+  const reportAttemptId = createIntegrationAttemptId(parentId);
+  const integrationBranch = `spg/integration/${safeGitRefPart(parentId)}/${reportAttemptId}`;
+  const integrationRef = `refs/heads/${integrationBranch}`;
+  const bareRepo = parallelBareRepoPath(graphPath);
+  const workspace = join(dirname(graphPath), "runs", "workspaces", "integration", safeFilePart(parentId), reportAttemptId);
+  const orderedChildOutputs = childOutputs as ParallelChildOutput[];
+
+  if (!baseRef) {
+    await blockParallelIntegration(graphPath, parentId, node, {
+      reason: "parallel parent is missing baseRef.name",
+      childOutputs: orderedChildOutputs,
+      integrationRef
+    });
+    return "unresolved";
+  }
+
+  let baseCommit = "";
+  try {
+    assertBareRepository(bareRepo);
+    baseCommit = gitText(["--git-dir", bareRepo, "rev-parse", "--verify", `${baseRef}^{commit}`]).trim();
+    for (const childOutput of orderedChildOutputs) {
+      gitText(["--git-dir", bareRepo, "rev-parse", "--verify", `${childOutput.outputRef}^{commit}`]);
+    }
+    await mkdir(dirname(workspace), { recursive: true });
+    gitText(["--git-dir", bareRepo, "worktree", "add", "-b", integrationBranch, workspace, baseRef]);
+    gitText(["-C", workspace, "config", "user.name", "Series Parallel Graph Scheduler"]);
+    gitText(["-C", workspace, "config", "user.email", "spg-scheduler@example.invalid"]);
+  } catch (error) {
+    await blockParallelIntegration(graphPath, parentId, node, {
+      reason: `parallel integration setup failed: ${errorMessage(error)}`,
+      childOutputs: orderedChildOutputs,
+      integrationRef,
+      bareRepo,
+      baseRef,
+      workspace,
+      gitError: gitCommandErrorDetails(error)
+    });
+    return "unresolved";
+  }
+
+  node.baseRef = {
+    ...node.baseRef,
+    name: baseRef,
+    commit: baseCommit,
+    source: node.baseRef?.source || "graph-default",
+    resolvedAt: new Date().toISOString()
+  };
+  node.integrationRef = {
+    name: integrationRef,
+    kind: "parallel",
+    status: "pending",
+    baseRef,
+    workspace,
+    inputRefs: integrationInputRefs(orderedChildOutputs)
+  };
+
+  for (const [childOrderIndex, childOutput] of orderedChildOutputs.entries()) {
+    appendHistory(node, operationalEvents.mergeAttempted, {
+      parentId,
+      integrationRef,
+      baseRef,
+      childId: childOutput.nodeId,
+      childOutputRef: childOutput.outputRef,
+      childOrderIndex
+    });
+
+    try {
+      gitText(["-C", workspace, "merge", "--no-ff", "--no-edit", childOutput.outputRef]);
+    } catch (error) {
+      const conflictedPaths = conflictedGitPaths(workspace);
+      const reportPath = parallelIntegrationReportPath(parentId, reportAttemptId);
+      await writeReportFile(graphPath, reportPath, formatParallelIntegrationReport({
+        parentId,
+        result: "review",
+        bareRepo,
+        workspace,
+        baseRef,
+        integrationRef,
+        childOutputs: orderedChildOutputs,
+        failedChild: childOutput,
+        childOrderIndex,
+        conflictedPaths,
+        gitError: gitCommandErrorDetails(error)
+      }));
+
+      const previousStatus = node.status || "pending";
+      node.status = "review";
+      node.report = reportPath;
+      node.blockedAt = new Date().toISOString();
+      node.blockedReason = "parallel merge conflict";
+      node.integrationRef = {
+        ...node.integrationRef,
+        status: "conflicted",
+        conflictedChildId: childOutput.nodeId,
+        conflictedChildOutputRef: childOutput.outputRef,
+        conflictedChildOrderIndex: childOrderIndex,
+        conflictedPaths,
+        report: reportPath
+      };
+      appendHistory(node, operationalEvents.mergeConflicted, {
+        previousStatus,
+        status: node.status,
+        parentId,
+        integrationRef,
+        baseRef,
+        childId: childOutput.nodeId,
+        childOutputRef: childOutput.outputRef,
+        childOrderIndex,
+        conflictedPaths,
+        result: "review",
+        report: reportPath,
+        workspace
+      });
+      return "unresolved";
+    }
+  }
+
+  const commit = gitText(["-C", workspace, "rev-parse", "HEAD"]).trim();
+  const reportPath = parallelIntegrationReportPath(parentId, reportAttemptId);
+  node.integrationRef = {
+    ...node.integrationRef,
+    status: "clean",
+    commit,
+    publishedOutputRef: integrationRef,
+    report: reportPath
+  };
+  node.outputRef = {
+    name: integrationRef,
+    commit,
+    runId: reportAttemptId,
+    report: reportPath,
+    producedAt: new Date().toISOString(),
+    source: "parallel-integration"
+  };
+  await writeReportFile(graphPath, reportPath, formatParallelIntegrationReport({
+    parentId,
+    result: "clean",
+    bareRepo,
+    workspace,
+    baseRef,
+    integrationRef,
+    outputRef: integrationRef,
+    commit,
+    childOutputs: orderedChildOutputs
+  }));
+  node.report = reportPath;
+  appendHistory(node, operationalEvents.parentRefPublished, {
+    parentId,
+    kind: "parallel",
+    integrationRef,
+    outputRef: integrationRef,
+    commit,
+    result: "clean",
+    report: reportPath
+  });
+  return "published";
+}
+
+async function blockSeriesAlias(
+  graphPath: string,
+  parentId: NodeId,
+  node: GraphNode,
+  {
+    reason,
+    childOutputs,
+    missingChildId
+  }: {
+    reason: string;
+    childOutputs: ParallelChildOutput[];
+    missingChildId: NodeId;
+  }
+): Promise<void> {
+  const previousStatus = node.status || "pending";
+  const attemptId = createIntegrationAttemptId(parentId);
+  const reportPath = parallelIntegrationReportPath(parentId, attemptId);
+  await writeReportFile(graphPath, reportPath, formatSeriesAliasReport({
+    parentId,
+    result: "blocked",
+    childOutputs,
+    missingChildId
+  }));
+  node.status = "blocked";
+  node.blockedAt = new Date().toISOString();
+  node.blockedReason = reason;
+  node.question = `Resolve series integration for ${parentId}; see ${reportPath}.`;
+  node.report = reportPath;
+  node.integrationRef = {
+    ...(node.integrationRef || {}),
+    name: childOutputs.at(-1)?.outputRef || `refs/heads/spg/integration/${safeGitRefPart(parentId)}/${attemptId}`,
+    kind: "series",
+    status: "pending",
+    inputRefs: integrationInputRefs(childOutputs),
+    report: reportPath,
+    missingChildId
+  };
+  appendHistory(node, operationalEvents.blocked, {
+    previousStatus,
+    status: node.status,
+    parentId,
+    blockedReason: reason,
+    report: reportPath,
+    integrationRef: node.integrationRef.name,
+    missingChildId,
+    childOutputRefs: childOutputs.map((childOutput) => ({
+      nodeId: childOutput.nodeId,
+      outputRef: childOutput.outputRef
+    }))
+  });
+}
+
+function isUnresolvedCompositionBuffer(node: GraphNode, kind: "series" | "parallel"): boolean {
+  const status = node.status || "pending";
+  return (status === "blocked" || status === "review" || status === "failed")
+    && node.integrationRef?.kind === kind
+    && !node.outputRef?.name;
+}
+
+async function blockParallelIntegration(
+  graphPath: string,
+  parentId: NodeId,
+  node: GraphNode,
+  {
+    reason,
+    childOutputs,
+    missingChildId,
+    integrationRef,
+    bareRepo,
+    baseRef,
+    workspace,
+    gitError
+  }: {
+    reason: string;
+    childOutputs: ParallelChildOutput[];
+    missingChildId?: NodeId;
+    integrationRef?: string;
+    bareRepo?: string;
+    baseRef?: string;
+    workspace?: string;
+    gitError?: GitCommandErrorDetails;
+  }
+): Promise<void> {
+  const previousStatus = node.status || "pending";
+  const attemptId = createIntegrationAttemptId(parentId);
+  const effectiveIntegrationRef = integrationRef || node.integrationRef?.name || `refs/heads/spg/integration/${safeGitRefPart(parentId)}/${attemptId}`;
+  const reportPath = parallelIntegrationReportPath(parentId, attemptId);
+  await writeReportFile(graphPath, reportPath, formatParallelIntegrationReport({
+    parentId,
+    result: "blocked",
+    bareRepo,
+    workspace,
+    baseRef,
+    integrationRef: effectiveIntegrationRef,
+    childOutputs,
+    missingChildId,
+    gitError
+  }));
+  node.status = "blocked";
+  node.blockedAt = new Date().toISOString();
+  node.blockedReason = reason;
+  node.question = `Resolve parallel integration for ${parentId}; see ${reportPath}.`;
+  node.report = reportPath;
+  node.integrationRef = {
+    ...(node.integrationRef || {}),
+    name: effectiveIntegrationRef,
+    kind: "parallel",
+    status: "pending",
+    inputRefs: integrationInputRefs(childOutputs),
+    report: reportPath,
+    baseRef,
+    workspace,
+    missingChildId
+  };
+  appendHistory(node, operationalEvents.blocked, {
+    previousStatus,
+    status: node.status,
+    parentId,
+    blockedReason: reason,
+    report: reportPath,
+    integrationRef: effectiveIntegrationRef,
+    baseRef,
+    workspace,
+    missingChildId,
+    childOutputRefs: childOutputs.map((childOutput) => ({
+      nodeId: childOutput.nodeId,
+      outputRef: childOutput.outputRef
+    }))
+  });
+}
+
+function parallelBaseRefName(graph: PlanGraphFile, node: GraphNode): string | undefined {
+  if (node.baseRef?.name) {
+    return node.baseRef.name;
+  }
+  const schedulerBaseRef = graph.scheduler?.baseRef;
+  if (typeof schedulerBaseRef === "string" && schedulerBaseRef.trim()) {
+    return schedulerBaseRef.trim();
+  }
+  if (
+    schedulerBaseRef &&
+    typeof schedulerBaseRef === "object" &&
+    "name" in schedulerBaseRef &&
+    typeof schedulerBaseRef.name === "string" &&
+    schedulerBaseRef.name.trim()
+  ) {
+    return schedulerBaseRef.name.trim();
+  }
+  return undefined;
+}
+
+function parallelBareRepoPath(graphPath: string): string {
+  return join(dirname(graphPath), "runs", "git", "cache", "repo.git");
+}
+
+function createIntegrationAttemptId(parentId: NodeId): string {
+  const timestamp = new Date().toISOString().replaceAll(/[-:.]/g, "").replace("T", "_").replace("Z", "");
+  return `run_${timestamp}_${safeGitRefPart(parentId)}_${randomUUID().slice(0, 8)}`;
+}
+
+function safeGitRefPart(value: unknown): string {
+  return safeFilePart(value).replaceAll(/\.+/g, ".").replaceAll(/^\.|\.$/g, "") || "ref";
+}
+
+function parallelIntegrationReportPath(parentId: NodeId, attemptId: string): string {
+  return `reports/${safeFilePart(parentId)}-${safeFilePart(attemptId)}-integration.md`;
+}
+
+function integrationInputRefs(childOutputs: ParallelChildOutput[]): NodeIntegrationInputRefMetadata[] {
+  return childOutputs.map((childOutput, childOrderIndex) => ({
+    nodeId: childOutput.nodeId,
+    outputRef: childOutput.outputRef,
+    childOrderIndex,
+    commit: childOutput.commit
+  }));
+}
+
+function assertBareRepository(bareRepo: string): void {
+  const result = gitText(["--git-dir", bareRepo, "rev-parse", "--is-bare-repository"]).trim();
+  if (result !== "true") {
+    throw new Error(`Git cache is not a bare repository: ${bareRepo}`);
+  }
+}
+
+function gitText(args: string[]): string {
+  return execFileSync("git", args, {
+    encoding: "utf8",
+    stdio: ["ignore", "pipe", "pipe"]
+  });
+}
+
+function conflictedGitPaths(workspace: string): string[] {
+  try {
+    return gitText(["-C", workspace, "diff", "--name-only", "--diff-filter=U"])
+      .split(/\r?\n/)
+      .map((path) => path.trim())
+      .filter(Boolean);
+  } catch {
+    return [];
+  }
+}
+
+function gitCommandErrorDetails(error: unknown): GitCommandErrorDetails {
+  const processError = error as { stdout?: Buffer | string; stderr?: Buffer | string };
+  return {
+    message: errorMessage(error),
+    stdout: processError.stdout ? String(processError.stdout).trim() : undefined,
+    stderr: processError.stderr ? String(processError.stderr).trim() : undefined
+  };
+}
+
+function formatParallelIntegrationReport({
+  parentId,
+  result,
+  bareRepo,
+  workspace,
+  baseRef,
+  integrationRef,
+  outputRef,
+  commit,
+  childOutputs,
+  failedChild,
+  missingChildId,
+  childOrderIndex,
+  conflictedPaths,
+  gitError
+}: {
+  parentId: NodeId;
+  result: "clean" | "blocked" | "review";
+  bareRepo?: string;
+  workspace?: string;
+  baseRef?: string;
+  integrationRef?: string;
+  outputRef?: string;
+  commit?: string;
+  childOutputs: ParallelChildOutput[];
+  failedChild?: ParallelChildOutput;
+  missingChildId?: NodeId;
+  childOrderIndex?: number;
+  conflictedPaths?: string[];
+  gitError?: GitCommandErrorDetails;
+}): string {
+  const lines = [
+    `# Parallel integration: ${parentId}`,
+    "",
+    `- Parent: ${parentId}`,
+    `- Result: ${result}`,
+    `- Bare repository: ${bareRepo || "unknown"}`,
+    `- Workspace: ${workspace || "none"}`,
+    `- Base ref: ${baseRef || "unknown"}`,
+    `- Integration ref: ${integrationRef || "none"}`,
+    `- Output ref: ${outputRef || "none"}`,
+    `- Commit: ${commit || "unknown"}`,
+    "",
+    "## Child refs",
+    ""
+  ];
+
+  if (childOutputs.length === 0) {
+    lines.push("- none");
+  } else {
+    for (const [index, childOutput] of childOutputs.entries()) {
+      lines.push(`- ${index}: ${childOutput.nodeId} -> ${childOutput.outputRef}${childOutput.commit ? ` (${childOutput.commit})` : ""}`);
+    }
+  }
+
+  if (missingChildId) {
+    lines.push("", "## Missing output ref", "", `- Child: ${missingChildId}`);
+  }
+  if (failedChild) {
+    lines.push(
+      "",
+      "## Failed merge",
+      "",
+      `- Child order index: ${childOrderIndex ?? "unknown"}`,
+      `- Child: ${failedChild.nodeId}`,
+      `- Child output ref: ${failedChild.outputRef}`
+    );
+  }
+  if (conflictedPaths) {
+    lines.push("", "## Conflicted paths", "");
+    lines.push(...(conflictedPaths.length > 0 ? conflictedPaths.map((path) => `- ${path}`) : ["- none reported by Git"]));
+  }
+  if (gitError) {
+    lines.push("", "## Git error", "", "```", gitError.message);
+    if (gitError.stderr) {
+      lines.push("", gitError.stderr);
+    }
+    if (gitError.stdout) {
+      lines.push("", gitError.stdout);
+    }
+    lines.push("```");
+  }
+
+  return lines.join("\n");
+}
+
+function formatSeriesAliasReport({
+  parentId,
+  result,
+  childOutputs,
+  missingChildId
+}: {
+  parentId: NodeId;
+  result: "blocked";
+  childOutputs: ParallelChildOutput[];
+  missingChildId: NodeId;
+}): string {
+  const lines = [
+    `# Series integration: ${parentId}`,
+    "",
+    `- Parent: ${parentId}`,
+    `- Result: ${result}`,
+    `- Missing child output ref: ${missingChildId}`,
+    "",
+    "## Child refs",
+    ""
+  ];
+
+  if (childOutputs.length === 0) {
+    lines.push("- none");
+  } else {
+    for (const [index, childOutput] of childOutputs.entries()) {
+      lines.push(`- ${index}: ${childOutput.nodeId} -> ${childOutput.outputRef}${childOutput.commit ? ` (${childOutput.commit})` : ""}`);
+    }
+  }
+
+  return lines.join("\n");
 }
 
 function releaseExpiredLeasesInGraph(graph: PlanGraphFile, now = new Date()): NodeId[] {
@@ -490,7 +1416,7 @@ function releaseExpiredLeasesInGraph(graph: PlanGraphFile, now = new Date()): No
   const nowMs = now.getTime();
 
   for (const [nodeId, node] of Object.entries(graph.graph?.nodes || {})) {
-    if (!node.lease?.expiresAt || !autoReleasableStatuses.has(node.status || "pending")) {
+    if (!node.lease?.expiresAt || !releaseExpiredAllowedStatuses.has(node.status || "pending")) {
       continue;
     }
 
@@ -500,7 +1426,15 @@ function releaseExpiredLeasesInGraph(graph: PlanGraphFile, now = new Date()): No
     }
 
     released.push(nodeId);
-    appendHistory(node, "lease_expired", { previousStatus: node.status, runId: node.lease.runId });
+    appendHistory(node, operationalEvents.expired, {
+      previousStatus: node.status,
+      status: "pending",
+      session: node.lease.session,
+      runId: node.lease.runId,
+      leaseExpiresAt: node.lease.expiresAt,
+      expiredAt: now.toISOString(),
+      clearedFields: ["lease", "startedAt"]
+    });
     node.status = "pending";
     node.expiredAt = now.toISOString();
     delete node.lease;
@@ -598,20 +1532,133 @@ function findPathFromRoot(graph: PlanGraphFile, targetId: NodeId): NodeId[] {
   return visit(rootId);
 }
 
-function resetNodeState(node: GraphNode, event: string, metadata: Record<string, unknown> = {}): void {
+function resetNodeState(node: GraphNode, event: OperationalEventName, metadata: Record<string, unknown> = {}): void {
   const previousStatus = node.status || "pending";
   node.status = "pending";
-  delete node.lease;
-  delete node.startedAt;
-  delete node.completedAt;
-  delete node.failedAt;
-  delete node.failureReason;
-  delete node.blockedAt;
-  delete node.blockedReason;
-  delete node.question;
-  delete node.report;
-  delete node.expiredAt;
-  appendHistory(node, event, { previousStatus, ...metadata });
+  for (const field of resetClearedFields) {
+    delete node[field];
+  }
+  const clearedFields = [...resetClearedFields, ...clearCompositionRefMetadata(node)];
+  appendHistory(node, event, {
+    previousStatus,
+    status: node.status,
+    clearedFields,
+    ...metadata
+  });
+}
+
+function clearCompositionRefMetadata(node: GraphNode): string[] {
+  if (!Array.isArray(node.children) || node.children.length === 0) {
+    return [];
+  }
+
+  const clearedFields: string[] = [];
+  for (const field of compositionResetClearedFields) {
+    if (node[field]) {
+      delete node[field];
+      clearedFields.push(field);
+    }
+  }
+  return clearedFields;
+}
+
+function applyWorkerRefMetadata(
+  node: GraphNode,
+  refMetadata: WorkerRunRefMetadata | undefined,
+  { session, runId, report, now }: { session?: string; runId?: string; report?: string; now: string }
+): void {
+  if (!refMetadata) {
+    return;
+  }
+
+  const remote = redactedRemote(refMetadata.remote);
+  const workspace = buildWorkspaceMetadata(refMetadata, { remote, session, runId, now });
+  if (workspace) {
+    node.workspace = mergeDefined(node.workspace, workspace) as NodeWorkspaceMetadata;
+  }
+  if (refMetadata.baseRef) {
+    node.baseRef = mergeDefined(node.baseRef, refMetadata.baseRef);
+  }
+  if (refMetadata.workRef) {
+    node.workRef = mergeDefined(node.workRef, {
+      runId,
+      session,
+      createdAt: now,
+      ...refMetadata.workRef
+    });
+  }
+  if (refMetadata.outputRef) {
+    node.outputRef = mergeDefined(node.outputRef, {
+      runId,
+      session,
+      report,
+      producedAt: now,
+      ...refMetadata.outputRef
+    });
+  }
+
+  if (workspace) {
+    appendHistory(node, operationalEvents.clonePrepared, {
+      session,
+      runId,
+      remote,
+      bareRepo: workspace.bareRepo,
+      cloneCwd: workspace.cloneCwd,
+      baseRef: node.baseRef?.name
+    });
+  }
+  if (refMetadata.workRef) {
+    appendHistory(node, operationalEvents.branchCreated, {
+      session,
+      runId,
+      cloneCwd: node.workspace?.cloneCwd,
+      baseRef: node.baseRef?.name,
+      workRef: node.workRef?.name
+    });
+  }
+  if (refMetadata.outputRef) {
+    appendHistory(node, operationalEvents.outputRefRecorded, {
+      session,
+      runId,
+      workRef: node.workRef?.name,
+      outputRef: node.outputRef?.name,
+      commit: node.outputRef?.commit,
+      report
+    });
+  }
+}
+
+function buildWorkspaceMetadata(
+  refMetadata: WorkerRunRefMetadata,
+  { remote, session, runId, now }: { remote?: string; session?: string; runId?: string; now: string }
+): Partial<NodeWorkspaceMetadata> | undefined {
+  if (!refMetadata.cloneCwd) {
+    return undefined;
+  }
+  return {
+    remote,
+    bareRepo: refMetadata.bareRepo,
+    cloneCwd: refMetadata.cloneCwd,
+    runId,
+    session,
+    preparedAt: now,
+    retained: refMetadata.retained
+  };
+}
+
+function mergeDefined<T extends Record<string, unknown>>(previous: T | undefined, next: Partial<T>): T {
+  return {
+    ...(previous || {}),
+    ...omitUndefined(next as Record<string, unknown>)
+  } as T;
+}
+
+function redactedRemote(remote: unknown): string | undefined {
+  if (typeof remote !== "string") {
+    return undefined;
+  }
+  const redacted = redactOperationalEventDetails({ remote }).remote;
+  return typeof redacted === "string" ? redacted : remote;
 }
 
 function assertLeafNode(graph: PlanGraphFile, nodeId: NodeId | undefined): asserts nodeId is NodeId {
@@ -644,6 +1691,21 @@ function assertLeaseOwner(node: GraphNode, owner: LeaseOwner = {}): void {
   }
 }
 
+function mutationEventForStatus(status: NodeStatus): OperationalEventName {
+  switch (status) {
+    case "running":
+      return operationalEvents.running;
+    case "done":
+      return operationalEvents.done;
+    case "blocked":
+      return operationalEvents.blocked;
+    case "failed":
+      return operationalEvents.failed;
+    default:
+      throw new Error(`No operational event is defined for mutation status: ${status}`);
+  }
+}
+
 function normalizeChildDefinitions(children: DecomposeChildDefinition[]): DecomposeChildDefinition[] {
   const normalized: DecomposeChildDefinition[] = [];
   const seen = new Set<NodeId>();
@@ -659,23 +1721,29 @@ function normalizeChildDefinitions(children: DecomposeChildDefinition[]): Decomp
       throw new Error(`Duplicate child id in decomposition: ${child.id}`);
     }
     seen.add(child.id);
+    const { id, title, kind, status, children: childIds, ...metadata } = child;
     normalized.push({
+      ...metadata,
       id: child.id,
       title: child.title,
       kind: child.kind || "task",
       status: child.status || "pending",
-      children: child.children
+      children: childIds
     });
   }
 
   return normalized;
 }
 
-function appendHistory(node: GraphNode, event: string, details: Record<string, unknown> = {}): void {
+function appendHistory(node: GraphNode, event: OperationalEventName, details: Record<string, unknown> = {}): void {
   node.history ||= [];
   node.history.push({
     at: new Date().toISOString(),
     event,
-    ...details
+    ...omitUndefined(redactOperationalEventDetails(details))
   });
+}
+
+function omitUndefined(details: Record<string, unknown>): Record<string, unknown> {
+  return Object.fromEntries(Object.entries(details).filter(([, value]) => value !== undefined));
 }

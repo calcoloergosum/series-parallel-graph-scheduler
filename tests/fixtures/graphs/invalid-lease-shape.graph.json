@@ -1,0 +1,17 @@
+{
+  "graph": {
+    "root": "ROOT",
+    "nodes": {
+      "ROOT": {
+        "title": "Root",
+        "kind": "task",
+        "status": "claimed",
+        "lease": {
+          "session": "codex-fixture",
+          "claimedAt": "2026-05-27T00:00:00.000Z",
+          "expiresAt": "2999-01-01T00:00:00.000Z"
+        }
+      }
+    }
+  }
+}

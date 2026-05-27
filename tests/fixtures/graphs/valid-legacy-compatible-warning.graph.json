@@ -1,0 +1,79 @@
+{
+  "schemaVersion": 1,
+  "graphVersion": 2,
+  "title": "Legacy Compatible Warning Fixture",
+  "statusModel": [
+    "pending",
+    "waiting-for-signal"
+  ],
+  "legacyMetadata": {
+    "preserve": true
+  },
+  "graph": {
+    "root": "ROOT",
+    "nodes": {
+      "ROOT": {
+        "title": "Root with legacy traversal",
+        "children": [
+          "LEGACY_PARENT",
+          "TASK_PARENT",
+          "GATE_PARENT",
+          "DONE_WITH_LEASE"
+        ]
+      },
+      "LEGACY_PARENT": {
+        "title": "Legacy parent",
+        "kind": "legacy-wrapper",
+        "status": "waiting-for-signal",
+        "children": [
+          "MISSING_KIND_STATUS_LEAF"
+        ]
+      },
+      "MISSING_KIND_STATUS_LEAF": {
+        "title": "Defaults to task and pending"
+      },
+      "TASK_PARENT": {
+        "title": "Task with children",
+        "kind": "task",
+        "status": "pending",
+        "children": [
+          "TASK_CHILD"
+        ]
+      },
+      "TASK_CHILD": {
+        "title": "Task child",
+        "kind": "task",
+        "status": "pending"
+      },
+      "GATE_PARENT": {
+        "title": "Gate with children",
+        "kind": "gate",
+        "status": "pending",
+        "children": [
+          "GATE_CHILD"
+        ]
+      },
+      "GATE_CHILD": {
+        "title": "Gate child",
+        "kind": "task",
+        "status": "pending"
+      },
+      "DONE_WITH_LEASE": {
+        "title": "Done node with retained lease metadata",
+        "kind": "task",
+        "status": "done",
+        "lease": {
+          "session": "old-worker",
+          "runId": "run_done_with_lease",
+          "claimedAt": "2026-05-27T00:00:00.000Z",
+          "expiresAt": "2999-01-01T00:00:00.000Z"
+        }
+      },
+      "ORPHAN": {
+        "title": "Unreachable legacy node",
+        "kind": "legacy-orphan",
+        "status": "snoozed"
+      }
+    }
+  }
+}

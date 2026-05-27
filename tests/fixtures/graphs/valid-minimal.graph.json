@@ -1,0 +1,10 @@
+{
+  "graph": {
+    "root": "ROOT",
+    "nodes": {
+      "ROOT": {
+        "title": "Minimal valid graph"
+      }
+    }
+  }
+}

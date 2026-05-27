@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 import { spawn } from "node:child_process";
+import { realpathSync } from "node:fs";
 import { resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
@@ -8,9 +9,11 @@ import {
   parseArgs,
   parseChildrenArgs,
   parseCodexArgs,
+  renderCliHelp,
   shouldStreamWorkerOutput
 } from "./cli.js";
 import type { CliCommandHandlers } from "./cli.js";
+import { printCliError } from "./cli-errors.js";
 import type {
   JsonValue,
   RunWorkerOptions,
@@ -19,17 +22,15 @@ import type {
 } from "./contracts.js";
 import {
   defaultReportPath,
+  inspectGraphLock,
   readGraph,
   withGraphLock,
-  writeGraphAtomic,
   writeReportFile
 } from "./graph-io.js";
 import {
+  buildGraphDiagnostics,
   getNode,
-  isLeaf,
-  isSubtreeDone,
   listReadyLeafNodes,
-  listWorkingNodes,
   summarizeGraph
 } from "./graph-traversal.js";
 import {
@@ -40,6 +41,7 @@ import {
   decomposeNode,
   failNode,
   reconcileGraphStatus,
+  recordWorkerRefMetadata,
   releaseExpiredLeases,
   renewNodeLease,
   resetNode,
@@ -47,20 +49,11 @@ import {
   resetSubtree,
   startNode
 } from "./node-mutations.js";
-import {
-  buildSlackNotificationText,
-  sendSlackNotification
-} from "./notification.js";
+import { sendSlackNotification } from "./notification.js";
 import { runtimePathsFromModuleUrl } from "./runtime-paths.js";
 import {
   buildWorkerPrompt as buildWorkerPromptImpl,
-  finalizeWorkerRun,
-  formatWorkerReport,
-  prefixChunk,
-  runCodexPrompt,
-  runWorker as runWorkerImpl,
-  startLeaseHeartbeat,
-  waitForReadyJob
+  runWorker as runWorkerImpl
 } from "./worker.js";
 import type { BuildWorkerPromptOptions } from "./worker.js";
 import {
@@ -74,18 +67,23 @@ import type { CreateVisualizerServerOptions } from "./visualizer.js";
 
 export {
   defaultReportPath,
+  inspectGraphLock,
+  installGraphIoFaultInjectorForTests,
   readGraph,
   resolveGraphRelativePath,
   withGraphLock,
   writeGraphAtomic,
+  writeTextFileAtomic,
   writeReportFile
 } from "./graph-io.js";
 export {
   getNode,
+  buildGraphDiagnostics,
   isLeaf,
   isSubtreeDone,
   listReadyLeafNodes,
   listWorkingNodes,
+  resolveNodeBaseRef,
   summarizeGraph
 } from "./graph-traversal.js";
 export {
@@ -96,18 +94,39 @@ export {
   decomposeNode,
   failNode,
   reconcileGraphStatus,
+  recordWorkerRefMetadata,
   releaseExpiredLeases,
   renewNodeLease,
   resetNode,
   resetReachable,
   resetSubtree,
+  schedulerTransitionTable,
   startNode
 } from "./node-mutations.js";
+export {
+  exportOperationalEvents,
+  operationalEvents,
+  operationalEventTaxonomy,
+  redactOperationalEventDetails
+} from "./operational-events.js";
+export {
+  GitRuntimeError,
+  buildNodeWorkBranchName,
+  createRunClone,
+  createWorkBranch,
+  defaultBareRepositoryPath,
+  defaultIsolationBareRepositoryPath,
+  prepareBareRepository,
+  publishOutputRef,
+  redactGitRemote,
+  runGitCommand
+} from "./git-runtime.js";
 export { buildSlackNotificationText, sendSlackNotification } from "./notification.js";
 export {
   finalizeWorkerRun,
   formatWorkerReport,
   prefixChunk,
+  resolveWorkerIsolation,
   runCodexPrompt,
   startLeaseHeartbeat,
   waitForReadyJob
@@ -116,10 +135,12 @@ export {
   parseArgs,
   parseChildrenArgs,
   parseCodexArgs,
+  renderCliHelp,
   shouldStreamWorkerOutput,
   isLocalVisualizerHost,
   visualizerHostSecurityWarning
 };
+export { formatCliError, printCliError } from "./cli-errors.js";
 
 const { scriptDir, rootDir, isBuiltOutput } = runtimePathsFromModuleUrl(import.meta.url);
 const schedulerScriptPath = fileURLToPath(import.meta.url);
@@ -146,6 +167,12 @@ export async function createVisualizerServer(
 
 export async function buildVisualizerPayload(graphPath = defaultGraphPath, workerManager?: WorkerManager) {
   return buildVisualizerPayloadImpl(graphPath, workerManager);
+}
+
+export async function diagnoseGraph(graphPath = defaultGraphPath) {
+  const graph = await readGraph(graphPath);
+  const lock = await inspectGraphLock(graphPath);
+  return buildGraphDiagnostics(graph, { graphPath, lock });
 }
 
 export async function runWorker(graphPath: string, options: RunWorkerOptions = {}) {
@@ -187,6 +214,7 @@ function cliHandlers(): CliCommandHandlers {
     readGraph,
     listReadyLeafNodes,
     summarizeGraph,
+    diagnoseGraph,
     claimNode,
     startNode,
     renewNodeLease,
@@ -226,6 +254,7 @@ function workerRuntime() {
     renewNodeLease,
     completeNode,
     failNode,
+    recordWorkerRefMetadata,
     writeReportFile,
     sendSlackNotification,
     renderPlanAfterUpdate
@@ -247,9 +276,20 @@ function visualizerRuntime() {
   };
 }
 
-if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+function isDirectEntrypoint(): boolean {
+  if (!process.argv[1]) {
+    return false;
+  }
+  try {
+    return realpathSync(fileURLToPath(import.meta.url)) === realpathSync(process.argv[1]);
+  } catch {
+    return import.meta.url === pathToFileURL(process.argv[1]).href;
+  }
+}
+
+if (isDirectEntrypoint()) {
   main().catch((error: unknown) => {
-    console.error(error instanceof Error ? error.stack || error.message : String(error));
+    printCliError(error, process.env);
     process.exitCode = 1;
   });
 }

@@ -1,7 +1,9 @@
 import { dirname, resolve } from "node:path";
+import { isRecord } from "./contracts.js";
 import type {
   CliCommand,
   DecomposeNodeResult,
+  GraphDiagnostics,
   GraphSummary,
   JsonValue,
   LeaseClaimResult,
@@ -18,6 +20,8 @@ import type {
   VisualizerServerHandle
 } from "./contracts.js";
 import { numericArgumentRanges, parseNumericArgument } from "./numeric-args.js";
+import { exportOperationalEvents, operationalEvents } from "./operational-events.js";
+import { errorMessage } from "./shared-utils.js";
 
 export interface DecomposeChildArg {
   id: string;
@@ -25,6 +29,7 @@ export interface DecomposeChildArg {
   kind?: string;
   status?: string;
   children?: string[];
+  [metadata: string]: unknown;
 }
 
 export interface CliOutput {
@@ -48,6 +53,7 @@ export interface CliCommandHandlers {
   readGraph(graphPath: string): Promise<PlanGraphFile>;
   listReadyLeafNodes(graph: PlanGraphFile): unknown;
   summarizeGraph(graph: PlanGraphFile): GraphSummary;
+  diagnoseGraph(graphPath: string): Promise<GraphDiagnostics>;
   claimNode(graphPath: string, options: {
     session?: string;
     nodeId?: string;
@@ -120,11 +126,16 @@ export interface CliCommandHandlers {
   runWorker(graphPath: string, options: {
     session?: string;
     nodeId?: string;
+    isolation?: string;
+    remote?: string;
+    workspaceRoot?: string;
+    workspaceRetention?: string;
     once: boolean;
     idleMs?: number;
+    timeoutMs?: number;
     leaseSeconds?: number;
     templatePath?: string;
-    cwd: string;
+    cwd?: string;
     stream: boolean;
     codexCommand?: string;
     codexArgs: string[];
@@ -136,6 +147,8 @@ export interface CliCommandHandlers {
     host: string;
     port: number;
     defaultWorkerCwd: string;
+    writeToken?: string;
+    allowUnsafeWrites?: boolean;
   }): Promise<VisualizerServerHandle>;
   renderPlanAfterUpdate(graphPath: string): Promise<void>;
   sendSlackNotification(graphPath: string, event: string, details?: Record<string, JsonValue | undefined>): Promise<SlackNotificationResult>;
@@ -144,6 +157,8 @@ export interface CliCommandHandlers {
 export const cliCommands = [
   "ready",
   "summary",
+  "diagnostics",
+  "events",
   "claim",
   "start",
   "renew",
@@ -163,7 +178,7 @@ export const cliCommands = [
   "help"
 ] as const satisfies readonly CliCommand[];
 
-const booleanFlags = new Set(["once", "quiet"]);
+const booleanFlags = new Set(["help", "once", "quiet", "unsafe-visualizer-write"]);
 const repeatableValueFlags = new Set(["child", "codex-arg"]);
 
 export function parseArgs(argv: readonly string[]): ParsedArgs {
@@ -223,7 +238,7 @@ export function parseChildrenArgs(args: ParsedArgs): DecomposeChildArg[] {
   if (childJson !== undefined) {
     let children: unknown;
     try {
-      children = JSON.parse(childJson) as unknown;
+      children = JSON.parse(childJson);
     } catch (error) {
       throw new Error(`Invalid --child-json JSON: ${errorMessage(error)}`, { cause: error });
     }
@@ -284,24 +299,127 @@ export function resolveCliGraphPath(rootDir: string, args: ParsedArgs, env: CliE
 
 export function renderCliHelp(): string {
   return `Usage:
-  node scripts/plan-scheduler.mjs ready [--graph plan.graph.json]
-  node scripts/plan-scheduler.mjs summary [--graph plan.graph.json]
-  node scripts/plan-scheduler.mjs claim [--session codex-A] [--node A1]
-  node scripts/plan-scheduler.mjs start --node A1 [--session codex-A] [--run run_id]
-  node scripts/plan-scheduler.mjs renew --node A1 [--session codex-A] [--run run_id] [--lease 1800]
-  node scripts/plan-scheduler.mjs reset --node A1 [--reason "retry"]
-  node scripts/plan-scheduler.mjs reset-subtree --node A1 [--reason "retry subtree"]
-  node scripts/plan-scheduler.mjs reset-reachable --node A1 [--reason "retry downstream"]
-  node scripts/plan-scheduler.mjs done --node A1 [--session codex-A] [--run run_id] [--report reports/A1.md] [--report-body "..."]
-  node scripts/plan-scheduler.mjs block --node A1 [--session codex-A] [--run run_id] --question "Need operator decision"
-  node scripts/plan-scheduler.mjs answer --node A1 --answer "Operator decision" [--responder jason]
-  node scripts/plan-scheduler.mjs fail --node A1 [--session codex-A] [--run run_id] --reason "..."
-  node scripts/plan-scheduler.mjs decompose --node A1 [--session codex-A] [--run run_id] --kind series --child A1a="First step" --child A1b="Second step"
-  node scripts/plan-scheduler.mjs prompt --node A1 [--session codex-A] [--run run_id] [--template prompts/codex-worker-task.md]
-  node scripts/plan-scheduler.mjs worker --session codex-A [--graph plan.graph.json] [--once] [--quiet] [--cwd /path/to/workspace] [--template prompts/codex-worker-task.md]
-  node scripts/plan-scheduler.mjs reconcile [--graph plan.graph.json]
-  node scripts/plan-scheduler.mjs release-expired
-  node scripts/plan-scheduler.mjs serve [--port 8787] [--host 127.0.0.1] [--cwd /path/to/workspace]`;
+  node scripts/plan-scheduler.mjs <command> [flags]
+  node scripts/plan-scheduler.mjs help
+  node scripts/plan-scheduler.mjs --help
+
+Graph selection:
+  --graph PATH              Optional for every command. Default: PLAN_GRAPH, then plan.graph.json.
+
+Commands:
+  ready
+    Required: none
+    Optional: --graph PATH
+    Example: node scripts/plan-scheduler.mjs ready --graph plan.graph.json
+
+  summary
+    Required: none
+    Optional: --graph PATH
+    Example: node scripts/plan-scheduler.mjs summary --graph plan.graph.json
+
+  diagnostics
+    Required: none
+    Optional: --graph PATH
+    Example: node scripts/plan-scheduler.mjs diagnostics --graph plan.graph.json
+
+  events
+    Required: none
+    Optional: --graph PATH, --limit COUNT (default: 50), --node ID, --event NAME
+    Example: node scripts/plan-scheduler.mjs events --graph plan.graph.json --limit 20
+
+  claim
+    Required: none
+    Optional: --graph PATH, --session NAME (default: codex), --node ID, --lease SECONDS (default: graph scheduler.leaseSeconds, then 1800)
+    Example: node scripts/plan-scheduler.mjs claim --session codex-A --lease 1800
+
+  start
+    Required: --node ID
+    Optional: --graph PATH, --session NAME, --run RUN_ID
+    Example: node scripts/plan-scheduler.mjs start --node KICKOFF --session codex-A
+
+  renew
+    Required: --node ID
+    Optional: --graph PATH, --session NAME, --run RUN_ID, --lease SECONDS (default: graph scheduler.leaseSeconds, then 1800)
+    Example: node scripts/plan-scheduler.mjs renew --node KICKOFF --session codex-A --lease 1800
+
+  reset
+    Required: --node ID
+    Optional: --graph PATH, --reason TEXT
+    Example: node scripts/plan-scheduler.mjs reset --node KICKOFF --reason "retry with fresh context"
+
+  reset-subtree
+    Required: --node ID
+    Optional: --graph PATH, --reason TEXT
+    Example: node scripts/plan-scheduler.mjs reset-subtree --node PHASE_2 --reason "rerun phase 2"
+
+  reset-reachable
+    Required: --node ID
+    Optional: --graph PATH, --reason TEXT
+    Example: node scripts/plan-scheduler.mjs reset-reachable --node TS3 --reason "rerun from TS3"
+
+  done
+    Required: --node ID
+    Optional: --graph PATH, --session NAME, --run RUN_ID, --report PATH, --report-body TEXT
+    Example: node scripts/plan-scheduler.mjs done --node KICKOFF --session codex-A --report reports/KICKOFF.md
+
+  block
+    Required: --node ID
+    Optional: --graph PATH, --session NAME, --run RUN_ID, --question TEXT, --reason TEXT
+    Example: node scripts/plan-scheduler.mjs block --node WEB1 --session codex-A --question "Need operator decision"
+
+  answer
+    Required: --node ID, --answer TEXT
+    Optional: --graph PATH, --responder NAME
+    Example: node scripts/plan-scheduler.mjs answer --node WEB1 --answer "Proceed with option A." --responder jason
+
+  fail
+    Required: --node ID
+    Optional: --graph PATH, --session NAME, --run RUN_ID, --reason TEXT, --report PATH
+    Example: node scripts/plan-scheduler.mjs fail --node WEB1 --session codex-A --reason "Tests failed"
+
+  decompose
+    Required: --node ID and --child ID=Title repeated, or --child-json JSON
+    Optional: --graph PATH, --session NAME, --run RUN_ID, --kind series|parallel (default: series)
+    Example: node scripts/plan-scheduler.mjs decompose --node WEB1 --session codex-A --kind series --child WEB1a="Draft shell" --child WEB1b="Review shell"
+
+  prompt
+    Required: --node ID
+    Optional: --graph PATH, --session NAME, --run RUN_ID, --template PATH (default: prompts/codex-worker-task.md), --cwd PATH (default: graph directory), --report PATH
+    Example: node scripts/plan-scheduler.mjs prompt --node WEB1 --session codex-A
+
+  worker
+    Required: none
+    Optional: --graph PATH, --session NAME (default: codex-worker), --node ID, --once, --quiet, --cwd PATH (default: graph directory), --template PATH (default: prompts/codex-worker-task.md), --idle-ms MS (default: 5000), --timeout-ms MS, --lease SECONDS, --codex-command PATH (default: codex), --codex-arg ARG repeated (default: exec), --isolation off|git (default: off), --remote URL (default: scheduler.remote), --workspace-root PATH (default: runs/workspaces), --workspace-retention on-failure|always|never (default: on-failure)
+    Example: node scripts/plan-scheduler.mjs worker --graph plan.graph.json --session codex-A --once
+
+  reconcile
+    Required: none
+    Optional: --graph PATH
+    Example: node scripts/plan-scheduler.mjs reconcile --graph plan.graph.json
+
+  release-expired
+    Required: none
+    Optional: --graph PATH
+    Example: node scripts/plan-scheduler.mjs release-expired --graph plan.graph.json
+
+  serve
+    Required: none
+    Optional: --graph PATH, --port PORT (default: 8787), --host HOST (default: 127.0.0.1), --cwd PATH (default: graph directory), --visualizer-write-token TOKEN, --unsafe-visualizer-write
+    Example: node scripts/plan-scheduler.mjs serve --host 127.0.0.1 --port 8787
+
+Flag types:
+  Boolean flags take no value: --help, --once, --quiet, --unsafe-visualizer-write.
+  Repeatable flags: --child ID=Title or ID:Title; --codex-arg ARG. Use --codex-arg=--flag when the value starts with "-".
+  Numeric flags are integers: --lease 1..86400 seconds, --idle-ms 1..86400000, --timeout-ms 1..86400000, --port 0..65535, --limit 1..10000.
+  Path flags: --graph selects the graph; --report stays inside the graph directory; --template resolves from the graph directory; --cwd controls worker process cwd.
+  Isolation flags: --isolation git requires scheduler.remote unless --remote URL is supplied; --workspace-root selects isolated clone placement; --workspace-retention controls clone cleanup.
+
+Environment:
+  PLAN_GRAPH                Default graph path when --graph is omitted.
+  SLACK_WEBHOOK_URL         Enables notifications for done, block, answer, fail, and decompose.
+  SPG_SLACK_TIMEOUT_MS      Slack notification timeout in milliseconds. Default: 5000.
+  SPG_DEBUG=1               Include stack traces in CLI errors.
+  SPG_GRAPH_LOCK_TIMEOUT_MS Lock wait timeout in milliseconds. Default: 5000.`;
 }
 
 export async function dispatchCliCommand(options: CliDispatchOptions): Promise<void> {
@@ -311,7 +429,7 @@ export async function dispatchCliCommand(options: CliDispatchOptions): Promise<v
   const graphPath = resolveCliGraphPath(options.rootDir, args, options.env, options.defaultGraphFile);
   const handlers = options.handlers;
 
-  if (!command || command === "help") {
+  if (!command || command === "help" || booleanArg(args, "help")) {
     output.log(renderCliHelp());
     return;
   }
@@ -322,6 +440,16 @@ export async function dispatchCliCommand(options: CliDispatchOptions): Promise<v
       return;
     case "summary":
       printJson(output, handlers.summarizeGraph(await handlers.readGraph(graphPath)));
+      return;
+    case "diagnostics":
+      printJson(output, await handlers.diagnoseGraph(graphPath));
+      return;
+    case "events":
+      printJson(output, exportOperationalEvents(await handlers.readGraph(graphPath), {
+        limit: numberArg(args, "limit", { ...numericArgumentRanges.eventLimit, defaultValue: 50 }),
+        nodeId: optionString(args, "node"),
+        event: optionString(args, "event")
+      }));
       return;
     case "claim": {
       const result = await handlers.claimNode(graphPath, {
@@ -382,7 +510,7 @@ export async function dispatchCliCommand(options: CliDispatchOptions): Promise<v
         runId: optionString(args, "run")
       });
       await handlers.renderPlanAfterUpdate(graphPath);
-      printJson(output, await withSlack(result, handlers.sendSlackNotification(graphPath, "done", {
+      printJson(output, await withSlack(result, handlers.sendSlackNotification(graphPath, operationalEvents.done, {
         nodeId,
         report: optionString(args, "report")
       })));
@@ -398,7 +526,7 @@ export async function dispatchCliCommand(options: CliDispatchOptions): Promise<v
         runId: optionString(args, "run")
       });
       await handlers.renderPlanAfterUpdate(graphPath);
-      printJson(output, await withSlack(result, handlers.sendSlackNotification(graphPath, "blocked", {
+      printJson(output, await withSlack(result, handlers.sendSlackNotification(graphPath, operationalEvents.blocked, {
         nodeId,
         question: optionString(args, "question"),
         reason: optionString(args, "reason")
@@ -414,7 +542,7 @@ export async function dispatchCliCommand(options: CliDispatchOptions): Promise<v
         responder: optionString(args, "responder")
       });
       await handlers.renderPlanAfterUpdate(graphPath);
-      printJson(output, await withSlack(result, handlers.sendSlackNotification(graphPath, "answered", {
+      printJson(output, await withSlack(result, handlers.sendSlackNotification(graphPath, operationalEvents.answered, {
         nodeId,
         answer
       })));
@@ -430,7 +558,7 @@ export async function dispatchCliCommand(options: CliDispatchOptions): Promise<v
         runId: optionString(args, "run")
       });
       await handlers.renderPlanAfterUpdate(graphPath);
-      printJson(output, await withSlack(result, handlers.sendSlackNotification(graphPath, "failed", {
+      printJson(output, await withSlack(result, handlers.sendSlackNotification(graphPath, operationalEvents.failed, {
         nodeId,
         reason: optionString(args, "reason"),
         report: optionString(args, "report")
@@ -447,7 +575,7 @@ export async function dispatchCliCommand(options: CliDispatchOptions): Promise<v
         runId: optionString(args, "run")
       });
       await handlers.renderPlanAfterUpdate(graphPath);
-      printJson(output, await withSlack(result, handlers.sendSlackNotification(graphPath, "decomposed", { nodeId })));
+      printJson(output, await withSlack(result, handlers.sendSlackNotification(graphPath, operationalEvents.decomposed, { nodeId })));
       return;
     }
     case "prompt": {
@@ -464,15 +592,23 @@ export async function dispatchCliCommand(options: CliDispatchOptions): Promise<v
     }
     case "worker": {
       const cwdArg = optionString(args, "cwd");
-      const cwd = cwdArg ? resolve(cwdArg) : dirname(graphPath);
+      const isolationArg = optionString(args, "isolation");
+      if (cwdArg && isolationArg?.trim() === "git") {
+        throw new Error("Cannot combine --cwd with --isolation git; use --workspace-root to choose isolated clone placement.");
+      }
       const result = await handlers.runWorker(graphPath, {
         session: optionString(args, "session"),
         nodeId: optionString(args, "node"),
+        isolation: isolationArg,
+        remote: optionString(args, "remote"),
+        workspaceRoot: optionString(args, "workspace-root"),
+        workspaceRetention: optionString(args, "workspace-retention"),
         once: booleanArg(args, "once"),
         idleMs: numberArg(args, "idle-ms", numericArgumentRanges.idleMs),
+        timeoutMs: numberArg(args, "timeout-ms", numericArgumentRanges.timeoutMs),
         leaseSeconds: numberArg(args, "lease", numericArgumentRanges.leaseSeconds),
         templatePath: optionString(args, "template"),
-        cwd,
+        cwd: cwdArg ? resolve(cwdArg) : undefined,
         stream: shouldStreamWorkerOutput(args),
         codexCommand: optionString(args, "codex-command"),
         codexArgs: parseCodexArgs(args, optionString(args, "codex-command"))
@@ -498,7 +634,9 @@ export async function dispatchCliCommand(options: CliDispatchOptions): Promise<v
         graphPath,
         host: optionString(args, "host") || "127.0.0.1",
         port: numberArg(args, "port", numericArgumentRanges.port) ?? 8787,
-        defaultWorkerCwd: cwdArg ? resolve(cwdArg) : dirname(graphPath)
+        defaultWorkerCwd: cwdArg ? resolve(cwdArg) : dirname(graphPath),
+        writeToken: optionString(args, "visualizer-write-token"),
+        allowUnsafeWrites: booleanArg(args, "unsafe-visualizer-write")
       });
       if (visualizer.securityWarning) {
         output.log(visualizer.securityWarning);
@@ -513,26 +651,26 @@ export async function dispatchCliCommand(options: CliDispatchOptions): Promise<v
 
 function parseChildJson(child: unknown, index: number): DecomposeChildArg {
   const location = `--child-json[${index}]`;
-  if (!child || typeof child !== "object") {
+  if (!isRecord(child)) {
     throw new Error(`${location} must be an object`);
   }
-  const entry = child as Record<string, unknown>;
-  if (typeof entry.id !== "string" || typeof entry.title !== "string") {
+  if (typeof child.id !== "string" || typeof child.title !== "string") {
     throw new Error(`${location} must include string id and title`);
   }
-  const id = entry.id.trim();
-  const title = entry.title.trim();
+  const id = child.id.trim();
+  const title = child.title.trim();
   validateChildId(id, location);
   validateChildTitle(title, location);
-  const result: DecomposeChildArg = { id, title };
-  if (typeof entry.kind === "string") {
-    result.kind = entry.kind;
+  const { id: _rawId, title: _rawTitle, kind, status, children, ...metadata } = child;
+  const result: DecomposeChildArg = { ...metadata, id, title };
+  if (typeof kind === "string") {
+    result.kind = kind;
   }
-  if (typeof entry.status === "string") {
-    result.status = entry.status;
+  if (typeof status === "string") {
+    result.status = status;
   }
-  if (Array.isArray(entry.children)) {
-    result.children = entry.children.map((childId, childIndex) => {
+  if (Array.isArray(children)) {
+    result.children = children.map((childId, childIndex) => {
       if (typeof childId !== "string") {
         throw new Error(`${location}.children[${childIndex}] must be a string`);
       }
@@ -612,10 +750,6 @@ function validateChildTitle(title: string, location: string): void {
   if (!title) {
     throw new Error(`${location} title cannot be empty`);
   }
-}
-
-function errorMessage(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
 }
 
 function printJson(output: CliOutput, value: unknown): void {

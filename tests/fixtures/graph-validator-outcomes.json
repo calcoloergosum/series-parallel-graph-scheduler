@@ -1,0 +1,395 @@
+[
+  {
+    "fixture": "valid-minimal.graph.json",
+    "matrixCategory": "minimal",
+    "valid": true,
+    "errors": [],
+    "warnings": [],
+    "covers": [
+      "passes:graph-object",
+      "passes:graph-body",
+      "passes:root-string",
+      "passes:root-in-nodes",
+      "passes:nodes-map",
+      "passes:node-object",
+      "passes:missing-kind-default",
+      "passes:missing-status-default",
+      "matrix:minimal"
+    ]
+  },
+  {
+    "fixture": "valid-basic.graph.json",
+    "matrixCategory": "rich",
+    "valid": true,
+    "errors": [],
+    "warnings": [],
+    "covers": [
+      "passes:graph-object",
+      "passes:graph-body",
+      "passes:root-string",
+      "passes:root-in-nodes",
+      "passes:nodes-map",
+      "passes:node-object",
+      "passes:children-array",
+      "passes:child-id-string",
+      "passes:child-exists",
+      "passes:no-duplicate-child",
+      "passes:acyclic",
+      "passes:non-empty-series",
+      "passes:non-empty-parallel",
+      "passes:lease-shape",
+      "passes:timestamp-shape",
+      "passes:history-shape",
+      "matrix:rich"
+    ]
+  },
+  {
+    "fixture": "valid-legacy-compatible-warning.graph.json",
+    "matrixCategory": "legacy-compatible",
+    "valid": true,
+    "errors": [],
+    "warnings": [
+      {
+        "path": "$.graph.nodes.LEGACY_PARENT.kind",
+        "message": "Unknown node kind: legacy-wrapper"
+      },
+      {
+        "path": "$.graph.nodes.LEGACY_PARENT.status",
+        "message": "Unknown node status: waiting-for-signal"
+      },
+      {
+        "path": "$.graph.nodes.TASK_PARENT.kind",
+        "message": "Task node has children; scheduler will traverse it as an ordered internal node"
+      },
+      {
+        "path": "$.graph.nodes.GATE_PARENT.kind",
+        "message": "Gate node has children; scheduler will traverse it as an ordered internal node"
+      },
+      {
+        "path": "$.graph.nodes.DONE_WITH_LEASE.lease",
+        "message": "Lease is attached to status done; expected claimed, running, blocked, or review"
+      },
+      {
+        "path": "$.graph.nodes.ORPHAN.kind",
+        "message": "Unknown node kind: legacy-orphan"
+      },
+      {
+        "path": "$.graph.nodes.ORPHAN.status",
+        "message": "Unknown node status: snoozed"
+      },
+      {
+        "path": "$.graph.nodes.ORPHAN",
+        "message": "Node is not reachable from root: ROOT"
+      }
+    ],
+    "covers": [
+      "passes:missing-kind-default",
+      "passes:missing-status-default",
+      "warns:unknown-kind",
+      "warns:unknown-status",
+      "warns:task-with-children",
+      "warns:gate-with-children",
+      "warns:lease-status-compatibility",
+      "warns:unreachable-node",
+      "matrix:legacy-compatible"
+    ]
+  },
+  {
+    "fixture": "valid-warning-only.graph.json",
+    "matrixCategory": "warning-only",
+    "valid": true,
+    "errors": [],
+    "warnings": [
+      {
+        "path": "$.graph.nodes.CUSTOM_KIND.kind",
+        "message": "Unknown node kind: future-wrapper"
+      },
+      {
+        "path": "$.graph.nodes.CUSTOM_KIND.status",
+        "message": "Unknown node status: waiting-for-signal"
+      },
+      {
+        "path": "$.graph.nodes.TASK_PARENT.kind",
+        "message": "Task node has children; scheduler will traverse it as an ordered internal node"
+      },
+      {
+        "path": "$.graph.nodes.GATE_PARENT.kind",
+        "message": "Gate node has children; scheduler will traverse it as an ordered internal node"
+      },
+      {
+        "path": "$.graph.nodes.DONE_WITH_LEASE.lease",
+        "message": "Lease is attached to status done; expected claimed, running, blocked, or review"
+      },
+      {
+        "path": "$.graph.nodes.ORPHAN.status",
+        "message": "Unknown node status: snoozed"
+      },
+      {
+        "path": "$.graph.nodes.ORPHAN",
+        "message": "Node is not reachable from root: ROOT"
+      }
+    ],
+    "covers": [
+      "warns:unknown-kind",
+      "warns:unknown-status",
+      "warns:task-with-children",
+      "warns:gate-with-children",
+      "warns:lease-status-compatibility",
+      "warns:unreachable-node",
+      "matrix:warning-only"
+    ]
+  },
+  {
+    "fixture": "invalid-malformed-json.graph.json",
+    "matrixCategory": "invalid",
+    "valid": false,
+    "parseError": true,
+    "errors": [
+      {
+        "path": "$",
+        "message": "Failed to parse graph file"
+      }
+    ],
+    "warnings": [],
+    "covers": [
+      "fails:json-parse",
+      "matrix:invalid"
+    ]
+  },
+  {
+    "fixture": "invalid-top-level-array.graph.json",
+    "valid": false,
+    "errors": [
+      {
+        "path": "$",
+        "message": "Expected graph file to be an object"
+      }
+    ],
+    "warnings": [],
+    "covers": [
+      "fails:graph-object"
+    ]
+  },
+  {
+    "fixture": "invalid-missing-graph.graph.json",
+    "valid": false,
+    "errors": [
+      {
+        "path": "$.graph",
+        "message": "Expected graph body to be an object"
+      }
+    ],
+    "warnings": [],
+    "covers": [
+      "fails:graph-body"
+    ]
+  },
+  {
+    "fixture": "invalid-missing-root.graph.json",
+    "valid": false,
+    "errors": [
+      {
+        "path": "$.graph.root",
+        "message": "Expected root node id string"
+      }
+    ],
+    "warnings": [],
+    "covers": [
+      "fails:root-string"
+    ]
+  },
+  {
+    "fixture": "invalid-root-missing-node.graph.json",
+    "valid": false,
+    "errors": [
+      {
+        "path": "$.graph.root",
+        "message": "Root node is not present in nodes: MISSING_ROOT"
+      }
+    ],
+    "warnings": [],
+    "covers": [
+      "fails:root-in-nodes"
+    ]
+  },
+  {
+    "fixture": "invalid-missing-nodes.graph.json",
+    "valid": false,
+    "errors": [
+      {
+        "path": "$.graph.nodes",
+        "message": "Expected node map object"
+      }
+    ],
+    "warnings": [],
+    "covers": [
+      "fails:nodes-map"
+    ]
+  },
+  {
+    "fixture": "invalid-node-not-object.graph.json",
+    "valid": false,
+    "errors": [
+      {
+        "path": "$.graph.root",
+        "message": "Root node is not present in nodes: ROOT"
+      },
+      {
+        "path": "$.graph.nodes.ROOT",
+        "message": "Expected node to be an object"
+      }
+    ],
+    "warnings": [],
+    "covers": [
+      "fails:node-object"
+    ]
+  },
+  {
+    "fixture": "invalid-non-array-children.graph.json",
+    "valid": false,
+    "errors": [
+      {
+        "path": "$.graph.nodes.ROOT.children",
+        "message": "Expected children to be an array of node id strings"
+      }
+    ],
+    "warnings": [],
+    "covers": [
+      "fails:children-array"
+    ]
+  },
+  {
+    "fixture": "invalid-non-string-child.graph.json",
+    "valid": false,
+    "errors": [
+      {
+        "path": "$.graph.nodes.ROOT.children[1]",
+        "message": "Expected children to be an array of node id strings"
+      }
+    ],
+    "warnings": [],
+    "covers": [
+      "fails:child-id-string"
+    ]
+  },
+  {
+    "fixture": "invalid-missing-child.graph.json",
+    "valid": false,
+    "errors": [
+      {
+        "path": "$.graph.nodes.ROOT.children[0]",
+        "message": "Unknown child node id: MISSING"
+      }
+    ],
+    "warnings": [],
+    "covers": [
+      "fails:child-exists"
+    ]
+  },
+  {
+    "fixture": "invalid-duplicate-child.graph.json",
+    "valid": false,
+    "errors": [
+      {
+        "path": "$.graph.nodes.ROOT.children[1]",
+        "message": "Duplicate child node id: A (first seen at $.graph.nodes.ROOT.children[0])"
+      }
+    ],
+    "warnings": [],
+    "covers": [
+      "fails:no-duplicate-child"
+    ]
+  },
+  {
+    "fixture": "invalid-cycle.graph.json",
+    "valid": false,
+    "errors": [
+      {
+        "path": "$.graph.nodes.A.children[0]",
+        "message": "Cycle detected: ROOT -> A -> ROOT"
+      }
+    ],
+    "warnings": [],
+    "covers": [
+      "fails:acyclic"
+    ]
+  },
+  {
+    "fixture": "invalid-empty-series.graph.json",
+    "valid": false,
+    "errors": [
+      {
+        "path": "$.graph.nodes.ROOT.children",
+        "message": "series node must define at least one child"
+      }
+    ],
+    "warnings": [],
+    "covers": [
+      "fails:non-empty-series"
+    ]
+  },
+  {
+    "fixture": "invalid-empty-parallel.graph.json",
+    "valid": false,
+    "errors": [
+      {
+        "path": "$.graph.nodes.ROOT.children",
+        "message": "parallel node must define at least one child"
+      }
+    ],
+    "warnings": [],
+    "covers": [
+      "fails:non-empty-parallel"
+    ]
+  },
+  {
+    "fixture": "invalid-lease-shape.graph.json",
+    "valid": false,
+    "errors": [
+      {
+        "path": "$.graph.nodes.ROOT.lease.runId",
+        "message": "Expected lease runId string"
+      }
+    ],
+    "warnings": [],
+    "covers": [
+      "fails:lease-shape"
+    ]
+  },
+  {
+    "fixture": "invalid-timestamp-shape.graph.json",
+    "valid": false,
+    "errors": [
+      {
+        "path": "$.graph.nodes.ROOT.startedAt",
+        "message": "Expected timestamp string"
+      }
+    ],
+    "warnings": [],
+    "covers": [
+      "fails:timestamp-shape"
+    ]
+  },
+  {
+    "fixture": "invalid-history-shape.graph.json",
+    "valid": false,
+    "errors": [
+      {
+        "path": "$.graph.nodes.ROOT.history[0].at",
+        "message": "Expected timestamp string"
+      },
+      {
+        "path": "$.graph.nodes.ROOT.history[0].event",
+        "message": "Expected history event string"
+      },
+      {
+        "path": "$.graph.nodes.ROOT.history[1]",
+        "message": "Expected history entry to be an object"
+      }
+    ],
+    "warnings": [],
+    "covers": [
+      "fails:history-shape"
+    ]
+  }
+]

@@ -1,81 +1,68 @@
 # Series-Parallel Graph Scheduler
 
-A filesystem-backed, CLI-controlled scheduler for running multiple Codex sessions against one evolving
-series-parallel implementation plan.
+A local, filesystem-backed scheduler for coordinating many Codex sessions,
+scripts, or human operators against one JSON series-parallel work graph.
 
-It is designed for operator-supervised work where many Codex CLI workers, scripts, or humans can safely claim
-independent tasks, keep moving in parallel, ask for human attention only when needed, and leave behind durable reports.
-The graph remains inspectable, versionable, and recoverable from plain files.
+The scheduler is built for trusted operator-supervised work. It claims only
+ready leaf tasks, records leases and status transitions in the graph file,
+keeps work inspectable as plain JSON, can spawn background Codex workers, and
+can serve a local browser visualizer.
 
-`plan.graph.json` is the source of truth. Its top-level `title` and `description` orient agents and tools before they inspect the graph topology. The checked-in graph is a compact launch-checklist example: small enough to scan, but large enough to show series order, parallel branches, nested branch-local sequencing, and a post-build integration gate. `plan.html` is the generated readable view.
-
-## Operating model
-
-This project treats an implementation plan as a series-parallel graph:
-
-- `series` nodes enforce ordered work.
-- `parallel` nodes expose independent branches that can run at the same time.
-- Leaf `task` nodes are the only units that Codex workers claim and execute.
-
-The scheduler is the control plane. It decides which leaf tasks are ready, grants leases so two workers do not perform
-the same task, records status transitions, and regenerates `plan.html` after graph updates. The CLI is primary because
-this workflow needs direct control over worker processes, filesystem state, recovery, reports, and automation.
-
-Slack is only the attention channel. When a worker needs operator discussion, it marks its task `blocked` and posts the
-question to Slack, while unrelated ready tasks continue in other sessions. When a worker finishes, it writes a report,
-marks the node done, and posts a quiet status notification with the report path and current graph state.
-
-Tasks can also be recursively refined. If a worker discovers that a claimed task is too large or underspecified, it can
-replace that leaf with a smaller series-parallel subgraph. That updates the shared plan dynamically without disturbing
-other running jobs.
-
-Use a different graph file with `--graph`:
-
-```bash
-npm run ready -- --graph /path/to/plan.graph.json
-npm run worker -- --graph /path/to/plan.graph.json --session codex-A --once
-npm run render -- --graph /path/to/plan.graph.json
-```
-
-Or set it once for a shell:
-
-```bash
-export PLAN_GRAPH=/path/to/plan.graph.json
-npm run ready
-npm run worker -- --session codex-A --once
-```
-
-## Graph validation
-
-Graph files are parsed as JSON first; malformed JSON reports the graph path and parse failure. After parsing, every scheduler command and the renderer load the graph through the same runtime validation before traversing or mutating it. Validation failures report the graph path plus a JSON-style issue path such as `$.graph.root` or `$.graph.nodes.ROOT.children`.
-
-The validator rejects graph files that are not JSON objects, are missing the `graph` body, have a missing or empty `graph.root`, have a missing or non-object `graph.nodes` map, point `graph.root` at an id that is not present in `graph.nodes`, define a node as a non-object value, define `children` as anything other than an array of strings, or list child ids that are absent from `graph.nodes`.
-
-Examples of invalid authoring mistakes:
-
-- `graph.root` is `ROOT`, but `graph.nodes.ROOT` does not exist.
-- `graph.nodes.ROOT.children` is `"A"` instead of `["A"]`.
-- `graph.nodes.ROOT.children` includes `["A", "MISSING"]`, but `graph.nodes.MISSING` is absent.
-- `graph.nodes.A` is a string, number, array, or null instead of an object.
-
-Validation is structural, not a full schema lock. Existing graph metadata remains allowed: top-level `title`, `description`, `scheduler`, `document`, graph-level metadata, node-level metadata, custom statuses, and custom kinds are preserved. Missing node `kind` still behaves like `task`, and missing `status` still behaves like `pending`.
+Public behavior is documented in
+[`docs/compatibility-boundaries.md`](docs/compatibility-boundaries.md). Security
+assumptions are documented in [`docs/security.md`](docs/security.md). Test and
+release gates are documented in [`docs/testing.md`](docs/testing.md), with the
+release hygiene bar in [`docs/quality-bar.md`](docs/quality-bar.md). Release
+notes are recorded in [`CHANGELOG.md`](CHANGELOG.md). Graph authoring guidance
+for humans and agents is in
+[`docs/graph-authoring.md`](docs/graph-authoring.md). Maintainer module
+boundaries and extension points are mapped in
+[`docs/architecture.md`](docs/architecture.md). Operational recovery steps are
+in [`docs/runbook.md`](docs/runbook.md).
 
 ## Quickstart
 
-Install dependencies once, then build and test the TypeScript CLI:
+Use Node.js `20.x`, `22.x`, or `24.x`. The repository sets
+`engine-strict=true`, so `npm ci` fails during dependency installation on
+unsupported Node versions instead of allowing later runtime surprises.
+
+Install dependencies and build the TypeScript entry points:
 
 ```bash
 npm install
 npm run build
-npm test
 ```
 
-Inspect the first ready task, claim it, and open the live visualizer:
+This repository currently checks in named graph files:
+
+- `plan-example.graph.json`: a completed demo graph with renderer document
+  content.
+- `plan-improve.graph.json`: the active improvement-plan graph for this
+  repository.
+
+The scheduler and renderer default to `plan.graph.json` when no graph is
+selected. That default filename is part of the compatibility contract, but this
+checkout does not include that file. Use `--graph`, set `PLAN_GRAPH`, or create
+your operating graph at `plan.graph.json`.
+
+Read the active graph without mutating it:
 
 ```bash
-npm run ready
-node scripts/plan-scheduler.mjs claim --session codex-A
-npm run serve -- --port 8787
+npm run summary -- --graph ./plan-improve.graph.json
+npm run ready -- --graph ./plan-improve.graph.json
+node scripts/plan-scheduler.mjs diagnostics --graph ./plan-improve.graph.json
+```
+
+Render the demo graph to an HTML file:
+
+```bash
+npm run render -- --graph ./plan-example.graph.json --out /tmp/spg-plan-example.html
+```
+
+Open the local visualizer for the active graph:
+
+```bash
+npm run serve -- --graph ./plan-improve.graph.json --cwd "$PWD" --port 8787
 ```
 
 Then open:
@@ -84,148 +71,665 @@ Then open:
 http://127.0.0.1:8787
 ```
 
-The visualizer binds to `127.0.0.1` by default. Its worker manager API can start and stop local Codex worker processes, so it is intended for trusted local use; do not bind it to a shared or public interface unless every client that can reach it is trusted.
+`serve` runs until stopped with `Ctrl-C`.
 
-The visualizer shows both active sessions and ready leaves. Active sessions include claimed, running, blocked, review, and failed nodes, with session/run/lease details when available. Blocked nodes include an inline answer box; submitting an answer records it and returns the task to the ready queue.
+## Operating Model
 
-Complete the claimed task with a report path:
+A plan graph has one root and a node map:
+
+- `series` nodes expose the first child subtree that is not done.
+- `parallel` nodes expose ready leaves from every unfinished child subtree.
+- Leaf `task` nodes are the normal claimable units of work.
+- `gate` and unknown node kinds are tolerated as metadata-bearing nodes; graph
+  traversal visits each child in listed order when present.
+
+Only leaf nodes are claimed, started, blocked, completed, failed, reset, or
+decomposed by normal worker commands. Internal series and parallel nodes become
+`done` when all child subtrees are done; `reconcile` applies that rule to an
+existing graph.
+
+Claims are leases. `claim` releases expired `claimed` and `running` leases
+before choosing work. Active workers renew their own lease while Codex runs, so
+a long task is not mistaken for a dead worker.
+
+Mutating commands write the graph through a filesystem lock and atomic rename,
+then regenerate the configured HTML view when the graph contains document
+content. Slack is only an attention channel: if `SLACK_WEBHOOK_URL` is set,
+`done`, `block`, `answer`, `fail`, and `decompose` send compact status
+notifications. Chat messages include the event, node id/title, graph version,
+status counts, and report path when available; detailed worker output, report
+bodies, and operator-provided question/answer/reason text stay in the graph and
+reports. Slack delivery is bounded by `SPG_SLACK_TIMEOUT_MS` and reported in
+command JSON, but it does not roll back or fail a successful graph mutation.
+The graph file remains the source of truth.
+
+## Graph Selection
+
+Use `--graph` for one command:
 
 ```bash
-node scripts/plan-scheduler.mjs done --node KICKOFF --session codex-A --report reports/KICKOFF.md
+npm run ready -- --graph ./plan-improve.graph.json
+node scripts/plan-scheduler.mjs summary --graph ./plan-improve.graph.json
+```
+
+Or set the default for a shell:
+
+```bash
+export PLAN_GRAPH="$PWD/plan-improve.graph.json"
 npm run ready
+npm run summary
 ```
 
-Answer a blocked task and return it to the ready queue:
+If neither `--graph` nor `PLAN_GRAPH` is set, scheduler commands resolve
+`plan.graph.json` from the package root. Renderer commands use `--graph`, then a
+positional graph path, then `PLAN_GRAPH`, then `plan.graph.json`.
+
+## Command Entry Points
+
+Prefer npm scripts for ordinary operation during development:
 
 ```bash
-node scripts/plan-scheduler.mjs answer --node WEB1 --answer "Use the CLI path first." --responder jason
+npm run ready -- --graph ./plan-improve.graph.json
+npm run summary -- --graph ./plan-improve.graph.json
+npm run render -- --graph ./plan-example.graph.json
+npm run serve -- --graph ./plan-improve.graph.json
 ```
 
-If `SLACK_WEBHOOK_URL` is set, `done`, `block`, `answer`, `fail`, and `decompose` post a quiet status notification to Slack. `done` includes the report path, but report details stay in the report file. You can create the report in the same command:
+Those scripts rebuild first and then invoke `dist/scripts/*.js`.
+
+Use direct compatibility wrappers when you need commands without an npm script,
+or when preserving the historical command shape matters:
 
 ```bash
-node scripts/plan-scheduler.mjs done --node KICKOFF --session codex-A --report reports/KICKOFF.md --report-body "Implemented scope agreement and acceptance checks."
+npm run build
+node scripts/plan-scheduler.mjs claim --graph ./plan-improve.graph.json --session codex-A
+node scripts/plan-scheduler.mjs prompt --graph ./plan-example.graph.json --node ROOT --session codex-A
+node scripts/render-plan.mjs --graph ./plan-example.graph.json --out /tmp/spg-plan-example.html
 ```
 
-## Background Codex workers
+The wrappers import built files from `dist/`, so run `npm run build` after
+changing TypeScript source. Package binaries `spg-scheduler` and
+`spg-render-plan` point at the same built files after package installation.
+The mutating `claim` example above is a command shape for an operating graph;
+use the disposable demo below for a copy/paste mutation flow.
 
-The scheduler can also run asynchronous Codex workers. A worker claims the next ready leaf, starts it, renders a prompt from `prompts/codex-worker-task.md`, runs Codex non-interactively, writes a report, and marks the node done or failed.
-Claims are leases. When a worker dies before marking a node done, another claim attempt automatically releases expired claimed/running leases before selecting work. Active workers renew their own lease while Codex is running, so a long-running task is not mistaken for a dead worker.
+## Disposable Demo
 
-Run one node and exit:
+Use a temporary graph when trying mutating commands:
 
 ```bash
-npm run worker -- --session codex-A --once --cwd /Users/jasonhan/Documents/Blackjack
+cat > /tmp/spg-demo.graph.json <<'JSON'
+{
+  "title": "Demo Plan",
+  "description": "A one-task scheduler demo.",
+  "graph": {
+    "root": "ROOT",
+    "nodes": {
+      "ROOT": {
+        "title": "Run the demo",
+        "kind": "series",
+        "status": "pending",
+        "children": ["A"]
+      },
+      "A": {
+        "title": "Complete one task",
+        "kind": "task",
+        "status": "pending"
+      }
+    }
+  }
+}
+JSON
 ```
 
-Run several background workers:
+Claim, start, complete, and inspect the demo task:
 
 ```bash
-mkdir -p runs/logs
-npm run worker -- --session codex-A --cwd /Users/jasonhan/Documents/Blackjack > runs/logs/codex-A.log 2>&1 &
-npm run worker -- --session codex-B --cwd /Users/jasonhan/Documents/Blackjack > runs/logs/codex-B.log 2>&1 &
-npm run worker -- --session codex-C --cwd /Users/jasonhan/Documents/Blackjack > runs/logs/codex-C.log 2>&1 &
+node scripts/plan-scheduler.mjs claim --graph /tmp/spg-demo.graph.json --session codex-A
+node scripts/plan-scheduler.mjs start --graph /tmp/spg-demo.graph.json --node A --session codex-A
+SLACK_WEBHOOK_URL= node scripts/plan-scheduler.mjs done --graph /tmp/spg-demo.graph.json --node A --session codex-A --report reports/A.md --report-body "Demo task complete."
+npm run summary -- --graph /tmp/spg-demo.graph.json
 ```
 
-Or start the visualizer with a default repository path and use the Worker Manager panel to launch and stop a pool from the browser:
+The report path is relative to the graph directory. For the example above, the
+report is written under `/tmp/reports/`.
+
+## Scheduler Commands
+
+The disposable demo sequence above is the copy/paste flow. The command lists in
+this section are state-dependent command shapes; mutating lines require the node
+to be in one of that command's allowed source statuses.
+
+Read-only commands:
 
 ```bash
-npm run serve -- --graph /path/to/plan.graph.json --cwd /Users/jasonhan/Documents/Blackjack --port 8787
+node scripts/plan-scheduler.mjs ready --graph /tmp/spg-demo.graph.json
+node scripts/plan-scheduler.mjs summary --graph /tmp/spg-demo.graph.json
+node scripts/plan-scheduler.mjs diagnostics --graph /tmp/spg-demo.graph.json
+node scripts/plan-scheduler.mjs events --graph /tmp/spg-demo.graph.json --limit 20
+node scripts/plan-scheduler.mjs prompt --graph /tmp/spg-demo.graph.json --node A --session codex-A
 ```
 
-The worker manager stores the repository path, session prefix, count, Codex command, and Codex arguments in the browser. Starting ten or fifty workers is one form submission instead of ten or fifty shell commands, and each managed worker appears with its process id, state, and recent output.
-
-Add `--graph /path/to/plan.graph.json` to those commands, or set `PLAN_GRAPH`, when running a graph outside this package directory. For example, to run this TypeScript migration plan instead of the default example graph:
+Worker-owned leaf commands:
 
 ```bash
-npm run ready -- --graph ./plan-typescript-migration.graph.json
-npm run worker -- --graph ./plan-typescript-migration.graph.json --session codex-A --once --cwd /Users/jasonhan/Documents/Blackjack/series-parallel-graph-scheduler
-npm run serve -- --graph ./plan-typescript-migration.graph.json --cwd /Users/jasonhan/Documents/Blackjack/series-parallel-graph-scheduler --port 8787
+node scripts/plan-scheduler.mjs claim --graph /tmp/spg-demo.graph.json --session codex-A
+node scripts/plan-scheduler.mjs start --graph /tmp/spg-demo.graph.json --node A --session codex-A
+node scripts/plan-scheduler.mjs renew --graph /tmp/spg-demo.graph.json --node A --session codex-A --lease 1800
+node scripts/plan-scheduler.mjs done --graph /tmp/spg-demo.graph.json --node A --session codex-A --report reports/A.md
+node scripts/plan-scheduler.mjs block --graph /tmp/spg-demo.graph.json --node A --session codex-A --question "Need operator decision"
+node scripts/plan-scheduler.mjs fail --graph /tmp/spg-demo.graph.json --node A --session codex-A --reason "Runner failed"
+node scripts/plan-scheduler.mjs decompose --graph /tmp/spg-demo.graph.json --node A --session codex-A --kind series --child A1="Draft" --child A2="Verify"
 ```
 
-Render the prompt without running Codex:
+Operator and recovery commands:
 
 ```bash
-node scripts/plan-scheduler.mjs prompt --node KICKOFF --session codex-A
+node scripts/plan-scheduler.mjs answer --graph /tmp/spg-demo.graph.json --node A --answer "Proceed." --responder jason
+node scripts/plan-scheduler.mjs reset --graph /tmp/spg-demo.graph.json --node A --reason "retry"
+node scripts/plan-scheduler.mjs reset-subtree --graph /tmp/spg-demo.graph.json --node ROOT --reason "rerun all"
+node scripts/plan-scheduler.mjs reset-reachable --graph /tmp/spg-demo.graph.json --node A --reason "rerun downstream"
+node scripts/plan-scheduler.mjs reconcile --graph /tmp/spg-demo.graph.json
+node scripts/plan-scheduler.mjs release-expired --graph /tmp/spg-demo.graph.json
 ```
 
-By default the worker runs:
+Commands that mutate a leased node require the matching `--session` or `--run`.
+`answer`, `reset`, `reset-subtree`, `reset-reachable`, `reconcile`, and
+`release-expired` are operator or system commands and do not require lease-owner
+credentials.
+
+## Incident Triage
+
+Use `diagnostics` when a graph looks idle, wedged, or unsafe to mutate. It is
+read-only JSON, so it can be piped to `jq` or captured in incident notes:
+
+```bash
+node scripts/plan-scheduler.mjs diagnostics --graph ./plan-improve.graph.json
+node scripts/plan-scheduler.mjs diagnostics --graph ./plan-improve.graph.json | jq '.actions'
+node scripts/plan-scheduler.mjs diagnostics --graph ./plan-improve.graph.json | jq '{ready: .nextReady[].id, blocked: [.blocked[].id], failed: [.failed[].id], expired: [.leases.expired[].id]}'
+node scripts/plan-scheduler.mjs events --graph ./plan-improve.graph.json --limit 20
+```
+
+The diagnostic payload contains the normal `summary`, `nextReady`, active and
+expired lease lists, blocked/review nodes, failed nodes, graph lock state, and a
+short `actions` array. Common recovery flow:
+
+```bash
+node scripts/plan-scheduler.mjs diagnostics --graph ./plan-improve.graph.json
+node scripts/plan-scheduler.mjs release-expired --graph ./plan-improve.graph.json
+node scripts/plan-scheduler.mjs answer --graph ./plan-improve.graph.json --node NODE --answer "Proceed." --responder operator
+node scripts/plan-scheduler.mjs reset --graph ./plan-improve.graph.json --node NODE --reason "retry after triage"
+```
+
+If `.lock.exists` is true, inspect `.lock.owner` before manual cleanup. A stale
+lock should only be removed after confirming the owner process is gone; otherwise
+wait for the scheduler, renderer, or worker that owns the lock.
+
+Use `events` when diagnostics shows a stuck node and you need the recent audit
+trail without parsing each node's `history` array by hand:
+
+```bash
+node scripts/plan-scheduler.mjs events --graph ./plan-improve.graph.json --node NODE --limit 10
+node scripts/plan-scheduler.mjs events --graph ./plan-improve.graph.json --event blocked | jq '.[] | {at, nodeId, status, session, runId, details}'
+```
+
+Each event record has stable `at`, `event`, `nodeId`, `status`, `session`,
+`runId`, `timestamps`, and redacted `details` fields. Check the newest event for
+the stuck node first, then use the matching recovery command from
+`diagnostics.actions`: `release-expired` for expired leases, `answer` for
+blocked questions, or `reset`/`reset-reachable` for failed work that should be
+retried.
+
+## Operational Events
+
+Graph history uses stable event names so operators can reconstruct lifecycle
+order from a node history or the flattened `events` export. New mutation entries use `claimed`, `running`,
+`renewed`, `done`, `blocked`, `answered`, `failed`, `reset`, `decomposed`,
+`expired`, `subtree-done`, and `child-reset`. `reset` entries include
+`resetScope` to distinguish single-node, subtree, and reachable resets.
+Git isolation also reserves `clone-prepared`, `branch-created`,
+`output-ref-recorded`, `merge-attempted`, `merge-conflicted`, and
+`parent-ref-published` for ref and merge audit trails.
+
+The visualizer worker manager uses `worker-started` and `worker-stopped` in
+worker log tails. Lock diagnostics reserve `lock-acquired`, `lock-released`,
+`lock-stale-reaped`, and `lock-timeout`.
+
+See [`docs/operational-events.md`](docs/operational-events.md) for the event
+taxonomy, stable fields, and redaction rules for secret-shaped values.
+
+## Graph Validation
+
+Every scheduler and renderer load parses JSON first, then validates the graph
+before traversal or mutation. Fatal validation errors name the graph path and a
+JSON-style issue path such as `$.graph.root` or
+`$.graph.nodes.ROOT.children[0]`.
+
+Before running workers on a hand-edited graph, use a read-only load command:
+
+```bash
+npm run summary -- --graph ./plan-improve.graph.json
+```
+
+Swap in the path to the graph you edited.
+
+Validation rejects:
+
+- A graph file that is not a JSON object.
+- Missing or invalid `graph`, `graph.root`, or `graph.nodes`.
+- A root id that is not present in `graph.nodes`.
+- Node values that are not objects.
+- `children` values that are not arrays of strings.
+- Child ids missing from `graph.nodes`.
+- Duplicate child ids in one child list.
+- Child-reference cycles.
+- Empty `series` or `parallel` nodes.
+- Malformed lease, history, or timestamp fields.
+
+Validation also produces non-fatal warnings for tolerated compatibility cases,
+including unreachable nodes, unknown custom statuses or kinds, and lease/status
+combinations the scheduler can still load.
+
+See [`docs/graph-authoring.md`](docs/graph-authoring.md) for valid `series`,
+`parallel`, `gate`, and `task` node guidance, a nested series-parallel example,
+blocked and answered metadata, extensible metadata rules, and common invalid
+graph mistakes with corrected versions.
+
+For editor integration, point JSON tooling at
+[`schemas/plan-graph.schema.json`](schemas/plan-graph.schema.json). Regenerate
+it after graph contract or validator changes with:
+
+```bash
+npm run schema:graph
+```
+
+Useful fixtures live under `tests/fixtures/graphs/`:
+
+```bash
+npm run summary -- --graph tests/fixtures/graphs/valid-basic.graph.json
+npm run summary -- --graph tests/fixtures/graphs/invalid-missing-root.graph.json
+```
+
+The second command is expected to fail; it is useful when checking diagnostics.
+
+## Visualizer Safety
+
+The visualizer is a trusted local operator tool. It can show graph state, active
+sessions, ready leaves, blocked questions, report paths, worker process ids, and
+recent worker output. Its Worker Manager can start and stop local processes.
+
+Default loopback mode:
+
+```bash
+npm run serve -- --graph ./plan-improve.graph.json --cwd "$PWD" --port 8787
+```
+
+The default host is `127.0.0.1`. Binding to a non-loopback host refuses to start
+unless write routes are protected with a token or unsafe mode is explicitly
+enabled.
+
+Safe non-loopback mode:
+
+```bash
+npm run serve -- --graph ./plan-improve.graph.json --host 0.0.0.0 --port 8787 --visualizer-write-token "replace-with-a-token"
+```
+
+For browser controls, put the token in the URL fragment:
+
+```text
+http://HOST:8787/#write-token=TOKEN
+```
+
+Explicit unsafe mode is only for a trusted network boundary where every
+reachable client may start and stop workers. It requires the explicit
+`--unsafe-visualizer-write` flag and prints a warning that unauthenticated
+write controls are exposed:
+
+```bash
+npm run serve -- --graph ./plan-improve.graph.json --host 0.0.0.0 --port 8787 --unsafe-visualizer-write
+```
+
+See [`docs/security.md`](docs/security.md) before exposing the visualizer beyond
+loopback.
+
+## Worker Usage
+
+The worker command claims a ready leaf, starts it, renders a prompt from
+`prompts/codex-worker-task.md`, runs a child command, writes a report, and marks
+the node `done` or `failed`.
+
+Run one real Codex worker and exit. This requires the Codex CLI and a ready
+node:
+
+```bash
+npm run worker -- --graph ./plan-improve.graph.json --session codex-A --once --cwd "$PWD"
+```
+
+By default the child command is:
 
 ```bash
 codex exec "<rendered prompt>"
 ```
 
-The worker sets the child process working directory from `--cwd`.
-Worker output is verbose by default: stdout and stderr from the Codex process are streamed to the worker process and also captured in the report file. When a daemon worker has no ready job, it shows a waiting spinner in an interactive terminal, or a periodic waiting line in redirected logs. Add `--quiet` to capture output without streaming it live and suppress waiting output.
-
-You can provide a custom runner for testing or a different Codex CLI shape:
+Run a harmless worker against the disposable demo graph:
 
 ```bash
-node scripts/plan-scheduler.mjs worker --session codex-A --once --codex-command /path/to/runner --codex-arg arg1 --codex-arg arg2
-node scripts/plan-scheduler.mjs worker --session codex-A --once --codex-arg=--model=gpt-5
-node scripts/plan-scheduler.mjs worker --session codex-A --once --codex-arg=--dangerously-bypass-approvals-and-sandbox
+node scripts/plan-scheduler.mjs reset --graph /tmp/spg-demo.graph.json --node A --reason "worker demo"
+SLACK_WEBHOOK_URL= npm run worker -- --graph /tmp/spg-demo.graph.json --session codex-A --once --quiet --codex-command node --codex-arg=-e --codex-arg="process.exit(0)"
 ```
+
+Run several background workers. This also requires the Codex CLI and ready work:
+
+```bash
+mkdir -p runs/logs
+npm run worker -- --graph ./plan-improve.graph.json --session codex-A --cwd "$PWD" > runs/logs/codex-A.log 2>&1 &
+npm run worker -- --graph ./plan-improve.graph.json --session codex-B --cwd "$PWD" > runs/logs/codex-B.log 2>&1 &
+npm run worker -- --graph ./plan-improve.graph.json --session codex-C --cwd "$PWD" > runs/logs/codex-C.log 2>&1 &
+```
+
+### Git-Isolated Workers
+
+Shared-cwd workers remain available with `--isolation off`, the default. Isolated
+worker operation is intentionally Git-only: there is no non-Git isolation mode
+and `--cwd` is not a fallback for isolated workers.
+
+Git isolation requires a concrete remote in `scheduler.remote` so the worker can
+prepare its local bare repository cache and per-run clones automatically:
+
+```json
+{
+  "scheduler": {
+    "remote": "git@github.com:example/repo.git"
+  }
+}
+```
+
+Set `scheduler.remote` in the graph before starting a pool, or pass a temporary
+worker override with `--remote`:
+
+```bash
+npm run worker -- --graph ./plan-improve.graph.json --session codex-A --once --isolation git
+npm run worker -- --graph ./plan-improve.graph.json --session codex-B --once --isolation git --remote git@github.com:example/repo.git
+```
+
+In `--isolation git`, the worker validates the remote before claim, initializes
+or refreshes `runs/git/cache/repo.git`, creates a fresh clone under
+`runs/workspaces/<safe-session>/<safe-node-id>/<safe-run-id>`, checks out a
+unique `spg/node/<node-id>/<run-id>` branch, runs the child command inside that
+clone, and records the clone, base ref, work ref, and output ref in the report.
+Operators do not pre-create the cache repository or workspaces.
+
+Parent composition is buffered through Git refs instead of a shared branch.
+`series` parents pass each child output ref to the next child and publish the
+parent output as an alias of the final child output. `parallel` parents start all
+children from the same composition base, then merge child output refs in
+`children` order into a dedicated parent integration ref. Merge conflicts leave
+the parent blocked or in review with the integration workspace and child refs in
+the report; see [`docs/runbook.md`](docs/runbook.md) for recovery.
+
+Worker options:
+
+- `--once`: claim at most one node and exit.
+- `--quiet`: capture child output in the report without streaming it live.
+- `--node ID`: target one ready node.
+- `--cwd PATH`: set the child process working directory; default is the graph
+  directory.
+- `--template PATH`: use a custom Markdown prompt template; relative paths
+  resolve from the graph directory.
+- `--timeout-ms MS`: fail the worker run if the child exceeds the runtime.
+- `--lease SECONDS`: override the graph scheduler lease duration.
+- `--codex-command PATH`: use a different child command.
+- `--codex-arg ARG`: repeat to customize child args. Use
+  `--codex-arg=--flag` when the value starts with `-`.
+- `--isolation off|git`: choose shared-cwd or Git-backed isolated worker mode.
+- `--remote URL`: temporary Git remote override for `--isolation git`; otherwise
+  the worker reads `scheduler.remote`.
+- `--workspace-root PATH`: parent directory for Git-isolated per-run clones.
+- `--workspace-retention on-failure|always|never`: clone cleanup policy for
+  Git-isolated runs.
+
+Default worker reports go to:
+
+```text
+reports/<safe-node-id>-<safe-run-id>.md
+```
+
+Report paths are graph-directory relative unless an absolute path inside the
+graph directory is supplied. Paths that escape the graph directory are rejected.
+
+## Renderer Usage
+
+The renderer reads graph `document` content and writes a static HTML plan view
+with an embedded planar SVG.
+
+Render with npm:
+
+```bash
+npm run render -- --graph ./plan-example.graph.json --out /tmp/spg-plan-example.html
+```
+
+Render with the compatibility wrapper:
+
+```bash
+npm run build
+node scripts/render-plan.mjs --graph ./plan-example.graph.json --out /tmp/spg-plan-example.html
+```
+
+Renderer input resolution is, in order: `--graph`, the first positional
+argument, `PLAN_GRAPH`, then `plan.graph.json`. Relative graph paths resolve
+from the package root, matching scheduler commands.
+
+Renderer output resolution is, in order: `--output`, `--out`, the second
+positional argument, `graph.scheduler.htmlView`, then `plan.html`. Relative
+output paths resolve from the input graph directory; absolute output paths are
+used as supplied. Output files are replaced atomically, so a render failure
+leaves any existing HTML file untouched. A graph without `document` content
+cannot be rendered as static documentation and does not write an output file.
+
+After scheduler mutations, the scheduler regenerates the configured HTML view
+only when the graph has a `document` field.
+
+## Checks
+
+Authoritative local checks:
+
+```bash
+npm ci
+npm run format:check
+npm run lint
+npm run check
+npm run typecheck
+npm run audit:dependencies
+npm run schema:graph
+npm run build
+npm test
+npm run coverage:core
+npx playwright install chromium
+npm run test:visualizer
+npm run smoke:migration
+npm run release:check
+```
+
+Run `npm run check` before handing off changes. It runs the newline and
+trailing-whitespace policy, ESLint, and TypeScript `--noEmit` checks in that
+order. `npm run lint` covers `scripts/**/*.ts`, `scripts/**/*.mjs`,
+`tests/**/*.ts`, `tests/**/*.mjs`, and `eslint.config.mjs`; it intentionally
+ignores `dist/`, `reports/`, `runs/`, `logs/`, rendered plan HTML, and other
+runtime outputs.
+
+The lint policy is deliberately small: ESLint recommended rules, TypeScript
+recommended rules, and a few consistency rules that catch common review noise
+and likely bugs such as loose equality, missing braces, implicit coercion,
+undefined JavaScript names, and unused TypeScript symbols. Formatting remains
+limited to line endings, final newlines, and trailing whitespace so the project
+does not require a broad formatter migration.
+
+`npm run audit:dependencies` enforces an empty production dependency surface,
+checks dev dependency licenses against the repository allowlist, and runs the
+moderate-level npm vulnerability audit.
+
+`npm test` runs typecheck, build, and the Node behavior suite. The smoke test
+exercises real built entry points with relative and absolute graph paths, a
+harmless worker, renderer output, and visualizer startup. See
+[`docs/testing.md`](docs/testing.md) for the test-layer map, CI artifact
+capture, and the release gate. GitHub CI installs Chromium and treats the
+real-browser visualizer check as required; a local environment exception is only
+valid when the exact browser or bind restriction is recorded and the check is
+rerun in a supported environment before release verification is complete.
+Use [`docs/release-checklist.md`](docs/release-checklist.md) before tagging or
+handing off a package candidate; it covers version notes, build and smoke gates,
+package dry-run contents, and the expected commit boundary. `npm run
+release:check` runs dependency policy checks and prints the package version,
+changelog-note status, built binary targets, content checks, and the full
+dry-run package manifest for that checklist.
 
 ## Files
 
-- `plan.graph.json`: canonical graph state.
-- `plan.html`: generated human-readable plan view.
-- `plan-typescript-migration.graph.json`: migration work graph; pass it with `--graph` or `PLAN_GRAPH`.
-- `docs/compatibility-boundaries.md`: public CLI, graph, visualizer, worker, report, and renderer behavior that hardening work should preserve.
-- `package.json`: npm scripts, package binaries, and TypeScript dev dependencies.
-- `tsconfig.json`: TypeScript compiler settings for the scheduler, renderer, visualizer, and worker modules.
-- `scripts/plan-scheduler.ts`: scheduler CLI and live visualizer server.
-- `scripts/render-plan.ts`: renders `plan.html` from `plan.graph.json`.
-- `scripts/*.mjs`: compatibility wrappers and smoke-test harnesses; scheduler logic lives in TypeScript and runs from `dist/` after `npm run build`.
-- `dist/`: generated JavaScript output; rebuilt by npm scripts and not treated as source.
-- `tests/plan-scheduler.test.mjs`: scheduler behavior tests.
+- `plan-example.graph.json`: completed sample graph with renderer document
+  content.
+- `plan-improve.graph.json`: active repository-improvement graph.
+- `prompts/codex-worker-task.md`: default worker prompt template.
+- `scripts/plan-scheduler.ts`: scheduler CLI, exports, and visualizer server
+  integration.
+- `scripts/render-plan.ts`: static HTML renderer.
+- `scripts/*.mjs`: compatibility wrappers and smoke harnesses; wrappers import
+  built files from `dist/`.
+- `scripts/contracts.ts`: public TypeScript contracts and graph validation.
+- `scripts/node-mutations.ts`: scheduler transition implementation.
+- `scripts/graph-io.ts`: graph reads, validation, locking, atomic writes, and
+  report path containment.
+- `scripts/benchmark-lock-contention.ts`: manual release benchmark for p95 graph
+  mutation latency under lock contention.
+- `eslint.config.mjs`: lightweight lint policy for source scripts and tests;
+  generated output and runtime artifacts stay ignored.
+- `tests/package-smoke.test.mjs`: npm script, package bin, and built entry
+  smoke contracts.
+- `tests/validation-contracts.test.mjs`: graph validation, schema, graph IO,
+  locks, report containment, and operational event contracts.
+- `tests/scheduler-mutations.test.mjs`: readiness, scheduler lifecycle,
+  transition, reset, and decompose behavior.
+- `tests/cli-goldens.test.mjs`: CLI parsing, command failures, help, and golden
+  output contracts.
+- `tests/worker-runtime.test.mjs`: worker prompt, isolation, Git runtime, Codex
+  process, lease heartbeat, and output-ref behavior.
+- `tests/visualizer-renderer.test.mjs`: visualizer server APIs, Slack
+  notifications, layout, HTML escaping, and static renderer behavior.
+- `tests/regressions.test.mjs`: focused historical bug regressions.
+- `tests/doc-examples.test.mjs`: README quickstart, disposable demo,
+  diagnostics, renderer, and visualizer-startup example smoke tests.
+- `tests/visualizer-browser.test.mjs`: optional Chromium visualizer suite.
+- `docs/compatibility-boundaries.md`: public compatibility contract.
+- `docs/architecture.md`: maintainer module boundaries and extension points.
+- `docs/graph-authoring.md`: graph authoring guidance for humans and agents.
+- `docs/security.md`: trust model and safe operator checklist.
+- `docs/testing.md`: test architecture and release gate.
+- `docs/release-checklist.md`: release checklist and package contents review.
+- `docs/quality-bar.md`: quality and release hygiene bar.
+- `docs/operational-events.md`: operational event names and history fields.
+- `docs/lock-strategy-decision.md`: graph lock design decision.
+- `docs/lock-contention-benchmark.md`: manual graph lock contention benchmark.
+- `docs/mutation-ownership.md`: graph field ownership rules for scheduler
+  mutations.
+- `docs/output-safety-audit.md`: output escaping and report-safety audit.
+- `docs/runbook.md`: troubleshooting and recovery steps for operators.
+- `docs/technical-debt.md`: maintainability debt register and complexity
+  guardrails.
+- `docs/worker-isolation-remote-cache.md`: Git-isolated worker remote and cache
+  contract.
 
-## Commands
+## Troubleshooting
 
-```bash
-npm install
-npm run format:check
-npm run typecheck
-npm run build
-npm test
-npm run smoke:migration
-npm run render
-npm run ready
-npm run summary
-npm run serve -- --port 8787
-npm run worker -- --session codex-A --once
-```
+For detailed symptoms, diagnosis commands, and recovery actions, see
+[`docs/runbook.md`](docs/runbook.md).
 
-The CLI npm scripts build before invoking the scheduler or renderer, so they are the safest operator entry points during development. Direct `node scripts/*.mjs` commands use compatibility wrappers that import `dist/scripts/*.js`; run `npm run build` first after changing TypeScript source.
+`ENOENT: no such file or directory, open '.../plan.graph.json'`
 
-## Migration parity smoke
+Pass `--graph`, set `PLAN_GRAPH`, or create your operating graph at
+`plan.graph.json`.
 
-Run this after CLI or TypeScript migration changes:
+`Cannot find module '../dist/scripts/plan-scheduler.js'`
 
-```bash
-npm run smoke:migration
-```
+Run `npm run build` before using `node scripts/plan-scheduler.mjs` or
+`node scripts/render-plan.mjs`.
 
-The smoke script creates temporary graphs and exercises `ready`, `summary`, `prompt`, `worker`, `reconcile`, `render`, and `serve` startup through the real command entry points. The worker path uses a local harmless runner and clears `SLACK_WEBHOOK_URL`, so it does not require a live Codex run or Slack. It runs once from the package directory with a relative `--graph`, then again from another directory with an absolute `--graph`.
+`No ready nodes`
 
-Direct CLI usage:
+Run `diagnostics` to inspect next-ready work, blocked and failed leaves,
+expired leases, and graph lock state. If work should be available, run
+`release-expired` for expired claimed/running leases, answer or reset blocked
+nodes, inspect and reset failed nodes, or run `reconcile` if internal parent
+statuses look stale.
 
-```bash
-node scripts/plan-scheduler.mjs ready
-node scripts/plan-scheduler.mjs claim --session codex-A
-node scripts/plan-scheduler.mjs start --node KICKOFF --session codex-A
-node scripts/plan-scheduler.mjs renew --node KICKOFF --session codex-A
-node scripts/plan-scheduler.mjs reset --node KICKOFF --reason "retry with fresh context"
-node scripts/plan-scheduler.mjs reset-subtree --node PHASE_2 --reason "rerun phase 2"
-node scripts/plan-scheduler.mjs reset-reachable --node TS3 --reason "rerun from TS3"
-node scripts/plan-scheduler.mjs done --node KICKOFF --session codex-A --report reports/KICKOFF.md
-node scripts/plan-scheduler.mjs block --node WEB1 --session codex-A --question "Need operator decision"
-node scripts/plan-scheduler.mjs answer --node WEB1 --answer "Proceed with option A." --responder jason
-node scripts/plan-scheduler.mjs decompose --node WEB1 --session codex-A --kind series --child WEB1a="Draft shell" --child WEB1b="Review shell"
-node scripts/plan-scheduler.mjs prompt --node WEB1 --session codex-A
-node scripts/plan-scheduler.mjs worker --graph plan.graph.json --session codex-A --once
-node scripts/plan-scheduler.mjs reconcile --graph plan.graph.json
-node scripts/plan-scheduler.mjs serve --port 8787
-```
+`Node lease is owned by another session`
 
-Leased nodes require the claiming `--session` or `--run` id for normal mutation. `answer` is an operator command for blocked leaves: it records the operator response, clears the lease, and returns the task to `pending` so a worker can claim it with the question and answer in its node JSON. `reset` is also an operator command: it clears a leaf task back to `pending`, removes its lease/report/timestamps, and reopens any completed ancestors so the task becomes ready when its dependencies are satisfied. `reset-subtree` clears a node and every child-reachable descendant without reopening parents above the selected node. `reset-reachable` clears the selected node, its descendants, and later execution-reachable series work, without resetting parents above the selected node. Internal series/parallel nodes are marked `done` automatically when every child subtree is done; `reconcile` applies that rule to an existing graph. The scheduler writes graph updates atomically with a filesystem lock. `plan.graph.json` is the source of truth; `plan.html` is regenerated atomically from the latest graph after updates.
+Use the claiming `--session` or `--run`, or ask the operator to reset, answer,
+or release expired work when appropriate.
+
+`Invalid graph file ...`
+
+Read the JSON-style issue path in the error. Most failures are missing roots,
+missing child ids, non-array `children`, duplicate children, cycles, or malformed
+lease/timestamp fields.
+
+`plan.graph.json is missing document content`
+
+The static renderer needs graph `document` content. Use `plan-example.graph.json`
+for renderer checks or add a document model to the operating graph.
+
+`serve` refuses a non-loopback host
+
+Use `--visualizer-write-token TOKEN`, keep the default `127.0.0.1`, or pass
+`--unsafe-visualizer-write` only on a trusted network.
+
+`Timed out waiting for graph lock`
+
+Run `diagnostics --graph <graph>` and check `.lock.owner`. If no owner process
+is alive and the graph is readable, inspect `<graph>.lock/metadata.json` before
+removing stale lock directories. Otherwise wait for the active scheduler,
+renderer, or worker process to finish.
+
+`spawn codex ENOENT`
+
+Install the Codex CLI or pass `--codex-command` with a command available in the
+worker environment.
+
+`Worker isolation requires scheduler.remote`
+
+Set `scheduler.remote` in the graph to a concrete Git remote, or pass
+`--remote <url>` with `--isolation git`. Git isolation prepares its own cache and
+clone; non-Git isolation is intentionally unsupported.
+
+## More Documentation
+
+- Compatibility contract:
+  [`docs/compatibility-boundaries.md`](docs/compatibility-boundaries.md)
+- Maintainer architecture:
+  [`docs/architecture.md`](docs/architecture.md)
+- Graph authoring:
+  [`docs/graph-authoring.md`](docs/graph-authoring.md)
+- Graph JSON Schema:
+  [`schemas/plan-graph.schema.json`](schemas/plan-graph.schema.json)
+- Security model:
+  [`docs/security.md`](docs/security.md)
+- Testing and release gate:
+  [`docs/testing.md`](docs/testing.md)
+- Release checklist:
+  [`docs/release-checklist.md`](docs/release-checklist.md)
+- Release hygiene and quality bar:
+  [`docs/quality-bar.md`](docs/quality-bar.md)
+- Operational events:
+  [`docs/operational-events.md`](docs/operational-events.md)
+- Locking design:
+  [`docs/lock-strategy-decision.md`](docs/lock-strategy-decision.md)
+- Lock contention benchmark:
+  [`docs/lock-contention-benchmark.md`](docs/lock-contention-benchmark.md)
+- Mutation ownership:
+  [`docs/mutation-ownership.md`](docs/mutation-ownership.md)
+- Output safety:
+  [`docs/output-safety-audit.md`](docs/output-safety-audit.md)
+- Runbook:
+  [`docs/runbook.md`](docs/runbook.md)
+- Technical debt:
+  [`docs/technical-debt.md`](docs/technical-debt.md)
+- Worker isolation:
+  [`docs/worker-isolation-remote-cache.md`](docs/worker-isolation-remote-cache.md)

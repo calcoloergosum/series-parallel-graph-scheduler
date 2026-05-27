@@ -3,6 +3,18 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
+  "files": [
+    "CHANGELOG.md",
+    "dist/scripts/",
+    "dist/prompts/",
+    "prompts/",
+    "scripts/plan-scheduler.mjs",
+    "scripts/render-plan.mjs",
+    "scripts/sp-layout.mjs",
+    "schemas/",
+    "docs/",
+    "plan-example.graph.json"
+  ],
   "bin": {
     "spg-scheduler": "./dist/scripts/plan-scheduler.js",
     "spg-render-plan": "./dist/scripts/render-plan.js"
@@ -13,18 +25,36 @@
     "serve": "npm run build --silent && node dist/scripts/plan-scheduler.js serve",
     "worker": "npm run build --silent && node dist/scripts/plan-scheduler.js worker",
     "render": "npm run build --silent && node dist/scripts/render-plan.js",
+    "schema:graph": "npm run build --silent && node dist/scripts/generate-graph-schema.js",
     "smoke:migration": "npm run build && node scripts/migration-smoke.mjs",
+    "smoke:package": "npm run build && node scripts/package-smoke.mjs",
     "clean": "node -e \"require('node:fs').rmSync('dist', { recursive: true, force: true })\"",
     "format:check": "node scripts/check-format.mjs",
+    "audit:dependencies": "node scripts/dependency-audit.mjs && npm audit --audit-level=moderate",
+    "guardrails": "npm run build --silent && node dist/scripts/complexity-guardrails.js",
+    "guardrails:update": "npm run build --silent && node dist/scripts/complexity-guardrails.js --update-docs",
+    "lint": "eslint \"scripts/**/*.{ts,mjs}\" \"tests/**/*.{ts,mjs}\" eslint.config.mjs --max-warnings=0",
+    "check": "npm run format:check && npm run lint && npm run typecheck",
+    "release:check": "npm run guardrails && npm run audit:dependencies && npm run smoke:package",
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "build": "npm run clean && tsc -p tsconfig.json && node -e \"const fs=require('node:fs'); fs.cpSync('prompts', 'dist/prompts', { recursive: true, force: true }); for (const f of ['dist/scripts/plan-scheduler.js', 'dist/scripts/render-plan.js']) fs.chmodSync(f, 0o755)\"",
-    "test": "npm run typecheck && npm run build && node --test --test-timeout 10000 tests/plan-scheduler.test.mjs"
+    "build": "node scripts/build.mjs",
+    "test": "npm run typecheck && npm run build && node --test --test-timeout 120000 tests/package-smoke.test.mjs tests/validation-contracts.test.mjs tests/scheduler-mutations.test.mjs tests/cli-goldens.test.mjs tests/worker-runtime.test.mjs tests/visualizer-renderer.test.mjs tests/regressions.test.mjs tests/doc-examples.test.mjs tests/complexity-guardrails.test.mjs",
+    "coverage:core": "npm run build && SPG_TEST_USE_ORIGINAL_DIST=1 c8 --all --src dist/scripts --include \"dist/scripts/graph-traversal.js\" --include \"dist/scripts/node-mutations.js\" --include \"dist/scripts/graph-io.js\" --include \"dist/scripts/cli.js\" --include \"dist/scripts/worker.js\" --include \"dist/scripts/visualizer.js\" --reporter=text --reporter=lcov --report-dir=coverage/core --temp-directory=coverage/tmp --clean --check-coverage --per-file --branches 65 --functions 80 --lines 0 --statements 0 node --test --test-concurrency=1 --test-timeout 120000 tests/package-smoke.test.mjs tests/validation-contracts.test.mjs tests/scheduler-mutations.test.mjs tests/cli-goldens.test.mjs tests/worker-runtime.test.mjs tests/visualizer-renderer.test.mjs tests/regressions.test.mjs tests/doc-examples.test.mjs",
+    "test:visualizer": "npm run build && node --test --test-timeout 45000 tests/visualizer-browser.test.mjs",
+    "stress:deterministic": "npm run build --silent && node dist/scripts/stress-concurrency.js --iterations 100",
+    "benchmark:lock-contention": "npm run build --silent && node dist/scripts/benchmark-lock-contention.js"
   },
   "engines": {
-    "node": ">=20"
+    "node": "20.x || 22.x || 24.x"
   },
   "devDependencies": {
+    "@eslint/js": "^9.39.4",
+    "@playwright/test": "^1.60.0",
     "@types/node": "^20.19.41",
-    "typescript": "^6.0.3"
+    "c8": "^11.0.0",
+    "eslint": "^9.39.4",
+    "globals": "^17.6.0",
+    "typescript": "^6.0.3",
+    "typescript-eslint": "^8.60.0"
   }
 }

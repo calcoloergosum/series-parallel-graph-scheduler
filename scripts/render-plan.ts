@@ -1,16 +1,19 @@
 #!/usr/bin/env node
-import { rename, writeFile } from "node:fs/promises";
+import { realpathSync } from "node:fs";
 import { dirname, resolve } from "node:path";
+import { fileURLToPath, pathToFileURL } from "node:url";
+import { isRecord } from "./contracts.js";
 import type {
+  PlanGraphFile,
   RendererCallout,
   RendererDocument,
-  RendererMetaItem,
-  RendererNavItem,
   RendererSection,
   RendererTable
 } from "./contracts.js";
-import { readGraph } from "./graph-io.js";
+import { printCliError } from "./cli-errors.js";
+import { readGraph, writeTextFileAtomic } from "./graph-io.js";
 import { runtimePathsFromModuleUrl } from "./runtime-paths.js";
+import { classToken, escapeHtml } from "./shared-utils.js";
 import { renderPlanarSvg } from "./sp-layout.js";
 
 interface ParsedArgs {
@@ -22,21 +25,27 @@ interface ParsedArgs {
 }
 
 const { rootDir } = runtimePathsFromModuleUrl(import.meta.url);
-const args = parseArgs(process.argv.slice(2));
-const inputPath = resolve(rootDir, stringArg(args.graph) || args._[0] || process.env.PLAN_GRAPH || "plan.graph.json");
+let graph: PlanGraphFile;
+let rendererDocument: RendererDocument;
 
-const graph = await readGraph(inputPath);
-const documentModel = graph.document;
-const outputPath = resolve(
-  dirname(inputPath),
-  stringArg(args.output) || stringArg(args.out) || args._[1] || graph.scheduler?.htmlView || "plan.html"
-);
+export async function main(argv = process.argv.slice(2), env = process.env): Promise<void> {
+  const args = parseArgs(argv);
+  const inputPath = resolve(rootDir, stringArg(args.graph) || args._[0] || env.PLAN_GRAPH || "plan.graph.json");
+  graph = await readGraph(inputPath);
+  const documentModel = graph.document;
+  const outputPath = resolve(
+    dirname(inputPath),
+    stringArg(args.output) || stringArg(args.out) || args._[1] || graph.scheduler?.htmlView || "plan.html"
+  );
 
-if (!documentModel) {
-  throw new Error("plan.graph.json is missing document content");
+  if (!documentModel) {
+    throw new Error("plan.graph.json is missing document content");
+  }
+
+  rendererDocument = documentModel;
+  await writeTextFileAtomic(outputPath, renderHtml());
+  console.log(`Rendered ${outputPath} from ${inputPath}`);
 }
-
-const rendererDocument: RendererDocument = documentModel;
 
 function parseArgs(argv: string[]): ParsedArgs {
   const parsed: ParsedArgs = { _: [] };
@@ -62,16 +71,12 @@ function stringArg(value: string | boolean | string[] | undefined): string | und
   return typeof value === "string" ? value : undefined;
 }
 
-function escapeHtml(value: unknown): string {
-  return String(value)
-    .replaceAll("&", "&amp;")
-    .replaceAll("<", "&lt;")
-    .replaceAll(">", "&gt;")
-    .replaceAll('"', "&quot;");
-}
-
 function safeHref(value: unknown): string {
-  const href = String(value ?? "").trim();
+  const href = String(value ?? "")
+    // eslint-disable-next-line no-control-regex -- Strip ASCII control characters from generated attributes.
+    .replaceAll(/[\u0000-\u001f\u007f]/g, "")
+    .trim();
+  // eslint-disable-next-line no-control-regex -- Strip ASCII control characters before URL scheme validation.
   const compact = href.replaceAll(/[\u0000-\u001f\u007f\s]/g, "");
   const scheme = compact.match(/^([a-zA-Z][a-zA-Z0-9+.-]*):/)?.[1]?.toLowerCase();
   if (!scheme || scheme === "http" || scheme === "https" || scheme === "mailto") {
@@ -86,14 +91,38 @@ function renderRichText(value: unknown): string {
     .replaceAll("&lt;/code&gt;", "</code>");
 }
 
+function textOrEmpty(value: unknown): string {
+  return typeof value === "string" ? value : "";
+}
+
+function textOrFallback(value: unknown, fallback: string): string {
+  const text = textOrEmpty(value).trim();
+  return text || fallback;
+}
+
+function stringArray(value: unknown): string[] {
+  return Array.isArray(value) ? value.map((item) => textOrEmpty(item)) : [];
+}
+
+function planTitle(): string {
+  return textOrFallback(graph.title, "Series-Parallel Plan");
+}
+
 function renderNav(nav: RendererDocument["nav"]): string {
   if (!Array.isArray(nav) || nav.length === 0) {
     return "";
   }
 
   const links = nav
-    .map((item: RendererNavItem) => `<a href="${escapeHtml(safeHref(item.href))}">${escapeHtml(item.label)}</a>`)
+    .filter(isRecord)
+    .map((item) => {
+      const label = textOrFallback(item.label, "Link");
+      return `<a href="${escapeHtml(safeHref(item.href))}">${escapeHtml(label)}</a>`;
+    })
     .join(" / ");
+  if (!links) {
+    return "";
+  }
   return `  <p>${links}</p>\n`;
 }
 
@@ -103,12 +132,16 @@ function renderMeta(meta: RendererDocument["meta"]): string {
   }
 
   const items = meta
-    .map((item: RendererMetaItem) => `    <div>\n      <strong>${escapeHtml(item.label)}</strong>\n      ${escapeHtml(item.value)}\n    </div>`)
+    .filter(isRecord)
+    .map((item) => `    <div>\n      <strong>${escapeHtml(textOrFallback(item.label, "Metadata"))}</strong>\n      ${escapeHtml(textOrEmpty(item.value))}\n    </div>`)
     .join("\n");
+  if (!items) {
+    return "";
+  }
   return `  <div class="meta">\n${items}\n  </div>\n`;
 }
 
-function renderParagraphs(paragraphs: string[] | undefined): string {
+function renderParagraphs(paragraphs: unknown): string {
   if (!Array.isArray(paragraphs)) {
     return "";
   }
@@ -116,67 +149,100 @@ function renderParagraphs(paragraphs: string[] | undefined): string {
   return paragraphs.map((paragraph) => `  <p>\n    ${escapeHtml(paragraph)}\n  </p>\n`).join("\n");
 }
 
-function renderTable(table: RendererTable | undefined): string {
-  if (!table) {
+function renderTable(table: RendererTable | undefined, headingId: string): string {
+  if (!isRecord(table)) {
     return "";
   }
 
-  const headers = table.columns.map((column) => `        <th>${escapeHtml(column)}</th>`).join("\n");
-  const rows = table.rows
+  const rows = Array.isArray(table.rows) ? table.rows.filter(Array.isArray) : [];
+  const providedColumns = stringArray(table.columns);
+  const columnCount = Math.max(providedColumns.length, ...rows.map((row) => row.length), 0);
+  if (columnCount === 0) {
+    return "";
+  }
+
+  const heading = textOrFallback(table.heading, "Table");
+  const columns = Array.from({ length: columnCount }, (_, index) => providedColumns[index] || `Column ${index + 1}`);
+  const headers = columns.map((column) => `          <th scope="col">${escapeHtml(column)}</th>`).join("\n");
+  const bodyRows = rows
     .map((row) => {
-      const cells = row.map((cell) => `        <td>${renderRichText(cell)}</td>`).join("\n");
-      return `      <tr>\n${cells}\n      </tr>`;
+      const cells = Array.from({ length: columnCount }, (_, index) => `          <td>${renderRichText(row[index] ?? "")}</td>`).join("\n");
+      return `        <tr>\n${cells}\n        </tr>`;
     })
     .join("\n");
 
-  return `  <h2>${escapeHtml(table.heading)}</h2>\n  <table>\n    <thead>\n      <tr>\n${headers}\n      </tr>\n    </thead>\n    <tbody>\n${rows}\n    </tbody>\n  </table>\n`;
+  return `  <h2 id="${headingId}">${escapeHtml(heading)}</h2>
+  <div class="table-viewport">
+    <table aria-labelledby="${headingId}">
+      <thead>
+        <tr>
+${headers}
+        </tr>
+      </thead>
+      <tbody>
+${bodyRows}
+      </tbody>
+    </table>
+  </div>\n`;
 }
 
 function renderSection(section: RendererSection): string {
+  if (!isRecord(section)) {
+    return "";
+  }
   const paragraphs = renderParagraphs(section.paragraphs);
-  const flow = section.flow ? `  <div class="flow">${escapeHtml(section.flow)}</div>\n` : "";
-  return `  <h2>${escapeHtml(section.heading)}</h2>\n${paragraphs}${flow}`;
+  const flowText = textOrEmpty(section.flow);
+  const flow = flowText ? `  <div class="flow">${escapeHtml(flowText)}</div>\n` : "";
+  return `  <h2>${escapeHtml(textOrFallback(section.heading, "Section"))}</h2>\n${paragraphs}${flow}`;
 }
 
 function renderGraphFigure(): string {
   return `  <section class="graph-section" aria-labelledby="graph-heading">
     <h2 id="graph-heading">Planar Graph View</h2>
-    <div class="graph-viewport">
+    <figure class="graph-figure" aria-labelledby="graph-heading graph-caption">
+      <div class="graph-viewport" role="region" aria-label="Scrollable planar graph diagram" tabindex="0">
 ${renderPlanarSvg(graph)}
-    </div>
+      </div>
+      <figcaption id="graph-caption">Series-parallel dependency graph for ${escapeHtml(planTitle())}.</figcaption>
+    </figure>
   </section>\n`;
 }
 
 function renderCallout(callout: RendererCallout): string {
-  const className = escapeHtml(callout.type || "callout");
-  const strong = callout.strong ? `\n    <strong>${escapeHtml(callout.strong)}</strong>\n    ` : "";
+  if (!isRecord(callout)) {
+    return "";
+  }
+  const className = escapeHtml(classToken(callout.type, "callout"));
+  const strongText = textOrEmpty(callout.strong);
+  const strong = strongText ? `\n    <strong>${escapeHtml(strongText)}</strong>\n    ` : "";
   return `  <div class="${className}">${strong}${renderRichText(callout.bodyHtml)}\n  </div>\n`;
 }
 
 function renderBody(): string {
   const parts: string[] = [];
   parts.push(renderNav(rendererDocument.nav));
-  parts.push(`  <h1>${escapeHtml(graph.title)}</h1>\n`);
+  parts.push(`  <h1>${escapeHtml(planTitle())}</h1>\n`);
   parts.push(renderMeta(rendererDocument.meta));
   parts.push(renderParagraphs(rendererDocument.intro));
   parts.push(renderGraphFigure());
-  parts.push(renderTable(rendererDocument.notation));
-  for (const section of rendererDocument.sections || []) {
+  parts.push(renderTable(rendererDocument.notation, "notation-heading"));
+  for (const section of Array.isArray(rendererDocument.sections) ? rendererDocument.sections : []) {
     parts.push(renderSection(section));
   }
-  parts.push(renderTable(rendererDocument.gates));
-  for (const callout of rendererDocument.callouts || []) {
+  parts.push(renderTable(rendererDocument.gates, "gates-heading"));
+  for (const callout of Array.isArray(rendererDocument.callouts) ? rendererDocument.callouts : []) {
     parts.push(renderCallout(callout));
   }
   return parts.join("\n");
 }
 
-const html = `<!doctype html>
+function renderHtml(): string {
+  return `<!doctype html>
 <html lang="en">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>${escapeHtml(rendererDocument.pageTitle || graph.title)}</title>
+  <title>${escapeHtml(textOrFallback(rendererDocument.pageTitle, planTitle()))}</title>
   <style>
     :root {
       --bg: #f7f8fa;
@@ -256,7 +322,6 @@ const html = `<!doctype html>
     table {
       width: 100%;
       border-collapse: collapse;
-      margin: 18px 0 24px;
       font-size: 14px;
     }
 
@@ -265,6 +330,7 @@ const html = `<!doctype html>
       padding: 10px 12px;
       vertical-align: top;
       text-align: left;
+      overflow-wrap: anywhere;
     }
 
     th {
@@ -339,6 +405,10 @@ const html = `<!doctype html>
       margin-top: 34px;
     }
 
+    .graph-figure {
+      margin: 0;
+    }
+
     .graph-viewport {
       border: 1px solid var(--line);
       border-radius: 8px;
@@ -350,10 +420,26 @@ const html = `<!doctype html>
     .sp-graph {
       display: block;
       min-width: 1080px;
-      width: 100%;
+      width: auto;
+      max-width: none;
       height: auto;
       color: var(--ink);
       font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    }
+
+    figcaption {
+      margin-top: 8px;
+      color: var(--muted);
+      font-size: 13px;
+    }
+
+    .table-viewport {
+      overflow-x: auto;
+      margin: 18px 0 24px;
+    }
+
+    .table-viewport table {
+      min-width: 100%;
     }
 
     .sp-frame rect {
@@ -438,9 +524,8 @@ const html = `<!doctype html>
         grid-template-columns: 1fr;
       }
 
-      table {
-        display: block;
-        overflow-x: auto;
+      .sp-graph {
+        min-width: 760px;
       }
     }
   </style>
@@ -451,8 +536,22 @@ ${renderBody()}</main>
 </body>
 </html>
 `;
+}
 
-const tempOutputPath = `${outputPath}.${process.pid}.${Date.now()}.tmp`;
-await writeFile(tempOutputPath, html, "utf8");
-await rename(tempOutputPath, outputPath);
-console.log(`Rendered ${outputPath} from ${inputPath}`);
+function isDirectEntrypoint(): boolean {
+  if (!process.argv[1]) {
+    return false;
+  }
+  try {
+    return realpathSync(fileURLToPath(import.meta.url)) === realpathSync(process.argv[1]);
+  } catch {
+    return import.meta.url === pathToFileURL(process.argv[1]).href;
+  }
+}
+
+if (isDirectEntrypoint()) {
+  main().catch((error: unknown) => {
+    printCliError(error, process.env);
+    process.exitCode = 1;
+  });
+}

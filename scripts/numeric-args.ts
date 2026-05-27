@@ -9,8 +9,10 @@ export interface NumericArgumentOptions {
 export const numericArgumentRanges = {
   leaseSeconds: { min: 1, max: 86_400, integer: true },
   idleMs: { min: 1, max: 86_400_000, integer: true },
+  timeoutMs: { min: 1, max: 86_400_000, integer: true },
   port: { min: 0, max: 65_535, integer: true },
-  workerCount: { min: 1, max: 100, integer: true }
+  workerCount: { min: 1, max: 100, integer: true },
+  eventLimit: { min: 1, max: 10_000, integer: true }
 } as const;
 
 type NumericArgumentValue = string | number | boolean | null | undefined | Array<string | number | boolean | null | undefined>;

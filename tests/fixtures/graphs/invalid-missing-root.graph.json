@@ -1,0 +1,11 @@
+{
+  "graph": {
+    "nodes": {
+      "ROOT": {
+        "title": "Root",
+        "kind": "task",
+        "status": "pending"
+      }
+    }
+  }
+}

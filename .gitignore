@@ -3,17 +3,26 @@
 !.env.example
 
 node_modules/
+dist/
 
 # Scheduler runtime output
 plan.graph.json
-plan.html
+*.html
 runs/
 logs/
 reports/
+coverage/
+ci-artifacts/
+tmp/
+temp/
+.tmp/
 *.log
 *.tmp
+*.tgz
 *.lock
-plan.graph.json.lock/
+*.lock/
+*.lock.reaper/
+*.lock.reap.*/
 
 # OS/editor noise
 .DS_Store

@@ -8,6 +8,7 @@ import type {
   PlanGraphFile,
   PlanarLayout
 } from "./contracts.js";
+import { classToken, escapeHtml } from "./shared-utils.js";
 
 type LayoutEdgeKind = "series" | "parallel" | "frame";
 type ResolvedLayoutOptions = Required<Omit<LayoutOptions, "layout">>;
@@ -294,7 +295,7 @@ export function renderPlanarSvg(graph: PlanGraphFile, options: LayoutOptions = {
     "</g>"
   ].join("\n");
 
-  return `<svg class="sp-graph" viewBox="0 0 ${width} ${height}" role="img" aria-label="${escapeHtml(graph.title || "Series-parallel graph")}">\n${body}\n</svg>`;
+  return `<svg class="sp-graph" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}" role="img" aria-label="${escapeHtml(graph.title || "Series-parallel graph")}">\n${body}\n</svg>`;
 }
 
 function renderDefs(): string {
@@ -309,7 +310,7 @@ function renderFrames(frames: LayoutFrame[]): string[] {
   return [...frames]
     .sort((a, b) => a.depth - b.depth)
     .map((frame) => {
-      const className = `sp-frame status-${classToken(frame.status)}`;
+      const className = `sp-frame status-${classToken(frame.status, "pending")}`;
       return `<g class="${className}" data-id="${escapeHtml(frame.id)}">
   <rect x="${round(frame.x)}" y="${round(frame.y)}" width="${round(frame.width)}" height="${round(frame.height)}" rx="8"/>
   <text x="${round(frame.x + 12)}" y="${round(frame.y + 22)}"><tspan class="sp-frame-id">${escapeHtml(frame.id)}</tspan> ${escapeHtml(frame.kind)}</text>
@@ -332,8 +333,8 @@ function renderTerminal(point: LayoutPoint, label: string): string {
 }
 
 function renderBox(box: LayoutBox): string {
-  const titleLines = wrapLabel(box.title, 26, 2);
-  const className = `sp-node status-${classToken(box.status)}`;
+  const titleLines = wrapLabel(box.title, 22, 2);
+  const className = `sp-node status-${classToken(box.status, "pending")}`;
   const idY = box.y + 20;
   const titleY = box.y + 42;
   const titleSpans = titleLines
@@ -379,18 +380,6 @@ function wrapLabel(value: string, maxChars: number, maxLines: number): string[] 
   }
 
   return lines.length > 0 ? lines : [""];
-}
-
-function classToken(value: string): string {
-  return String(value || "pending").toLowerCase().replaceAll(/[^a-z0-9_-]/g, "-");
-}
-
-function escapeHtml(value: unknown): string {
-  return String(value)
-    .replaceAll("&", "&amp;")
-    .replaceAll("<", "&lt;")
-    .replaceAll(">", "&gt;")
-    .replaceAll('"', "&quot;");
 }
 
 function round(value: number): number {

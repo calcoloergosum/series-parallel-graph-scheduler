@@ -1,0 +1,19 @@
+{
+  "graph": {
+    "root": "ROOT",
+    "nodes": {
+      "ROOT": {
+        "title": "Root",
+        "kind": "task",
+        "status": "pending",
+        "history": [
+          {
+            "at": "not-a-timestamp",
+            "event": 42
+          },
+          "not an object"
+        ]
+      }
+    }
+  }
+}

@@ -1,0 +1,13 @@
+{
+  "graph": {
+    "root": "ROOT",
+    "nodes": {
+      "ROOT": {
+        "title": "Root",
+        "kind": "parallel",
+        "status": "pending",
+        "children": []
+      }
+    }
+  }
+}

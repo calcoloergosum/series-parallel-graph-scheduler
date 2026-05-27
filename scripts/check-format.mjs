@@ -4,7 +4,15 @@ import { extname, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const rootDir = resolve(fileURLToPath(new URL("..", import.meta.url)));
-const explicitFiles = ["README.md", "package.json", "package-lock.json", "plan-example.graph.json", "tsconfig.json"];
+const explicitFiles = [
+  "CHANGELOG.md",
+  "README.md",
+  "eslint.config.mjs",
+  "package.json",
+  "package-lock.json",
+  "plan-example.graph.json",
+  "tsconfig.json"
+];
 const scannedDirs = ["docs", "prompts", "scripts", "tests"];
 const scannedExtensions = new Set([".md", ".mjs", ".ts"]);
 

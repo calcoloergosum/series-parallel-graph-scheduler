@@ -1,0 +1,536 @@
+{
+  "help": {
+    "exitCode": 0,
+    "stdout": "Usage:\n  node scripts/plan-scheduler.mjs <command> [flags]\n  node scripts/plan-scheduler.mjs help\n  node scripts/plan-scheduler.mjs --help\n\nGraph selection:\n  --graph PATH              Optional for every command. Default: PLAN_GRAPH, then plan.graph.json.\n\nCommands:\n  ready\n    Required: none\n    Optional: --graph PATH\n    Example: node scripts/plan-scheduler.mjs ready --graph plan.graph.json\n\n  summary\n    Required: none\n    Optional: --graph PATH\n    Example: node scripts/plan-scheduler.mjs summary --graph plan.graph.json\n\n  diagnostics\n    Required: none\n    Optional: --graph PATH\n    Example: node scripts/plan-scheduler.mjs diagnostics --graph plan.graph.json\n\n  events\n    Required: none\n    Optional: --graph PATH, --limit COUNT (default: 50), --node ID, --event NAME\n    Example: node scripts/plan-scheduler.mjs events --graph plan.graph.json --limit 20\n\n  claim\n    Required: none\n    Optional: --graph PATH, --session NAME (default: codex), --node ID, --lease SECONDS (default: graph scheduler.leaseSeconds, then 1800)\n    Example: node scripts/plan-scheduler.mjs claim --session codex-A --lease 1800\n\n  start\n    Required: --node ID\n    Optional: --graph PATH, --session NAME, --run RUN_ID\n    Example: node scripts/plan-scheduler.mjs start --node KICKOFF --session codex-A\n\n  renew\n    Required: --node ID\n    Optional: --graph PATH, --session NAME, --run RUN_ID, --lease SECONDS (default: graph scheduler.leaseSeconds, then 1800)\n    Example: node scripts/plan-scheduler.mjs renew --node KICKOFF --session codex-A --lease 1800\n\n  reset\n    Required: --node ID\n    Optional: --graph PATH, --reason TEXT\n    Example: node scripts/plan-scheduler.mjs reset --node KICKOFF --reason \"retry with fresh context\"\n\n  reset-subtree\n    Required: --node ID\n    Optional: --graph PATH, --reason TEXT\n    Example: node scripts/plan-scheduler.mjs reset-subtree --node PHASE_2 --reason \"rerun phase 2\"\n\n  reset-reachable\n    Required: --node ID\n    Optional: --graph PATH, --reason TEXT\n    Example: node scripts/plan-scheduler.mjs reset-reachable --node TS3 --reason \"rerun from TS3\"\n\n  done\n    Required: --node ID\n    Optional: --graph PATH, --session NAME, --run RUN_ID, --report PATH, --report-body TEXT\n    Example: node scripts/plan-scheduler.mjs done --node KICKOFF --session codex-A --report reports/KICKOFF.md\n\n  block\n    Required: --node ID\n    Optional: --graph PATH, --session NAME, --run RUN_ID, --question TEXT, --reason TEXT\n    Example: node scripts/plan-scheduler.mjs block --node WEB1 --session codex-A --question \"Need operator decision\"\n\n  answer\n    Required: --node ID, --answer TEXT\n    Optional: --graph PATH, --responder NAME\n    Example: node scripts/plan-scheduler.mjs answer --node WEB1 --answer \"Proceed with option A.\" --responder jason\n\n  fail\n    Required: --node ID\n    Optional: --graph PATH, --session NAME, --run RUN_ID, --reason TEXT, --report PATH\n    Example: node scripts/plan-scheduler.mjs fail --node WEB1 --session codex-A --reason \"Tests failed\"\n\n  decompose\n    Required: --node ID and --child ID=Title repeated, or --child-json JSON\n    Optional: --graph PATH, --session NAME, --run RUN_ID, --kind series|parallel (default: series)\n    Example: node scripts/plan-scheduler.mjs decompose --node WEB1 --session codex-A --kind series --child WEB1a=\"Draft shell\" --child WEB1b=\"Review shell\"\n\n  prompt\n    Required: --node ID\n    Optional: --graph PATH, --session NAME, --run RUN_ID, --template PATH (default: prompts/codex-worker-task.md), --cwd PATH (default: graph directory), --report PATH\n    Example: node scripts/plan-scheduler.mjs prompt --node WEB1 --session codex-A\n\n  worker\n    Required: none\n    Optional: --graph PATH, --session NAME (default: codex-worker), --node ID, --once, --quiet, --cwd PATH (default: graph directory), --template PATH (default: prompts/codex-worker-task.md), --idle-ms MS (default: 5000), --timeout-ms MS, --lease SECONDS, --codex-command PATH (default: codex), --codex-arg ARG repeated (default: exec), --isolation off|git (default: off), --remote URL (default: scheduler.remote), --workspace-root PATH (default: runs/workspaces), --workspace-retention on-failure|always|never (default: on-failure)\n    Example: node scripts/plan-scheduler.mjs worker --graph plan.graph.json --session codex-A --once\n\n  reconcile\n    Required: none\n    Optional: --graph PATH\n    Example: node scripts/plan-scheduler.mjs reconcile --graph plan.graph.json\n\n  release-expired\n    Required: none\n    Optional: --graph PATH\n    Example: node scripts/plan-scheduler.mjs release-expired --graph plan.graph.json\n\n  serve\n    Required: none\n    Optional: --graph PATH, --port PORT (default: 8787), --host HOST (default: 127.0.0.1), --cwd PATH (default: graph directory), --visualizer-write-token TOKEN, --unsafe-visualizer-write\n    Example: node scripts/plan-scheduler.mjs serve --host 127.0.0.1 --port 8787\n\nFlag types:\n  Boolean flags take no value: --help, --once, --quiet, --unsafe-visualizer-write.\n  Repeatable flags: --child ID=Title or ID:Title; --codex-arg ARG. Use --codex-arg=--flag when the value starts with \"-\".\n  Numeric flags are integers: --lease 1..86400 seconds, --idle-ms 1..86400000, --timeout-ms 1..86400000, --port 0..65535, --limit 1..10000.\n  Path flags: --graph selects the graph; --report stays inside the graph directory; --template resolves from the graph directory; --cwd controls worker process cwd.\n  Isolation flags: --isolation git requires scheduler.remote unless --remote URL is supplied; --workspace-root selects isolated clone placement; --workspace-retention controls clone cleanup.\n\nEnvironment:\n  PLAN_GRAPH                Default graph path when --graph is omitted.\n  SLACK_WEBHOOK_URL         Enables notifications for done, block, answer, fail, and decompose.\n  SPG_SLACK_TIMEOUT_MS      Slack notification timeout in milliseconds. Default: 5000.\n  SPG_DEBUG=1               Include stack traces in CLI errors.\n  SPG_GRAPH_LOCK_TIMEOUT_MS Lock wait timeout in milliseconds. Default: 5000.",
+    "stderr": ""
+  },
+  "ready": {
+    "exitCode": 0,
+    "stdout": [
+      {
+        "id": "A",
+        "title": "Bootstrap",
+        "kind": "task",
+        "status": "pending"
+      }
+    ],
+    "stderr": ""
+  },
+  "summary": {
+    "exitCode": 0,
+    "stdout": {
+      "graphVersion": 1,
+      "title": "Fixture Implementation Plan",
+      "description": "Coordinate fixture work across a series root, parallel branches, and a final gate.",
+      "totalNodes": 6,
+      "root": "ROOT",
+      "counts": {
+        "pending": 6
+      }
+    },
+    "stderr": ""
+  },
+  "diagnostics": {
+    "exitCode": 0,
+    "stdout": {
+      "generatedAt": "<iso-date>",
+      "graphPath": "<graphPath>",
+      "summary": {
+        "graphVersion": 1,
+        "title": "Fixture Implementation Plan",
+        "description": "Coordinate fixture work across a series root, parallel branches, and a final gate.",
+        "totalNodes": 6,
+        "root": "ROOT",
+        "counts": {
+          "pending": 6
+        }
+      },
+      "nextReady": [
+        {
+          "id": "A",
+          "title": "Bootstrap",
+          "kind": "task",
+          "status": "pending"
+        }
+      ],
+      "leases": {
+        "active": [],
+        "expired": []
+      },
+      "blocked": [],
+      "failed": [],
+      "isolation": {
+        "activeWorkers": [],
+        "missingOutputRefs": [],
+        "unresolvedBufferConflicts": []
+      },
+      "lock": {
+        "path": "<graphPath>.lock",
+        "exists": false,
+        "staleMs": 600000,
+        "stale": false,
+        "nextSteps": [
+          "No graph lock is present."
+        ]
+      },
+      "actions": [
+        "1 ready leaf node(s) can be claimed next."
+      ],
+      "remediation": [
+        {
+          "category": "ready-work",
+          "severity": "info",
+          "summary": "1 ready leaf node(s) can be claimed.",
+          "commands": [
+            {
+              "command": "node scripts/plan-scheduler.mjs claim --graph <graphPath>",
+              "description": "Claim the next ready leaf using the scheduler's selection policy.",
+              "safeToRun": true
+            }
+          ]
+        }
+      ]
+    },
+    "stderr": ""
+  },
+  "events": {
+    "exitCode": 0,
+    "stdout": [
+      {
+        "at": "<iso-date>",
+        "event": "claimed",
+        "nodeId": "A",
+        "status": "claimed",
+        "session": "golden-events",
+        "runId": "<run-id>",
+        "timestamps": {
+          "at": "<iso-date>",
+          "leaseExpiresAt": "<iso-date>"
+        },
+        "details": {
+          "previousStatus": "pending"
+        }
+      }
+    ],
+    "stderr": ""
+  },
+  "claim": {
+    "exitCode": 0,
+    "stdout": {
+      "nodeId": "A",
+      "title": "Bootstrap",
+      "runId": "<run-id>",
+      "lease": {
+        "session": "golden-claim",
+        "runId": "<run-id>",
+        "claimedAt": "<iso-date>",
+        "expiresAt": "<iso-date>"
+      },
+      "releasedExpired": [],
+      "summary": {
+        "graphVersion": 2,
+        "title": "Fixture Implementation Plan",
+        "description": "Coordinate fixture work across a series root, parallel branches, and a final gate.",
+        "totalNodes": 6,
+        "root": "ROOT",
+        "counts": {
+          "pending": 5,
+          "claimed": 1
+        }
+      }
+    },
+    "stderr": ""
+  },
+  "start": {
+    "exitCode": 0,
+    "stdout": {
+      "nodeId": "A",
+      "status": "running",
+      "title": "Bootstrap",
+      "summary": {
+        "graphVersion": 3,
+        "title": "Fixture Implementation Plan",
+        "description": "Coordinate fixture work across a series root, parallel branches, and a final gate.",
+        "totalNodes": 6,
+        "root": "ROOT",
+        "counts": {
+          "pending": 5,
+          "running": 1
+        }
+      }
+    },
+    "stderr": ""
+  },
+  "renew": {
+    "exitCode": 0,
+    "stdout": {
+      "nodeId": "A",
+      "lease": {
+        "session": "golden-renew",
+        "runId": "<run-id>",
+        "claimedAt": "<iso-date>",
+        "expiresAt": "<iso-date>",
+        "renewedAt": "<iso-date>"
+      },
+      "summary": {
+        "graphVersion": 3,
+        "title": "Fixture Implementation Plan",
+        "description": "Coordinate fixture work across a series root, parallel branches, and a final gate.",
+        "totalNodes": 6,
+        "root": "ROOT",
+        "counts": {
+          "pending": 5,
+          "claimed": 1
+        }
+      }
+    },
+    "stderr": ""
+  },
+  "reset": {
+    "exitCode": 0,
+    "stdout": {
+      "nodeId": "A",
+      "status": "pending",
+      "resetAncestors": [],
+      "summary": {
+        "graphVersion": 3,
+        "title": "Fixture Implementation Plan",
+        "description": "Coordinate fixture work across a series root, parallel branches, and a final gate.",
+        "totalNodes": 6,
+        "root": "ROOT",
+        "counts": {
+          "pending": 6
+        }
+      }
+    },
+    "stderr": ""
+  },
+  "resetSubtree": {
+    "exitCode": 0,
+    "stdout": {
+      "nodeId": "P",
+      "resetNodes": [
+        "P",
+        "B",
+        "C"
+      ],
+      "summary": {
+        "graphVersion": 2,
+        "title": "Fixture Implementation Plan",
+        "description": "Coordinate fixture work across a series root, parallel branches, and a final gate.",
+        "totalNodes": 6,
+        "root": "ROOT",
+        "counts": {
+          "pending": 5,
+          "done": 1
+        }
+      }
+    },
+    "stderr": ""
+  },
+  "resetReachable": {
+    "exitCode": 0,
+    "stdout": {
+      "nodeId": "A",
+      "resetNodes": [
+        "A",
+        "P",
+        "B",
+        "C",
+        "G"
+      ],
+      "summary": {
+        "graphVersion": 2,
+        "title": "Fixture Implementation Plan",
+        "description": "Coordinate fixture work across a series root, parallel branches, and a final gate.",
+        "totalNodes": 6,
+        "root": "ROOT",
+        "counts": {
+          "done": 1,
+          "pending": 5
+        }
+      }
+    },
+    "stderr": ""
+  },
+  "done": {
+    "exitCode": 0,
+    "stdout": {
+      "nodeId": "A",
+      "status": "done",
+      "title": "Bootstrap",
+      "summary": {
+        "graphVersion": 3,
+        "title": "Fixture Implementation Plan",
+        "description": "Coordinate fixture work across a series root, parallel branches, and a final gate.",
+        "totalNodes": 6,
+        "root": "ROOT",
+        "counts": {
+          "pending": 5,
+          "done": 1
+        }
+      },
+      "slack": {
+        "skipped": true,
+        "reason": "SLACK_WEBHOOK_URL is not set"
+      }
+    },
+    "stderr": ""
+  },
+  "block": {
+    "exitCode": 0,
+    "stdout": {
+      "nodeId": "A",
+      "status": "blocked",
+      "title": "Bootstrap",
+      "summary": {
+        "graphVersion": 3,
+        "title": "Fixture Implementation Plan",
+        "description": "Coordinate fixture work across a series root, parallel branches, and a final gate.",
+        "totalNodes": 6,
+        "root": "ROOT",
+        "counts": {
+          "pending": 5,
+          "blocked": 1
+        }
+      },
+      "slack": {
+        "skipped": true,
+        "reason": "SLACK_WEBHOOK_URL is not set"
+      }
+    },
+    "stderr": ""
+  },
+  "answer": {
+    "exitCode": 0,
+    "stdout": {
+      "nodeId": "A",
+      "status": "pending",
+      "answer": "Continue.",
+      "summary": {
+        "graphVersion": 4,
+        "title": "Fixture Implementation Plan",
+        "description": "Coordinate fixture work across a series root, parallel branches, and a final gate.",
+        "totalNodes": 6,
+        "root": "ROOT",
+        "counts": {
+          "pending": 6
+        }
+      },
+      "slack": {
+        "skipped": true,
+        "reason": "SLACK_WEBHOOK_URL is not set"
+      }
+    },
+    "stderr": ""
+  },
+  "fail": {
+    "exitCode": 0,
+    "stdout": {
+      "nodeId": "A",
+      "status": "failed",
+      "title": "Bootstrap",
+      "summary": {
+        "graphVersion": 3,
+        "title": "Fixture Implementation Plan",
+        "description": "Coordinate fixture work across a series root, parallel branches, and a final gate.",
+        "totalNodes": 6,
+        "root": "ROOT",
+        "counts": {
+          "pending": 5,
+          "failed": 1
+        }
+      },
+      "slack": {
+        "skipped": true,
+        "reason": "SLACK_WEBHOOK_URL is not set"
+      }
+    },
+    "stderr": ""
+  },
+  "decompose": {
+    "exitCode": 0,
+    "stdout": {
+      "nodeId": "A",
+      "children": [
+        "A1",
+        "A2"
+      ],
+      "summary": {
+        "graphVersion": 3,
+        "title": "Fixture Implementation Plan",
+        "description": "Coordinate fixture work across a series root, parallel branches, and a final gate.",
+        "totalNodes": 8,
+        "root": "ROOT",
+        "counts": {
+          "pending": 8
+        }
+      },
+      "slack": {
+        "skipped": true,
+        "reason": "SLACK_WEBHOOK_URL is not set"
+      }
+    },
+    "stderr": ""
+  },
+  "reconcile": {
+    "exitCode": 0,
+    "stdout": {
+      "changed": [
+        "P",
+        "ROOT"
+      ],
+      "summary": {
+        "graphVersion": 2,
+        "title": "Fixture Implementation Plan",
+        "description": "Coordinate fixture work across a series root, parallel branches, and a final gate.",
+        "totalNodes": 6,
+        "root": "ROOT",
+        "counts": {
+          "done": 6
+        }
+      }
+    },
+    "stderr": ""
+  },
+  "releaseExpired": {
+    "exitCode": 0,
+    "stdout": {
+      "released": [
+        "A"
+      ],
+      "summary": {
+        "graphVersion": 2,
+        "title": "Fixture Implementation Plan",
+        "description": "Coordinate fixture work across a series root, parallel branches, and a final gate.",
+        "totalNodes": 6,
+        "root": "ROOT",
+        "counts": {
+          "pending": 6
+        }
+      }
+    },
+    "stderr": ""
+  },
+  "workerIdle": {
+    "exitCode": 0,
+    "stdout": {
+      "session": "golden-idle",
+      "idle": true,
+      "results": []
+    },
+    "stderr": ""
+  },
+  "workerDone": {
+    "exitCode": 0,
+    "stdout": {
+      "session": "golden-worker-done",
+      "idle": false,
+      "results": [
+        {
+          "nodeId": "A",
+          "status": "done",
+          "title": "Bootstrap",
+          "summary": {
+            "graphVersion": 4,
+            "title": "Fixture Implementation Plan",
+            "description": "Coordinate fixture work across a series root, parallel branches, and a final gate.",
+            "totalNodes": 6,
+            "root": "ROOT",
+            "counts": {
+              "pending": 5,
+              "done": 1
+            }
+          },
+          "runId": "<run-id>",
+          "code": 0,
+          "signal": null,
+          "report": "reports/A-<run-id>.md",
+          "slack": {
+            "skipped": true,
+            "reason": "SLACK_WEBHOOK_URL is not set"
+          }
+        }
+      ]
+    },
+    "stderr": ""
+  },
+  "workerFailed": {
+    "exitCode": 0,
+    "stdout": {
+      "session": "golden-worker-failed",
+      "idle": false,
+      "results": [
+        {
+          "nodeId": "A",
+          "status": "failed",
+          "title": "Bootstrap",
+          "summary": {
+            "graphVersion": 4,
+            "title": "Fixture Implementation Plan",
+            "description": "Coordinate fixture work across a series root, parallel branches, and a final gate.",
+            "totalNodes": 6,
+            "root": "ROOT",
+            "counts": {
+              "pending": 5,
+              "failed": 1
+            }
+          },
+          "runId": "<run-id>",
+          "code": 7,
+          "signal": null,
+          "report": "reports/A-<run-id>.md",
+          "slack": {
+            "skipped": true,
+            "reason": "SLACK_WEBHOOK_URL is not set"
+          }
+        }
+      ]
+    },
+    "stderr": ""
+  },
+  "malformedFlags": {
+    "booleanValue": {
+      "exitCode": 1,
+      "stdout": "",
+      "stderr": "Boolean flag --once does not accept a value; received \"false\""
+    },
+    "repeatedScalar": {
+      "exitCode": 1,
+      "stdout": "",
+      "stderr": "Option --node can only be provided once"
+    },
+    "missingRequired": {
+      "exitCode": 1,
+      "stdout": "",
+      "stderr": "answer requires --answer"
+    },
+    "invalidNumber": {
+      "exitCode": 1,
+      "stdout": "",
+      "stderr": "Invalid --lease: expected integer from 1 to 86400; received \"nope\""
+    },
+    "missingFlagValue": {
+      "exitCode": 1,
+      "stdout": "",
+      "stderr": "Missing --lease value; expected integer from 1 to 86400"
+    }
+  },
+  "commandFailures": {
+    "invalidTransition": {
+      "exitCode": 1,
+      "stdout": "",
+      "stderr": "Cannot complete node from status pending; expected one of claimed, running, blocked, review"
+    },
+    "invalidChildJson": {
+      "exitCode": 1,
+      "stdout": "",
+      "stderr": "--child-json must be a JSON array"
+    }
+  },
+  "invalidGraph": {
+    "exitCode": 1,
+    "stdout": "",
+    "stderr": "Invalid graph file <graphPath>: $.graph.root Expected root node id string"
+  }
+}

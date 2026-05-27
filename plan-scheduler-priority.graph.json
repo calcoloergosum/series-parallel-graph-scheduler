@@ -1,0 +1,534 @@
+{
+  "schemaVersion": 1,
+  "graphVersion": 1,
+  "title": "Priority-Based Ready Task Selection Plan",
+  "description": "Implementation plan for changing automatic ready-task selection from traversal-order top-most popping to a deterministic priority tuple: depth ascending, child_count descending, shared_parent_count_with_current_task ascending.",
+  "statusModel": [
+    "pending",
+    "ready",
+    "claimed",
+    "running",
+    "blocked",
+    "review",
+    "done",
+    "failed"
+  ],
+  "scheduler": {
+    "stateFile": "plan-scheduler-priority.graph.json",
+    "htmlView": "plan-scheduler-priority.html",
+    "runsDir": "runs",
+    "reportsDir": "reports",
+    "leaseSeconds": 1800,
+    "claimPolicy": "Automatic claims must choose the best ready candidate by the deterministic priority tuple before creating a lease. Explicit node claims still require that the node is currently ready.",
+    "selectionPolicy": {
+      "tuple": [
+        {
+          "field": "depth",
+          "order": "ascending",
+          "description": "Prefer ready tasks closer to the root."
+        },
+        {
+          "field": "child_count",
+          "order": "descending",
+          "description": "For equal depth, prefer the ready task with more outgoing edges."
+        },
+        {
+          "field": "shared_parent_count_with_current_task",
+          "order": "ascending",
+          "description": "For equal depth and child count, prefer the ready task that shares the fewest parent nodes with the current task."
+        }
+      ],
+      "tieBreaker": "Use a stable final tie-breaker, such as node id or root path, so equal priority candidates remain deterministic.",
+      "currentTaskFallback": "When there is no current task context, shared_parent_count_with_current_task is treated as 0 for every ready candidate."
+    },
+    "slackPolicy": "Use chat for attention and approvals when configured. Canonical state remains in this graph file."
+  },
+  "graph": {
+    "root": "ROOT",
+    "nodes": {
+      "ROOT": {
+        "title": "Update scheduler ready-task selection",
+        "kind": "series",
+        "status": "pending",
+        "children": [
+          "DISCOVERY",
+          "PARALLEL_IMPLEMENTATION",
+          "INTEGRATION",
+          "RELEASE"
+        ],
+        "description": "First lock down the priority contract and baseline behavior. Then implement metadata, selection, current-task context, tests, and docs in parallel. Finally integrate and verify the scheduler as a whole."
+      },
+      "DISCOVERY": {
+        "title": "Define contract and baseline",
+        "kind": "series",
+        "status": "pending",
+        "children": [
+          "PRIO1",
+          "PRIO2",
+          "PRIO3"
+        ],
+        "description": "Make the intended behavior precise before touching scheduler mutation code."
+      },
+      "PRIO1": {
+        "title": "Map current ready traversal and claim surfaces",
+        "kind": "task",
+        "status": "pending",
+        "description": "Identify every place that observes, displays, or consumes ready nodes, especially listReadyLeafNodes, claimNode, worker prompt generation, diagnostics, visualizer payloads, and tests.",
+        "deliverables": [
+          "A short implementation note naming the files and public outputs affected by ready ordering.",
+          "A list of behavior that must remain unchanged for explicit node claims, blocked nodes, expired leases, and subtree completion.",
+          "A decision on whether ready ordering should be centralized in traversal, claim selection, or a shared helper."
+        ],
+        "acceptanceCriteria": [
+          "The plan accounts for CLI ready output, automatic claim output, diagnostics nextReady output, worker readyJson, and visualizer ready lists.",
+          "The current automatic claim behavior is confirmed to select the first ready candidate from traversal order.",
+          "No code behavior is changed in this task."
+        ]
+      },
+      "PRIO2": {
+        "title": "Specify priority semantics and tie-breakers",
+        "kind": "task",
+        "status": "pending",
+        "description": "Write the exact scheduler contract for the tuple: depth ascending, child_count descending, shared_parent_count_with_current_task ascending, plus deterministic behavior for exact ties.",
+        "deliverables": [
+          "A concise contract note in docs/compatibility-boundaries.md or a focused scheduler design note.",
+          "Definitions for depth, child_count, parent set, shared parent count, current task context, and no-current-task fallback.",
+          "A deterministic final tie-breaker that does not depend on object insertion quirks or worker timing."
+        ],
+        "acceptanceCriteria": [
+          "Depth is defined as graph distance from root using the selected root path for valid reachable nodes.",
+          "Child count is defined as the ready candidate node's outgoing edge count, with leaf candidates naturally counting as 0.",
+          "Shared parent count is based on ancestor or direct-parent semantics explicitly chosen and documented.",
+          "The leaf-only claim model is either preserved with clear child_count implications or deliberately updated with compatibility notes."
+        ]
+      },
+      "PRIO3": {
+        "title": "Record baseline checks and priority fixture needs",
+        "kind": "task",
+        "status": "pending",
+        "description": "Run the existing authoritative checks and sketch the fixture matrix needed to prove the new selection policy.",
+        "deliverables": [
+          "Baseline results for npm run format:check, npm run typecheck, npm run build, and npm test.",
+          "A fixture matrix covering depth ordering, child count ordering, shared parent count ordering, explicit node claims, expired leases, and no-current-task fallback.",
+          "A note of any pre-existing failures or dirty working tree changes that should not be attributed to the priority work."
+        ],
+        "acceptanceCriteria": [
+          "Baseline command results include exact pass/fail status and relevant error summaries.",
+          "The fixture matrix names expected winning node ids for each priority rule.",
+          "The implementation branches have enough context to write tests without re-litigating the contract."
+        ]
+      },
+      "PARALLEL_IMPLEMENTATION": {
+        "title": "Implement priority selection branches",
+        "kind": "parallel",
+        "status": "pending",
+        "children": [
+          "GRAPH_METADATA",
+          "SELECTION_POLICY",
+          "CURRENT_CONTEXT",
+          "TEST_COVERAGE",
+          "DOCS_COMPAT"
+        ],
+        "description": "Parallel work streams for graph-derived priority data, the comparator and claim behavior, current-task context, test coverage, and documentation."
+      },
+      "GRAPH_METADATA": {
+        "title": "Graph metadata branch",
+        "kind": "series",
+        "status": "pending",
+        "children": [
+          "PRIO4",
+          "PRIO5",
+          "PRIO6"
+        ],
+        "description": "Compute priority inputs from the graph in one reusable place."
+      },
+      "PRIO4": {
+        "title": "Add parent, depth, and path helpers",
+        "kind": "task",
+        "status": "pending",
+        "description": "Implement helpers that derive parent sets, root depth, and stable root paths for reachable nodes without mutating the graph.",
+        "deliverables": [
+          "Pure traversal helpers with typed return values.",
+          "Cycle-safe use of existing validated graph assumptions.",
+          "Stable behavior for duplicate ancestry, shared subgraphs, and unknown node kinds allowed by the current compatibility model."
+        ],
+        "acceptanceCriteria": [
+          "Root depth is 0 and each reachable child depth is deterministic.",
+          "Nodes with multiple reachable paths receive the documented depth/path behavior.",
+          "Helpers are covered by unit tests before they are used by claim mutation code."
+        ]
+      },
+      "PRIO5": {
+        "title": "Compute ready candidate priority fields",
+        "kind": "task",
+        "status": "pending",
+        "description": "Attach or derive depth, child_count, parent set, and shared_parent_count_with_current_task for each ready candidate.",
+        "deliverables": [
+          "A candidate metadata model that can be reused by CLI, worker prompts, diagnostics, and visualizer payloads if the contract exposes priority data.",
+          "A shared-parent-count helper that accepts an optional current task id.",
+          "A clear distinction between internal helper fields and public JSON fields."
+        ],
+        "acceptanceCriteria": [
+          "Child count is calculated from the candidate node's children array length, defaulting to 0.",
+          "Missing current task context produces equal shared parent counts without throwing.",
+          "Existing ReadyNode consumers continue to compile."
+        ]
+      },
+      "PRIO6": {
+        "title": "Harden metadata edge cases",
+        "kind": "task",
+        "status": "pending",
+        "description": "Verify graph metadata helpers behave predictably on mixed series, parallel, gate, unknown-kind, shared-parent, and leaf-only graphs.",
+        "deliverables": [
+          "Unit tests for metadata helper edge cases.",
+          "Assertions that invalid graphs are still rejected by validation before priority metadata is computed.",
+          "A compact comment or doc note explaining any surprising multiple-parent behavior."
+        ],
+        "acceptanceCriteria": [
+          "Metadata helpers do not change subtree readiness semantics.",
+          "Tests cover both shallow and deep ready nodes.",
+          "Tests cover a candidate with children if the contract permits non-leaf ready tasks."
+        ]
+      },
+      "SELECTION_POLICY": {
+        "title": "Selection policy branch",
+        "kind": "series",
+        "status": "pending",
+        "children": [
+          "PRIO7",
+          "PRIO8",
+          "PRIO9"
+        ],
+        "description": "Implement the deterministic comparator and wire it into automatic claims."
+      },
+      "PRIO7": {
+        "title": "Implement priority comparator",
+        "kind": "task",
+        "status": "pending",
+        "description": "Create a pure comparator for ready candidates using depth ascending, child_count descending, shared_parent_count_with_current_task ascending, then the final deterministic tie-breaker.",
+        "deliverables": [
+          "Comparator tests that isolate each tuple component.",
+          "A stable final tie-breaker documented in test names.",
+          "No dependency on Date, lease timing, object enumeration side effects, or worker session order."
+        ],
+        "acceptanceCriteria": [
+          "Lower depth wins over higher depth regardless of later tuple values.",
+          "Higher child_count wins when depth ties.",
+          "Lower shared_parent_count_with_current_task wins when depth and child_count tie.",
+          "Exact ties always sort in the same order across repeated runs."
+        ]
+      },
+      "PRIO8": {
+        "title": "Use priority ordering for automatic claims",
+        "kind": "task",
+        "status": "pending",
+        "description": "Replace automatic selection of ready[0] with the best priority-ranked candidate while preserving explicit node claims and lease release behavior.",
+        "deliverables": [
+          "claimNode automatic selection uses the priority-ranked ready set.",
+          "Expired claimed/running leases are still released before selection.",
+          "The claim result still reports the selected node id, title, run id, lease, releasedExpired, and summary."
+        ],
+        "acceptanceCriteria": [
+          "Automatic claim picks the expected priority winner when multiple nodes are ready.",
+          "Explicit claim by node id succeeds only if that node is ready and does not re-rank to another node.",
+          "No ready node is double-claimed under concurrent automatic claims."
+        ]
+      },
+      "PRIO9": {
+        "title": "Align ready output surfaces",
+        "kind": "task",
+        "status": "pending",
+        "description": "Decide and implement whether read-only ready surfaces should show priority-sorted order and optional priority metadata.",
+        "deliverables": [
+          "Consistent ordering for CLI ready, diagnostics nextReady, worker readyJson, and visualizer ready lists if the public contract chooses sorted display.",
+          "Golden updates for any public JSON or text output changes.",
+          "Compatibility notes if new priority fields are exposed."
+        ],
+        "acceptanceCriteria": [
+          "Every ready consumer observes either the same priority order or a documented intentionally different order.",
+          "Public JSON changes are covered by tests and docs.",
+          "Existing consumers that only read id, title, kind, and status remain compatible."
+        ]
+      },
+      "CURRENT_CONTEXT": {
+        "title": "Current task context branch",
+        "kind": "series",
+        "status": "pending",
+        "children": [
+          "PRIO10",
+          "PRIO11",
+          "PRIO12"
+        ],
+        "description": "Define and implement how shared_parent_count_with_current_task finds the currently running task."
+      },
+      "PRIO10": {
+        "title": "Resolve current task source",
+        "kind": "task",
+        "status": "pending",
+        "description": "Choose how automatic claim selection identifies the currently running task for shared-parent ranking.",
+        "deliverables": [
+          "A documented resolver order, such as explicit currentTaskId option first, then an active claimed/running node for the same session, then no current task.",
+          "Behavior for zero, one, or multiple active tasks in the same session.",
+          "CLI and API compatibility notes for any new option or internal-only parameter."
+        ],
+        "acceptanceCriteria": [
+          "The resolver never makes automatic claim nondeterministic when multiple active tasks exist.",
+          "No-current-task behavior matches the scheduler selectionPolicy metadata in this graph.",
+          "The worker flow can provide or infer current task context without breaking existing command shapes."
+        ]
+      },
+      "PRIO11": {
+        "title": "Wire current context into claim selection",
+        "kind": "task",
+        "status": "pending",
+        "description": "Pass the resolved current task id into ready candidate scoring during automatic claim selection.",
+        "deliverables": [
+          "claimNode and any lower-level helper accept the selected current task context.",
+          "Session-based current task inference is covered without changing explicit node claim semantics.",
+          "Errors mention invalid explicit current task context clearly if such an option is exposed."
+        ],
+        "acceptanceCriteria": [
+          "The same ready graph can choose different candidates when current task context changes and the first two tuple fields tie.",
+          "Invalid or absent current context falls back safely.",
+          "Lease ownership and session attribution remain unchanged."
+        ]
+      },
+      "PRIO12": {
+        "title": "Exercise shared-parent ranking behavior",
+        "kind": "task",
+        "status": "pending",
+        "description": "Create tests that prove candidates sharing fewer parents with the current task win after depth and child_count ties.",
+        "deliverables": [
+          "A graph fixture where at least three ready candidates tie on depth and child_count but differ in shared parent count.",
+          "Tests for explicit current task id, inferred same-session current task, and no-current-task fallback.",
+          "Tests for deterministic behavior when shared parent counts tie."
+        ],
+        "acceptanceCriteria": [
+          "The expected winner is asserted by node id for every shared-parent scenario.",
+          "The tests fail against traversal-order popping.",
+          "The tests pass independent of object key insertion order."
+        ]
+      },
+      "TEST_COVERAGE": {
+        "title": "Priority test branch",
+        "kind": "series",
+        "status": "pending",
+        "children": [
+          "PRIO13",
+          "PRIO14",
+          "PRIO15"
+        ],
+        "description": "Add regression coverage across unit, integration, CLI, and concurrency behavior."
+      },
+      "PRIO13": {
+        "title": "Build priority fixture graphs",
+        "kind": "task",
+        "status": "pending",
+        "description": "Create compact test graphs that isolate each priority tuple field while staying faithful to series-parallel readiness rules.",
+        "deliverables": [
+          "A depth-priority graph where traversal order would choose a deeper node but priority chooses a shallower node.",
+          "A child-count-priority graph consistent with the finalized leaf-only or non-leaf candidate contract.",
+          "A shared-parent-priority graph with tied depth and child_count."
+        ],
+        "acceptanceCriteria": [
+          "Each fixture has a readable expected winner.",
+          "Fixtures avoid unrelated statuses unless the test is specifically about blocked, failed, or expired leases.",
+          "Reusable fixture builders are preferred over checked-in JSON for one-off test cases."
+        ]
+      },
+      "PRIO14": {
+        "title": "Add scheduler integration tests",
+        "kind": "task",
+        "status": "pending",
+        "description": "Cover automatic claim selection through the real graph mutation path, including leases, graph version increments, and persisted state.",
+        "deliverables": [
+          "Integration tests for automatic claim winner selection.",
+          "Tests that explicit node claim remains opt-in and exact.",
+          "Tests that release-expired behavior still happens before priority selection."
+        ],
+        "acceptanceCriteria": [
+          "Tests assert persisted graph status and lease data after selection.",
+          "A traversal-order implementation fails at least one new integration test.",
+          "Concurrent automatic claims still never return the same node id."
+        ]
+      },
+      "PRIO15": {
+        "title": "Update CLI and golden coverage",
+        "kind": "task",
+        "status": "pending",
+        "description": "Update command-line, prompt, diagnostics, and golden tests for any ready ordering or public JSON shape changes.",
+        "deliverables": [
+          "CLI ready output tests for priority order if read-only surfaces are sorted.",
+          "Worker prompt readyJson assertions that match the selected contract.",
+          "Golden fixture updates with stable ordering and no timestamp-sensitive expectations."
+        ],
+        "acceptanceCriteria": [
+          "npm test covers the changed CLI-facing behavior.",
+          "Golden updates are limited to intentional priority-related changes.",
+          "Failure messages clearly distinguish priority ranking from readiness eligibility."
+        ]
+      },
+      "DOCS_COMPAT": {
+        "title": "Documentation and compatibility branch",
+        "kind": "series",
+        "status": "pending",
+        "children": [
+          "PRIO16",
+          "PRIO17",
+          "PRIO18"
+        ],
+        "description": "Document the new deterministic policy for operators and future maintainers."
+      },
+      "PRIO16": {
+        "title": "Document operator-visible behavior",
+        "kind": "task",
+        "status": "pending",
+        "description": "Update README and operator docs to explain how automatic claims choose among multiple ready tasks.",
+        "deliverables": [
+          "README operating model update for the priority tuple.",
+          "Example that shows why a shallower ready task beats a deeper ready task.",
+          "Note that explicit node claims remain available for operator-directed work."
+        ],
+        "acceptanceCriteria": [
+          "Docs use the exact tuple names: depth, child_count, shared_parent_count_with_current_task.",
+          "The docs mention deterministic tie-breaking.",
+          "The docs avoid implying workers can claim non-ready nodes."
+        ]
+      },
+      "PRIO17": {
+        "title": "Update compatibility boundaries",
+        "kind": "task",
+        "status": "pending",
+        "description": "Record the priority policy as part of the public scheduler behavior and note any JSON output additions.",
+        "deliverables": [
+          "docs/compatibility-boundaries.md names automatic claim ordering as stable behavior.",
+          "Any new ReadyNode fields are listed with compatibility expectations.",
+          "Any CLI option for current task context is documented with default behavior."
+        ],
+        "acceptanceCriteria": [
+          "Compatibility docs distinguish eligibility from priority ranking.",
+          "Breaking or additive changes are explicitly named.",
+          "Docs match the implemented fallback for missing current task context."
+        ]
+      },
+      "PRIO18": {
+        "title": "Add architecture notes for maintainers",
+        "kind": "task",
+        "status": "pending",
+        "description": "Explain where priority metadata and comparison logic lives so future scheduling changes remain centralized.",
+        "deliverables": [
+          "docs/architecture.md or a linked design note describing the helper boundaries.",
+          "Guidance for adding future tuple fields without scattering comparison logic.",
+          "A short note on why deterministic final tie-breaking matters for concurrent workers."
+        ],
+        "acceptanceCriteria": [
+          "A maintainer can find the comparator and tests from the architecture note.",
+          "The note references existing traversal and mutation modules accurately.",
+          "No stale implementation paths are introduced."
+        ]
+      },
+      "INTEGRATION": {
+        "title": "Integrate and verify priority scheduling",
+        "kind": "series",
+        "status": "pending",
+        "children": [
+          "PRIO19",
+          "PRIO20",
+          "PRIO21"
+        ],
+        "description": "Bring the branches together and prove the scheduler is coherent end to end."
+      },
+      "PRIO19": {
+        "title": "Reconcile branch changes and public outputs",
+        "kind": "task",
+        "status": "pending",
+        "description": "Review combined code, tests, docs, and JSON outputs for consistency across traversal, claim, worker, diagnostics, and visualizer surfaces.",
+        "deliverables": [
+          "One integrated implementation path for computing and sorting ready candidates.",
+          "No duplicate priority comparators or drifting helper definitions.",
+          "A review note of any public output changes and why they are intentional."
+        ],
+        "acceptanceCriteria": [
+          "All ready surfaces agree with the documented contract.",
+          "Explicit node claims and failure paths preserve existing error style.",
+          "TypeScript contracts remain narrow and documented."
+        ]
+      },
+      "PRIO20": {
+        "title": "Run authoritative checks",
+        "kind": "task",
+        "status": "pending",
+        "description": "Run the repository's standard quality gates after integration.",
+        "deliverables": [
+          "Passing npm run format:check.",
+          "Passing npm run typecheck.",
+          "Passing npm run build.",
+          "Passing npm test."
+        ],
+        "acceptanceCriteria": [
+          "Any failure is either fixed or clearly documented with reproduction details.",
+          "No test is skipped solely to make the priority change pass.",
+          "Generated artifacts are not committed unless the repository already tracks them for this workflow."
+        ]
+      },
+      "PRIO21": {
+        "title": "Run migration smoke and manual sanity checks",
+        "kind": "task",
+        "status": "pending",
+        "description": "Verify built entry points and realistic operator flows still work with the priority policy.",
+        "deliverables": [
+          "Passing npm run smoke:migration or a documented environment-specific reason it cannot run.",
+          "Manual disposable-graph claim showing priority winner selection.",
+          "Optional visualizer sanity check if ready ordering is operator-visible there."
+        ],
+        "acceptanceCriteria": [
+          "Built CLI entry points operate on both relative and absolute graph paths.",
+          "The smoke or manual claim proves traversal-order popping is no longer the automatic policy.",
+          "Visualizer or diagnostics output remains escaped and readable."
+        ]
+      },
+      "RELEASE": {
+        "title": "Prepare priority scheduler change for review",
+        "kind": "series",
+        "status": "pending",
+        "children": [
+          "PRIO22",
+          "PRIO23"
+        ],
+        "description": "Package the completed change with evidence and clear review guidance."
+      },
+      "PRIO22": {
+        "title": "Write final implementation summary",
+        "kind": "task",
+        "status": "pending",
+        "description": "Summarize what changed, why the selection is deterministic, and what tests prove the new tuple behavior.",
+        "deliverables": [
+          "A concise summary suitable for a pull request or handoff report.",
+          "Links or references to key comparator, traversal, claim, and test files.",
+          "A list of commands run and their results."
+        ],
+        "acceptanceCriteria": [
+          "The summary names the exact priority tuple.",
+          "Residual risks or contract decisions are called out plainly.",
+          "The summary does not omit any failed or unrun verification command."
+        ]
+      },
+      "PRIO23": {
+        "title": "Review release readiness",
+        "kind": "task",
+        "status": "pending",
+        "description": "Perform a final review for compatibility, determinism, concurrency, and operator documentation.",
+        "deliverables": [
+          "A release-readiness checklist result.",
+          "Confirmation that docs and tests match the implemented policy.",
+          "A final go/no-go recommendation for merging the scheduler priority change."
+        ],
+        "acceptanceCriteria": [
+          "No known blocker remains for the priority policy.",
+          "Any deferred enhancement is explicitly out of scope.",
+          "The graph can be reconciled cleanly after all tasks are complete."
+        ]
+      }
+    }
+  }
+}
