@@ -73,6 +73,103 @@ test("visualizer answer API answers a blocked task", async () => {
   });
 });
 
+test("visualizer node mutation routes use scheduler transitions", async () => {
+  await withTempGraph(async (graphPath, dir) => {
+    const visualizer = await createVisualizerServer({ graphPath, port: 0 });
+    try {
+      const postNode = async (route, body) => {
+        const response = await fetch(`${visualizer.url}/api/node/${route}`, {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify(body)
+        });
+        if (response.status !== 200) {
+          assert.fail(`${route}: ${await response.text()}`);
+        }
+        return response.json();
+      };
+
+      const claim = await postNode("claim", { nodeId: "A", session: "codex-api", leaseSeconds: 60 });
+      assert.equal(claim.nodeId, "A");
+      assert.equal(claim.lease.session, "codex-api");
+
+      const start = await postNode("start", { nodeId: "A", session: "codex-api", runId: claim.runId });
+      assert.equal(start.status, "running");
+
+      const renew = await postNode("renew", { nodeId: "A", session: "codex-api", runId: claim.runId, leaseSeconds: 120 });
+      assert.equal(renew.nodeId, "A");
+      assert.equal(renew.lease.session, "codex-api");
+
+      const done = await postNode("done", {
+        nodeId: "A",
+        session: "codex-api",
+        runId: claim.runId,
+        report: "reports/A.md",
+        reportBody: "completed via API"
+      });
+      assert.equal(done.status, "done");
+      assert.equal(done.slack.skipped, true);
+      assert.equal(await readFile(join(dir, "reports", "A.md"), "utf8"), "completed via API\n");
+
+      const reset = await postNode("reset", { nodeId: "A", reason: "exercise API reset" });
+      assert.equal(reset.status, "pending");
+
+      const blockClaim = await postNode("claim", { nodeId: "A", session: "codex-api" });
+      const block = await postNode("block", {
+        nodeId: "A",
+        session: "codex-api",
+        runId: blockClaim.runId,
+        question: "Proceed?",
+        reason: "needs_operator_decision"
+      });
+      assert.equal(block.status, "blocked");
+      assert.equal(block.slack.skipped, true);
+
+      const answer = await postNode("answer", { nodeId: "A", answer: "Proceed.", responder: "api-test" });
+      assert.equal(answer.status, "pending");
+      assert.equal(answer.answer, "Proceed.");
+      assert.equal(answer.slack.skipped, true);
+
+      const failClaim = await postNode("claim", { nodeId: "A", session: "codex-api" });
+      const fail = await postNode("fail", {
+        nodeId: "A",
+        session: "codex-api",
+        runId: failClaim.runId,
+        reason: "exercise API fail",
+        report: "reports/fail.md"
+      });
+      assert.equal(fail.status, "failed");
+      assert.equal(fail.slack.skipped, true);
+
+      const subtreeReset = await postNode("reset-subtree", { nodeId: "ROOT", reason: "exercise API subtree reset" });
+      assert.ok(subtreeReset.resetNodes.includes("A"));
+
+      const decomposeClaim = await postNode("claim", { nodeId: "A", session: "codex-api" });
+      const decompose = await postNode("decompose", {
+        nodeId: "A",
+        session: "codex-api",
+        runId: decomposeClaim.runId,
+        kind: "series",
+        children: [
+          { id: "A1", title: "API child 1", kind: "task" },
+          { id: "A2", title: "API child 2", kind: "task" }
+        ]
+      });
+      assert.deepEqual(decompose.children, ["A1", "A2"]);
+      assert.equal(decompose.slack.skipped, true);
+
+      const reachableReset = await postNode("reset-reachable", { nodeId: "A", reason: "exercise API reachable reset" });
+      assert.ok(reachableReset.resetNodes.includes("A1"));
+
+      const graph = await readGraph(graphPath);
+      assert.deepEqual(graph.graph.nodes.A.children, ["A1", "A2"]);
+      assert.equal(graph.graph.nodes.A1.status, "pending");
+    } finally {
+      await visualizer.close();
+    }
+  });
+});
+
 test("visualizer warns when worker controls bind beyond loopback", async () => {
   assert.equal(isLocalVisualizerHost("127.0.0.1"), true);
   assert.equal(isLocalVisualizerHost("localhost"), true);
@@ -147,6 +244,13 @@ test("visualizer write token protects mutation routes", async () => {
         body: JSON.stringify({ nodeId: "A", answer: "No" })
       });
       assert.equal(forbiddenAnswer.status, 403);
+
+      const forbiddenNodeReset = await fetch(`${url}/api/node/reset`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ nodeId: "A" })
+      });
+      assert.equal(forbiddenNodeReset.status, 403);
 
       const answerResponse = await fetch(`${url}/api/answer`, {
         method: "POST",

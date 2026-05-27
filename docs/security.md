@@ -87,11 +87,11 @@ The visualizer exposes these write-capable HTTP routes. They are unauthenticated
 - `POST /api/workers/start`: starts one or more scheduler worker child processes. Inputs are bounded and passed to `spawn` without a shell, but the caller controls the command, arguments, working directory, count, lease, idle interval, template path, and target node.
 - `POST /api/workers/stop`: sends `SIGTERM` to one managed worker process.
 - `POST /api/workers/stop-all`: sends `SIGTERM` to every managed worker process.
-- `POST /api/answer`: records an answer for a blocked node, returns it to pending, regenerates HTML, and may notify Slack.
+- `POST /api/node/claim`, `/start`, `/renew`, `/done`, `/block`, `/answer`, `/fail`, `/reset`, `/reset-subtree`, `/reset-reachable`, and `/decompose`: expose the matching scheduler node mutations through injected runtime handlers. `POST /api/answer` remains a legacy alias for `POST /api/node/answer`.
 
 Read-only visualizer routes are `GET /`, `GET /index.html`, `GET /api/graph`, `GET /api/workers`, and `GET /events`. They can still disclose graph state, report paths, worker process ids, repository paths, and recent worker output.
 
-When the visualizer is bound to a non-loopback host, read-only routes are intentionally reachable without a token by every client that can connect to the host and port. The write token is not an authentication system for read access; it only gates worker start, worker stop, stop-all, and answer mutations.
+When the visualizer is bound to a non-loopback host, read-only routes are intentionally reachable without a token by every client that can connect to the host and port. The write token is not an authentication system for read access; it only gates worker start, worker stop, stop-all, and node mutations.
 
 Safe exposed visualizer command:
 
@@ -114,7 +114,7 @@ client can use unauthenticated write controls.
 
 | Risk | Impact | Mitigations |
 | --- | --- | --- |
-| Visualizer bound to `0.0.0.0` or a LAN address | Remote clients can start/stop local workers, answer blocked tasks, and read graph/worker state. | Bind to `127.0.0.1` by default; non-loopback startup requires `--visualizer-write-token` or `--unsafe-visualizer-write`; only use unsafe mode behind a trusted network boundary, SSH tunnel, or reverse proxy with authentication. |
+| Visualizer bound to `0.0.0.0` or a LAN address | Remote clients can start/stop local workers, mutate graph nodes, and read graph/worker state. | Bind to `127.0.0.1` by default; non-loopback startup requires `--visualizer-write-token` or `--unsafe-visualizer-write`; only use unsafe mode behind a trusted network boundary, SSH tunnel, or reverse proxy with authentication. |
 | Local webpage or browser extension reaches localhost APIs | A browser with access to the local visualizer can submit mutating POSTs. | Run the visualizer only when needed, close it after use, keep the bind address loopback, and avoid browsing untrusted pages in the same browser profile while operating sensitive plans. |
 | Worker command misuse | A caller can spawn arbitrary commands through Worker Manager or `--codex-command`; workers inherit environment variables and can modify files allowed by OS permissions. | Treat Worker Manager as trusted-operator only; prefer default `codex exec`; review custom commands and arguments; run from the intended `--cwd`; use OS accounts, containers, or repository permissions for stronger isolation. |
 | File disclosure through reports, logs, and generated HTML | Prompt text, stdout/stderr, paths, errors, and graph details can leak to anyone with filesystem or visualizer access. | Store graphs in private directories; redirect daemon logs to protected locations; review reports before sharing; do not commit sensitive worker output. |
@@ -132,8 +132,8 @@ client can use unauthenticated write controls.
 | Mode | Rating | Rationale |
 | --- | --- | --- |
 | `serve --host 127.0.0.1` or default `npm run serve` | Medium | The unauthenticated API is reachable only from the local machine, but any local process, browser extension, or same-browser web context that can reach loopback may read state or submit mutating requests while the server is running. |
-| `serve --host 0.0.0.0 --visualizer-write-token TOKEN` | High | Read-only graph and worker state remain reachable from other machines, but start, stop, and answer routes return HTTP 403 unless the request includes the token. |
-| `serve --host 0.0.0.0 --unsafe-visualizer-write` | Critical | The unauthenticated start, stop, answer, graph, worker, and log-tail surfaces become reachable from other machines on accessible networks. Use only when every reachable client is trusted. |
+| `serve --host 0.0.0.0 --visualizer-write-token TOKEN` | High | Read-only graph and worker state remain reachable from other machines, but start, stop, and node mutation routes return HTTP 403 unless the request includes the token. |
+| `serve --host 0.0.0.0 --unsafe-visualizer-write` | Critical | The unauthenticated start, stop, node mutation, graph, worker, and log-tail surfaces become reachable from other machines on accessible networks. Use only when every reachable client is trusted. |
 
 ## Trust Boundary Evidence Map
 
