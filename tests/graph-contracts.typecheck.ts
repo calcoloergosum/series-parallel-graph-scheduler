@@ -236,6 +236,31 @@ const payload: VisualizerPayload = {
     },
     serverAuthority: "scheduler-mutation-guards"
   },
+  attention: {
+    failed: { count: 0, nodeIds: [] },
+    blocked: { count: 0, nodeIds: [] },
+    expired: { count: 0, nodeIds: [], releasable: 0 },
+    workerErrors: { count: 0, workerIds: [] }
+  },
+  diagnostics: {
+    generatedAt: "2026-05-27T00:00:00.000Z",
+    summary: { totalNodes: 2, root: "ROOT", counts: { pending: 1, "waiting-for-review": 1 } },
+    nextReady: [],
+    leases: { active: [], expired: [] },
+    blocked: [],
+    failed: [],
+    isolation: { activeWorkers: [], missingOutputRefs: [], unresolvedBufferConflicts: [] },
+    lock: lockDiagnostics,
+    actions: [],
+    remediation: []
+  },
+  recentEvents: [{
+    at: "2026-05-27T00:00:00.000Z",
+    event: "claimed",
+    nodeId: "A",
+    timestamps: { at: "2026-05-27T00:00:00.000Z" },
+    details: {}
+  }],
   ready: [{ id: "A", title: "Task", kind: "task", status: permissiveStatus }],
   working: [],
   summary: { totalNodes: 2, root: "ROOT", counts: { pending: 1, "waiting-for-review": 1 } },

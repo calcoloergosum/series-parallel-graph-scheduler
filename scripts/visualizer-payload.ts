@@ -1,21 +1,24 @@
 import { dirname } from "node:path";
 
 import type {
+  GraphDiagnostics,
   GraphHistoryEntry,
   GraphNode,
   PlanGraphFile,
+  VisualizerAttentionSummary,
   VisualizerNodeDetail,
   VisualizerPayload,
   WorkerManager,
   WorkerManagerStatus
 } from "./contracts.js";
-import { defaultGraphPath, readGraph } from "./graph-io.js";
-import { listReadyLeafNodes, listWorkingNodes, summarizeGraph } from "./graph-traversal.js";
-import { redactOperationalEventDetails } from "./operational-events.js";
+import { defaultGraphPath, inspectGraphLock, readGraph } from "./graph-io.js";
+import { buildGraphDiagnostics, listReadyLeafNodes, listWorkingNodes, summarizeGraph } from "./graph-traversal.js";
+import { exportOperationalEvents, redactOperationalEventDetails } from "./operational-events.js";
 import { renderPlanarSvg } from "./sp-layout.js";
 import { buildVisualizerNodeActionMap, visualizerActionPolicy } from "./visualizer-actions.js";
 
 export const visualizerNodeHistoryLimit = 10;
+export const visualizerRecentEventLimit = 20;
 
 export async function buildVisualizerPayload(
   graphPath = defaultGraphPath,
@@ -23,16 +26,24 @@ export async function buildVisualizerPayload(
 ): Promise<VisualizerPayload> {
   const graph = await readGraph(graphPath);
   const actionMap = buildVisualizerNodeActionMap(graph);
+  const managerStatus = workerManager?.status?.() || emptyWorkerManagerStatus(dirname(graphPath));
+  const diagnostics = buildGraphDiagnostics(graph, {
+    graphPath,
+    lock: await inspectGraphLock(graphPath)
+  });
   return {
     graph,
     graphSvg: renderPlanarSvg(graph),
     nodes: buildVisualizerNodeDetails(graph, visualizerNodeHistoryLimit, actionMap),
     nodeHistoryLimit: visualizerNodeHistoryLimit,
     actionPolicy: visualizerActionPolicy,
+    attention: buildVisualizerAttentionSummary(diagnostics, managerStatus),
+    diagnostics,
+    recentEvents: exportOperationalEvents(graph, { limit: visualizerRecentEventLimit }),
     ready: listReadyLeafNodes(graph),
     working: listWorkingNodes(graph),
     summary: summarizeGraph(graph),
-    workerManager: workerManager?.status?.() || emptyWorkerManagerStatus(dirname(graphPath))
+    workerManager: managerStatus
   };
 }
 
@@ -105,6 +116,33 @@ function redactNodeDetail(detail: Record<string, unknown>): VisualizerNodeDetail
 
 function omitUndefined<T extends Record<string, unknown>>(details: T): T {
   return Object.fromEntries(Object.entries(details).filter(([, value]) => value !== undefined)) as T;
+}
+
+function buildVisualizerAttentionSummary(
+  diagnostics: GraphDiagnostics,
+  workerManager: WorkerManagerStatus
+): VisualizerAttentionSummary {
+  const expired = diagnostics.leases.expired;
+  const workerErrors = workerManager.workers.filter((worker) => worker.status === "error");
+  return {
+    failed: {
+      count: diagnostics.failed.length,
+      nodeIds: diagnostics.failed.map((node) => node.id)
+    },
+    blocked: {
+      count: diagnostics.blocked.length,
+      nodeIds: diagnostics.blocked.map((node) => node.id)
+    },
+    expired: {
+      count: expired.length,
+      nodeIds: expired.map((node) => node.id),
+      releasable: expired.filter((node) => node.releasable).length
+    },
+    workerErrors: {
+      count: workerErrors.length,
+      workerIds: workerErrors.map((worker) => worker.id)
+    }
+  };
 }
 
 function emptyWorkerManagerStatus(cwd: string): WorkerManagerStatus {

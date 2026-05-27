@@ -1,5 +1,5 @@
 import test from "node:test";
-import { assert, assertInvalidFixtureFailure, blockNode, buildPlanarLayout, buildSlackNotificationText, buildVisualizerPayload, claimNode, copyGraphFixtureToTemp, createServer, createVisualizerServer, execFileAsync, existsSync, fixtureGraph, formatWorkerReport, invalidGraphValidatorOutcomes, isLocalVisualizerHost, join, mkdtemp, readFile, readGraph, readdir, renderPlanarSvg, renderVisualizerHtml, rendererDocumentFixture, rendererScriptPath, rm, runVisualizerClientScript, schedulerScriptPath, sendSlackNotification, tmpdir, visualizerHostSecurityWarning, waitFor, withTempGraph, writeFile } from "./helpers/plan-scheduler-harness.mjs";
+import { assert, assertInvalidFixtureFailure, blockNode, buildPlanarLayout, buildSlackNotificationText, buildVisualizerPayload, claimNode, copyGraphFixtureToTemp, createServer, createVisualizerServer, execFileAsync, existsSync, fixtureGraph, formatWorkerReport, invalidGraphValidatorOutcomes, isLocalVisualizerHost, join, mkdir, mkdtemp, readFile, readGraph, readdir, renderPlanarSvg, renderVisualizerHtml, rendererDocumentFixture, rendererScriptPath, rm, runVisualizerClientScript, schedulerScriptPath, sendSlackNotification, tmpdir, utimes, visualizerHostSecurityWarning, waitFor, withTempGraph, writeFile } from "./helpers/plan-scheduler-harness.mjs";
 
 test("invalid graph fixtures fail scheduler and renderer paths before writes", async (t) => {
   for (const outcome of invalidGraphValidatorOutcomes()) {
@@ -630,6 +630,8 @@ test("visualizer builds graph payload and real-time HTML shell", async () => {
     assert.match(html, /EventSource\("\/events"\)/);
     assert.match(html, /Ready Leaf Nodes/);
     assert.match(html, /Active Sessions/);
+    assert.match(html, /Diagnostics/);
+    assert.match(html, /Recent Events/);
     assert.match(html, /Worker Manager/);
     assert.match(html, /\/api\/workers\/start/);
     assert.match(html, /id="graph"/);
@@ -684,8 +686,139 @@ test("visualizer builds graph payload and real-time HTML shell", async () => {
     assert.equal(payload.working[0].session, "codex-A");
     assert.equal(payload.working[0].isolation.cloneCwd, "/tmp/spg/workspaces/codex-A/A/run-a");
     assert.equal(payload.working[0].isolation.outputRef, "refs/heads/spg/node/A/run-a");
+    assert.deepEqual(payload.attention.expired.nodeIds, []);
+    assert.equal(payload.diagnostics.lock.exists, false);
+    assert.equal(payload.recentEvents.length, 12);
+    assert.equal(payload.recentEvents[0].event, "clone-prepared");
     assert.deepEqual(payload.workerManager.workers, []);
     assert.match(payload.graphSvg, /<svg class="sp-graph"/);
+  });
+});
+
+test("visualizer diagnostics payload exposes attention, events, and read-only lock state", async () => {
+  await withTempGraph(async (graphPath) => {
+    const graph = await readGraph(graphPath);
+    graph.graph.nodes.A.status = "blocked";
+    graph.graph.nodes.A.blockedReason = "needs_scope";
+    graph.graph.nodes.A.history = [{
+      at: "2026-05-27T00:01:00.000Z",
+      event: "blocked",
+      status: "blocked",
+      blockedAt: "2026-05-27T00:01:00.000Z",
+      question: "Proceed?"
+    }];
+    graph.graph.nodes.B.status = "failed";
+    graph.graph.nodes.B.failureReason = "test failure";
+    graph.graph.nodes.B.history = [{
+      at: "2026-05-27T00:02:00.000Z",
+      event: "failed",
+      status: "failed",
+      failedAt: "2026-05-27T00:02:00.000Z",
+      failureReason: "test failure"
+    }];
+    graph.graph.nodes.C.status = "running";
+    graph.graph.nodes.C.lease = {
+      session: "codex-C",
+      runId: "run-C",
+      claimedAt: "2026-05-27T00:00:00.000Z",
+      expiresAt: "2026-05-27T00:00:01.000Z"
+    };
+    graph.graph.nodes.C.history = [{
+      at: "2026-05-27T00:00:00.000Z",
+      event: "running",
+      status: "running",
+      session: "codex-C",
+      runId: "run-C"
+    }];
+    await writeFile(graphPath, `${JSON.stringify(graph, null, 2)}\n`, "utf8");
+
+    const lockPath = `${graphPath}.lock`;
+    await mkdir(lockPath);
+    await writeFile(join(lockPath, "metadata.json"), `${JSON.stringify({
+      lockVersion: 1,
+      ownerId: "owner-1",
+      pid: 24680,
+      host: "test-host",
+      createdAt: "2026-05-27T00:00:00.000Z",
+      graphPath
+    })}\n`, "utf8");
+    const oldTime = new Date(Date.now() - 20 * 60 * 1000);
+    await utimes(lockPath, oldTime, oldTime);
+
+    const workerManager = {
+      status() {
+        return {
+          defaults: {
+            cwd: "/tmp/work",
+            sessionPrefix: "codex",
+            codexCommand: "codex",
+            isolation: "off",
+            workspaceRoot: "runs/workspaces",
+            workspaceRetention: "on-failure"
+          },
+          running: 0,
+          stopping: 0,
+          exited: 0,
+          error: 1,
+          retainedWorkers: 1,
+          totalStarted: 1,
+          workers: [{
+            id: "worker-err",
+            session: "codex-Z",
+            status: "error",
+            startedAt: "2026-05-27T00:00:00.000Z",
+            durationMs: 1,
+            logTail: []
+          }]
+        };
+      }
+    };
+
+    const payload = await buildVisualizerPayload(graphPath, workerManager);
+    assert.deepEqual(payload.attention.blocked.nodeIds, ["A"]);
+    assert.deepEqual(payload.attention.failed.nodeIds, ["B"]);
+    assert.deepEqual(payload.attention.expired.nodeIds, ["C"]);
+    assert.equal(payload.attention.expired.releasable, 1);
+    assert.deepEqual(payload.attention.workerErrors.workerIds, ["worker-err"]);
+    assert.equal(payload.diagnostics.lock.exists, true);
+    assert.equal(payload.diagnostics.lock.stale, true);
+    assert.equal(payload.diagnostics.lock.owner.pid, 24680);
+    assert.ok(payload.recentEvents.some((event) => event.event === "blocked" && event.nodeId === "A"));
+
+    const { context, element } = runVisualizerClientScript();
+    context.render(payload);
+    const diagnosticsHtml = element("diagnostics").innerHTML;
+    assert.match(diagnosticsHtml, /read-only/);
+    assert.match(diagnosticsHtml, /Stale graph lock/);
+    assert.doesNotMatch(diagnosticsHtml, /remove|rm -rf|delete/i);
+  });
+});
+
+test("visualizer event API filters by node and event like the CLI", async () => {
+  await withTempGraph(async (graphPath) => {
+    const graph = await readGraph(graphPath);
+    graph.graph.nodes.A.history = [
+      { at: "2026-05-27T00:00:00.000Z", event: "claimed", status: "claimed" },
+      { at: "2026-05-27T00:01:00.000Z", event: "blocked", status: "blocked", question: "Proceed?" }
+    ];
+    graph.graph.nodes.B.history = [
+      { at: "2026-05-27T00:02:00.000Z", event: "blocked", status: "blocked", question: "Other?" }
+    ];
+    await writeFile(graphPath, `${JSON.stringify(graph, null, 2)}\n`, "utf8");
+
+    const visualizer = await createVisualizerServer({ graphPath, port: 0 });
+    try {
+      const response = await fetch(`${visualizer.url}/api/events?node=A&event=blocked&limit=5`);
+      assert.equal(response.status, 200);
+      const events = await response.json();
+      assert.deepEqual(events.map((event) => `${event.nodeId}:${event.event}`), ["A:blocked"]);
+
+      const badLimit = await fetch(`${visualizer.url}/api/events?limit=NaN`);
+      assert.equal(badLimit.status, 400);
+      assert.match(await badLimit.text(), /Invalid --limit/);
+    } finally {
+      await visualizer.close();
+    }
   });
 });
 

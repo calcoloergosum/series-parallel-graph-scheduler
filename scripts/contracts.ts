@@ -368,6 +368,26 @@ export interface OperationalEventExportEntry {
   details: JsonObject;
 }
 
+export interface VisualizerAttentionSummary {
+  failed: {
+    count: number;
+    nodeIds: NodeId[];
+  };
+  blocked: {
+    count: number;
+    nodeIds: NodeId[];
+  };
+  expired: {
+    count: number;
+    nodeIds: NodeId[];
+    releasable: number;
+  };
+  workerErrors: {
+    count: number;
+    workerIds: string[];
+  };
+}
+
 export interface LeaseClaimResult {
   nodeId: NodeId;
   title?: string;
@@ -593,6 +613,9 @@ export interface VisualizerPayload {
   nodes: VisualizerNodeDetail[];
   nodeHistoryLimit: number;
   actionPolicy: VisualizerActionPolicy;
+  attention: VisualizerAttentionSummary;
+  diagnostics: GraphDiagnostics;
+  recentEvents: OperationalEventExportEntry[];
   ready: ReadyNode[];
   working: WorkingNode[];
   summary: GraphSummary;

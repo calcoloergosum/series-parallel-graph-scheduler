@@ -12,9 +12,9 @@ import type {
   SlackNotificationResult,
   VisualizerServerHandle
 } from "./contracts.js";
-import { defaultGraphPath } from "./graph-io.js";
+import { defaultGraphPath, readGraph } from "./graph-io.js";
 import { NumericArgumentError, numericArgumentRanges, parseNumericArgument } from "./numeric-args.js";
-import { operationalEvents } from "./operational-events.js";
+import { exportOperationalEvents, operationalEvents } from "./operational-events.js";
 import { errorMessage } from "./shared-utils.js";
 import { renderVisualizerHtml } from "./visualizer-client.js";
 import { buildVisualizerPayload } from "./visualizer-payload.js";
@@ -126,6 +126,21 @@ export async function createVisualizerServer({
       if (req.method === "GET" && url.pathname === "/api/graph") {
         res.writeHead(200, { "content-type": "application/json; charset=utf-8", "cache-control": "no-store" });
         res.end(JSON.stringify(await buildVisualizerPayload(graphPath, workerManager)));
+        return;
+      }
+
+      if (req.method === "GET" && url.pathname === "/api/events") {
+        const events = exportOperationalEvents(await readGraph(graphPath), {
+          limit: parseNumericArgument(url.searchParams.get("limit") ?? undefined, {
+            flag: "--limit",
+            ...numericArgumentRanges.eventLimit,
+            defaultValue: 50
+          }),
+          nodeId: optionalQueryString(url, "node"),
+          event: optionalQueryString(url, "event")
+        });
+        res.writeHead(200, { "content-type": "application/json; charset=utf-8", "cache-control": "no-store" });
+        res.end(JSON.stringify(events));
         return;
       }
 
@@ -347,4 +362,9 @@ function stringBodyField(body: Record<string, unknown>, field: string): string {
 function optionalStringBodyField(body: Record<string, unknown>, field: string): string | undefined {
   const value = body[field];
   return value === undefined ? undefined : String(value);
+}
+
+function optionalQueryString(url: URL, field: string): string | undefined {
+  const value = url.searchParams.get(field);
+  return value === null ? undefined : value;
 }
