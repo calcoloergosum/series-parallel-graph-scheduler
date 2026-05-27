@@ -1,11 +1,36 @@
-import test from "node:test";
+import test, { after } from "node:test";
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { existsSync } from "node:fs";
+import { createServer } from "node:http";
+import { mkdir, mkdtemp, readdir, readFile, rm, utimes, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
-import {
+import { runInNewContext } from "node:vm";
+
+const schedulerScriptUrl = builtScriptUrl("plan-scheduler");
+const layoutScriptUrl = builtScriptUrl("sp-layout");
+const graphIoScriptUrl = builtScriptUrl("graph-io");
+const rendererScriptPath = fileURLToPath(builtScriptUrl("render-plan"));
+const schedulerScriptPath = fileURLToPath(schedulerScriptUrl);
+const packageJson = JSON.parse(await readFile(new URL("../package.json", import.meta.url), "utf8"));
+const originalSlackWebhookUrl = process.env.SLACK_WEBHOOK_URL;
+
+// Tests must never inherit a developer's live Slack webhook. Individual Slack
+// send coverage opts in with a local fake webhook server.
+delete process.env.SLACK_WEBHOOK_URL;
+
+after(() => {
+  if (originalSlackWebhookUrl === undefined) {
+    delete process.env.SLACK_WEBHOOK_URL;
+  } else {
+    process.env.SLACK_WEBHOOK_URL = originalSlackWebhookUrl;
+  }
+});
+
+const {
   answerNode,
   blockNode,
   buildWorkerPrompt,
@@ -14,22 +39,64 @@ import {
   completeNode,
   createVisualizerServer,
   decomposeNode,
+  isLocalVisualizerHost,
   listWorkingNodes,
   listReadyLeafNodes,
+  parseArgs,
   parseCodexArgs,
+  parseChildrenArgs,
   readGraph,
   reconcileGraphStatus,
   releaseExpiredLeases,
   renewNodeLease,
+  resetReachable,
   resetNode,
+  resetSubtree,
   renderVisualizerHtml,
   runWorker,
+  sendSlackNotification,
   startNode,
-  summarizeGraph
-} from "../scripts/plan-scheduler.mjs";
-import { buildPlanarLayout, renderPlanarSvg } from "../scripts/sp-layout.mjs";
+  summarizeGraph,
+  visualizerHostSecurityWarning,
+  withGraphLock,
+  writeGraphAtomic,
+  writeReportFile
+} = await import(schedulerScriptUrl.href);
+const { buildPlanarLayout, renderPlanarSvg } = await import(layoutScriptUrl.href);
+const { defaultGraphPath } = await import(graphIoScriptUrl.href);
 
 const execFileAsync = promisify(execFile);
+
+function builtScriptUrl(scriptName) {
+  const target = new URL(`../dist/scripts/${scriptName}.js`, import.meta.url);
+  if (!existsSync(target)) {
+    throw new Error(`Missing built ${scriptName} module in dist/scripts. Run npm run build before tests.`);
+  }
+  return target;
+}
+
+function builtBinPath(binName) {
+  const binEntry = packageJson.bin?.[binName];
+  assert.equal(typeof binEntry, "string", `Missing package bin entry: ${binName}`);
+  const normalizedEntry = binEntry.replace(/^\.\//, "");
+  const builtEntry = normalizedEntry.startsWith("dist/") ? normalizedEntry : `dist/${normalizedEntry}`;
+  return fileURLToPath(new URL(`../${builtEntry}`, import.meta.url));
+}
+
+test("package npm scripts and bins target migrated build output", () => {
+  for (const command of ["ready", "summary", "serve", "worker"]) {
+    assert.match(packageJson.scripts[command], new RegExp(`node dist/scripts/plan-scheduler\\.js ${command}`));
+  }
+
+  assert.match(packageJson.scripts.render, /node dist\/scripts\/render-plan\.js/);
+  assert.match(packageJson.scripts.test, /npm run build/);
+  assert.equal(packageJson.bin["spg-scheduler"], "./dist/scripts/plan-scheduler.js");
+  assert.equal(packageJson.bin["spg-render-plan"], "./dist/scripts/render-plan.js");
+});
+
+test("built shared graph IO defaults resolve to package graph path", () => {
+  assert.equal(defaultGraphPath, fileURLToPath(new URL("../plan.graph.json", import.meta.url)));
+});
 
 function fixtureGraph() {
   return {
@@ -74,10 +141,327 @@ async function waitFor(predicate, timeoutMs = 5000) {
   throw new Error("Timed out waiting for condition");
 }
 
+async function assertCliFails(args, stderrPattern) {
+  await assert.rejects(
+    execFileAsync(process.execPath, [schedulerScriptPath, ...args]),
+    (error) => {
+      assert.match(error.stderr, stderrPattern);
+      return true;
+    }
+  );
+}
+
+function escapeRegExp(value) {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function graphValidationCases() {
+  return [
+    {
+      name: "missing graph body",
+      mutate(graph) {
+        delete graph.graph;
+      },
+      pathPattern: /\$\.graph/,
+      messagePattern: /Expected graph body to be an object/
+    },
+    {
+      name: "missing root id",
+      mutate(graph) {
+        delete graph.graph.root;
+      },
+      pathPattern: /\$\.graph\.root/,
+      messagePattern: /Expected root node id string/
+    },
+    {
+      name: "root id absent from nodes map",
+      mutate(graph) {
+        graph.graph.root = "MISSING_ROOT";
+      },
+      pathPattern: /\$\.graph\.root/,
+      messagePattern: /Root node is not present in nodes: MISSING_ROOT/
+    },
+    {
+      name: "missing nodes map",
+      mutate(graph) {
+        delete graph.graph.nodes;
+      },
+      pathPattern: /\$\.graph\.nodes/,
+      messagePattern: /Expected node map object/
+    },
+    {
+      name: "unknown child id",
+      mutate(graph) {
+        graph.graph.nodes.ROOT.children = ["MISSING"];
+      },
+      pathPattern: /\$\.graph\.nodes\.ROOT\.children/,
+      messagePattern: /Unknown child node id: MISSING/
+    },
+    {
+      name: "non-array children",
+      mutate(graph) {
+        graph.graph.nodes.ROOT.children = "A";
+      },
+      pathPattern: /\$\.graph\.nodes\.ROOT\.children/,
+      messagePattern: /Expected children to be an array of node id strings/
+    },
+    {
+      name: "children array with non-string ids",
+      mutate(graph) {
+        graph.graph.nodes.ROOT.children = ["A", 42];
+      },
+      pathPattern: /\$\.graph\.nodes\.ROOT\.children/,
+      messagePattern: /Expected children to be an array of node id strings/
+    }
+  ];
+}
+
+function rendererDocumentFixture() {
+  return {
+    pageTitle: "Invalid Graph",
+    intro: ["Renderer should validate first."],
+    sections: []
+  };
+}
+
+function runVisualizerClientScript() {
+  const html = renderVisualizerHtml();
+  const script = html.match(/<script>\n([\s\S]*)\n<\/script>/)?.[1];
+  assert.equal(typeof script, "string");
+
+  const elements = new Map();
+  function element(id) {
+    if (!elements.has(id)) {
+      elements.set(id, {
+        id,
+        value: "",
+        checked: false,
+        dataset: {},
+        disabled: false,
+        addEventListener() {},
+        closest() {
+          return undefined;
+        },
+        querySelector() {
+          return element(`${id}:query`);
+        },
+        get innerHTML() {
+          return this._innerHTML || "";
+        },
+        set innerHTML(value) {
+          this._innerHTML = String(value);
+        },
+        get textContent() {
+          return this._textContent || "";
+        },
+        set textContent(value) {
+          this._textContent = String(value);
+        }
+      });
+    }
+    return elements.get(id);
+  }
+
+  const context = {
+    document: {
+      addEventListener() {},
+      getElementById: element,
+      querySelector(selector) {
+        return element(`query:${selector}`);
+      }
+    },
+    localStorage: {
+      getItem() {
+        return null;
+      },
+      setItem() {}
+    },
+    EventSource: class {
+      constructor() {
+        this.onmessage = undefined;
+        this.onerror = undefined;
+      }
+    },
+    fetch: async () => ({
+      ok: true,
+      json: async () => ({
+        summary: { graphVersion: 1, totalNodes: 0, counts: {} },
+        graphSvg: "<svg></svg>",
+        ready: [],
+        working: [],
+        workerManager: { defaults: {}, workers: [] }
+      }),
+      text: async () => ""
+    })
+  };
+
+  runInNewContext(script, context);
+  return { context, element };
+}
+
+function assertReadableGraphValidationOutput(output, graphPath, validationCase) {
+  assert.match(output, /Invalid graph file/);
+  assert.ok(output.includes(graphPath));
+  assert.match(output, validationCase.pathPattern);
+  assert.match(output, validationCase.messagePattern);
+  assert.doesNotMatch(output, /Unknown child node referenced by graph/);
+}
+
 test("graph summary includes plan metadata", () => {
   const summary = summarizeGraph(fixtureGraph());
   assert.equal(summary.title, "Fixture Implementation Plan");
   assert.equal(summary.description, "Coordinate fixture work across a series root, parallel branches, and a final gate.");
+});
+
+test("graph IO keeps JSON files readable and newline terminated", async () => {
+  await withTempGraph(async (graphPath, dir) => {
+    const graph = fixtureGraph();
+    graph.graphVersion = 42;
+
+    await writeGraphAtomic(graph, graphPath);
+
+    const content = await readFile(graphPath, "utf8");
+    assert.ok(content.endsWith("\n"));
+    assert.equal((await readGraph(graphPath)).graphVersion, 42);
+    assert.deepEqual((await readdir(dir)).filter((entry) => entry.endsWith(".tmp")), []);
+  });
+});
+
+test("readGraph rejects invalid graph files with path and validator details", async () => {
+  await withTempGraph(async (graphPath) => {
+    const graph = fixtureGraph();
+    graph.graph.nodes.ROOT.children = ["MISSING"];
+    await writeFile(graphPath, `${JSON.stringify(graph, null, 2)}\n`, "utf8");
+
+    await assert.rejects(
+      () => readGraph(graphPath),
+      (error) => {
+        assert.ok(error instanceof Error);
+        assert.match(error.message, /Invalid graph file/);
+        assert.ok(error.message.includes(graphPath));
+        assert.match(error.message, /\$\.graph\.nodes\.ROOT\.children/);
+        assert.match(error.message, /Unknown child node id: MISSING/);
+        return true;
+      }
+    );
+  });
+});
+
+test("readGraph reports readable validation errors for malformed graph shapes", async (t) => {
+  for (const validationCase of graphValidationCases()) {
+    await t.test(validationCase.name, async () => {
+      await withTempGraph(async (graphPath) => {
+        const graph = fixtureGraph();
+        validationCase.mutate(graph);
+        await writeFile(graphPath, `${JSON.stringify(graph, null, 2)}\n`, "utf8");
+
+        await assert.rejects(
+          () => readGraph(graphPath),
+          (error) => {
+            assert.ok(error instanceof Error);
+            assertReadableGraphValidationOutput(error.message, graphPath, validationCase);
+            assert.doesNotMatch(error.message, /\n\s+at /);
+            return true;
+          }
+        );
+      });
+    });
+  }
+});
+
+test("graph lock removes stale lock directories", async () => {
+  await withTempGraph(async (graphPath, dir) => {
+    const lockPath = `${graphPath}.lock`;
+    await mkdir(lockPath);
+    await writeFile(
+      join(lockPath, "metadata.json"),
+      `${JSON.stringify({
+        pid: 12345,
+        createdAt: "2026-05-27T01:00:00.000Z",
+        graphPath
+      })}\n`,
+      "utf8"
+    );
+    const oldTime = new Date(Date.now() - 60_000);
+    await utimes(lockPath, oldTime, oldTime);
+
+    const result = await withGraphLock(graphPath, async () => "locked", {
+      staleMs: 1,
+      retryMs: 1,
+      timeoutMs: 500
+    });
+
+    assert.equal(result, "locked");
+    assert.deepEqual((await readdir(dir)).filter((entry) => entry.endsWith(".lock")), []);
+    assert.deepEqual((await readdir(dir)).filter((entry) => entry.endsWith(".tmp")), []);
+  });
+});
+
+test("graph lock writes owner metadata and removes it on release", async () => {
+  await withTempGraph(async (graphPath, dir) => {
+    const lockPath = `${graphPath}.lock`;
+
+    await withGraphLock(graphPath, async () => {
+      const metadata = JSON.parse(await readFile(join(lockPath, "metadata.json"), "utf8"));
+      assert.equal(metadata.pid, process.pid);
+      assert.equal(metadata.graphPath, graphPath);
+      assert.match(metadata.createdAt, /^\d{4}-\d{2}-\d{2}T/);
+      if ("host" in metadata) {
+        assert.equal(typeof metadata.host, "string");
+      }
+    });
+
+    assert.deepEqual((await readdir(dir)).filter((entry) => entry.endsWith(".lock")), []);
+  });
+});
+
+test("graph lock timeout reports lock owner metadata", async () => {
+  await withTempGraph(async (graphPath) => {
+    const lockPath = `${graphPath}.lock`;
+    await mkdir(lockPath);
+    await writeFile(
+      join(lockPath, "metadata.json"),
+      `${JSON.stringify({
+        pid: 67890,
+        createdAt: "2026-05-27T01:23:45.000Z",
+        graphPath,
+        host: "test-host"
+      })}\n`,
+      "utf8"
+    );
+
+    const startedAt = Date.now();
+    await assert.rejects(
+      withGraphLock(graphPath, async () => "locked", {
+        staleMs: 60_000,
+        retryMs: 1,
+        timeoutMs: 20
+      }),
+      (error) => {
+        assert.match(error.message, /Timed out waiting for graph lock/);
+        assert.match(error.message, new RegExp(escapeRegExp(lockPath)));
+        assert.match(error.message, /owner pid=67890/);
+        assert.match(error.message, /createdAt=2026-05-27T01:23:45\.000Z/);
+        assert.match(error.message, /host=test-host/);
+        assert.match(error.message, new RegExp(escapeRegExp(graphPath)));
+        return true;
+      }
+    );
+    assert.ok(Date.now() - startedAt < 1000, `Lock timeout for ${lockPath} should stay bounded`);
+  });
+});
+
+test("report paths are constrained to the graph directory", async () => {
+  await withTempGraph(async (graphPath, dir) => {
+    const reportPath = await writeReportFile(graphPath, "reports/safe.md", "safe report");
+    assert.equal(await readFile(reportPath, "utf8"), "safe report\n");
+
+    await assert.rejects(
+      writeReportFile(graphPath, "../escape.md", "escaped report"),
+      /Path escapes graph directory/
+    );
+    assert.deepEqual((await readdir(dir)).sort(), ["plan.graph.json", "reports"]);
+  });
 });
 
 test("series-parallel readiness exposes only legal leaf nodes", async () => {
@@ -130,6 +514,36 @@ test("claim/start/done records lease and unlocks next series work", async () => 
     assert.equal(graph.graph.nodes.A.report, "reports/A.md");
     assert.deepEqual(listWorkingNodes(graph), []);
     assert.deepEqual(listReadyLeafNodes(graph).map((node) => node.id).sort(), ["B", "C"]);
+  });
+});
+
+test("concurrent claim attempts never claim the same ready leaf", async () => {
+  await withTempGraph(async (graphPath) => {
+    await claimNode(graphPath, { session: "bootstrap", nodeId: "A" });
+    await completeNode(graphPath, { nodeId: "A", session: "bootstrap" });
+
+    const attempts = Array.from({ length: 8 }, (_, index) =>
+      claimNode(graphPath, { session: `parallel-${index}` })
+    );
+    const results = await Promise.allSettled(attempts);
+    const claimed = results
+      .filter((result) => result.status === "fulfilled")
+      .map((result) => result.value.nodeId)
+      .sort();
+    const rejected = results.filter((result) => result.status === "rejected");
+
+    assert.deepEqual(claimed, ["B", "C"], `Unexpected concurrent claims for ${graphPath}`);
+    assert.equal(new Set(claimed).size, claimed.length, `Duplicate claim detected for ${graphPath}`);
+    assert.equal(rejected.length, 6, `Expected exhausted claim attempts for ${graphPath}`);
+    for (const result of rejected) {
+      assert.match(result.reason.message, /No ready nodes to claim/);
+      assert.match(result.reason.message, new RegExp(escapeRegExp(graphPath)));
+    }
+
+    const graph = await readGraph(graphPath);
+    assert.equal(graph.graph.nodes.B.status, "claimed");
+    assert.equal(graph.graph.nodes.C.status, "claimed");
+    assert.notEqual(graph.graph.nodes.B.lease.session, graph.graph.nodes.C.lease.session);
   });
 });
 
@@ -204,7 +618,7 @@ test("CLI answer unblocks a task and visualizer exposes the answer", async () =>
     await blockNode(graphPath, { nodeId: "A", session: "codex-A", question: "Proceed?" });
 
     const cli = await execFileAsync(process.execPath, [
-      "scripts/plan-scheduler.mjs",
+      schedulerScriptPath,
       "answer",
       "--graph",
       graphPath,
@@ -226,6 +640,45 @@ test("CLI answer unblocks a task and visualizer exposes the answer", async () =>
 
     const html = renderVisualizerHtml();
     assert.match(html, /answer:/);
+  });
+});
+
+test("CLI validates numeric arguments before dispatch", async () => {
+  await withTempGraph(async (graphPath) => {
+    const cli = await execFileAsync(process.execPath, [
+      schedulerScriptPath,
+      "claim",
+      "--graph",
+      graphPath,
+      "--session",
+      "codex-valid",
+      "--lease",
+      "1"
+    ]);
+    assert.equal(JSON.parse(cli.stdout).nodeId, "A");
+  });
+
+  await withTempGraph(async (graphPath) => {
+    await assertCliFails(
+      ["claim", "--graph", graphPath, "--lease", "nope"],
+      /Invalid --lease: expected integer from 1 to 86400; received "nope"/
+    );
+    await assertCliFails(
+      ["renew", "--graph", graphPath, "--node", "A", "--lease"],
+      /Missing --lease value; expected integer from 1 to 86400/
+    );
+    await assertCliFails(
+      ["worker", "--graph", graphPath, "--once", "--idle-ms", "-5"],
+      /Invalid --idle-ms: expected integer from 1 to 86400000; received "-5"/
+    );
+    await assertCliFails(
+      ["serve", "--graph", graphPath, "--port", "NaN"],
+      /Invalid --port: expected integer from 0 to 65535; received "NaN"/
+    );
+    await assertCliFails(
+      ["serve", "--graph", graphPath, "--port", "70000"],
+      /Invalid --port: expected integer from 0 to 65535; received "70000"/
+    );
   });
 });
 
@@ -254,6 +707,152 @@ test("visualizer answer API answers a blocked task", async () => {
       await visualizer.close();
     }
   });
+});
+
+test("visualizer warns when worker controls bind beyond loopback", async () => {
+  assert.equal(isLocalVisualizerHost("127.0.0.1"), true);
+  assert.equal(isLocalVisualizerHost("localhost"), true);
+  assert.equal(isLocalVisualizerHost("::1"), true);
+  assert.equal(isLocalVisualizerHost("0.0.0.0"), false);
+  assert.equal(isLocalVisualizerHost("192.168.1.10"), false);
+  assert.equal(visualizerHostSecurityWarning("127.0.0.1"), undefined);
+  assert.match(visualizerHostSecurityWarning("0.0.0.0"), /trusted local use/);
+  assert.match(visualizerHostSecurityWarning("192.168.1.10"), /worker start\/stop controls/);
+
+  await withTempGraph(async (graphPath) => {
+    const defaultVisualizer = await createVisualizerServer({ graphPath, port: 0 });
+    try {
+      assert.match(defaultVisualizer.url, /^http:\/\/127\.0\.0\.1:/);
+      assert.equal(defaultVisualizer.securityWarning, undefined);
+    } finally {
+      await defaultVisualizer.close();
+    }
+
+    const visualizer = await createVisualizerServer({ graphPath, port: 0, host: "0.0.0.0" });
+    try {
+      assert.match(visualizer.securityWarning, /Binding to 0\.0\.0\.0/);
+    } finally {
+      await visualizer.close();
+    }
+  });
+});
+
+test("Slack notification skips cleanly when webhook is not configured", async () => {
+  const previousWebhook = process.env.SLACK_WEBHOOK_URL;
+  delete process.env.SLACK_WEBHOOK_URL;
+  try {
+    await withTempGraph(async (graphPath) => {
+      assert.deepEqual(await sendSlackNotification(graphPath, "done", { nodeId: "A" }), {
+        skipped: true,
+        reason: "SLACK_WEBHOOK_URL is not set"
+      });
+    });
+  } finally {
+    if (previousWebhook === undefined) {
+      delete process.env.SLACK_WEBHOOK_URL;
+    } else {
+      process.env.SLACK_WEBHOOK_URL = previousWebhook;
+    }
+  }
+});
+
+test("Slack notification text includes event, node, graph state, and details", async () => {
+  await withTempGraph(async (graphPath) => {
+    const received = [];
+    const server = createServer((request, response) => {
+      let body = "";
+      request.setEncoding("utf8");
+      request.on("data", (chunk) => {
+        body += chunk;
+      });
+      request.on("end", () => {
+        received.push(JSON.parse(body));
+        response.writeHead(200, { "content-type": "text/plain" });
+        response.end("ok");
+      });
+    });
+
+    await new Promise((resolveListen) => server.listen(0, "127.0.0.1", resolveListen));
+    const previousWebhook = process.env.SLACK_WEBHOOK_URL;
+    try {
+      const { port } = server.address();
+      process.env.SLACK_WEBHOOK_URL = `http://127.0.0.1:${port}/slack`;
+      assert.deepEqual(await sendSlackNotification(graphPath, "failed", {
+        nodeId: "A",
+        question: "Proceed?",
+        answer: "Use CLI.",
+        reason: "codex exited with 1",
+        report: "reports/A.md"
+      }), { sent: true });
+    } finally {
+      if (previousWebhook === undefined) {
+        delete process.env.SLACK_WEBHOOK_URL;
+      } else {
+        process.env.SLACK_WEBHOOK_URL = previousWebhook;
+      }
+      await new Promise((resolveClose, rejectClose) => {
+        server.close((error) => error ? rejectClose(error) : resolveClose());
+      });
+    }
+
+    assert.equal(received.length, 1);
+    assert.match(received[0].text, /\*FAILED\* A - Bootstrap/);
+    assert.match(received[0].text, /graph v1; pending=6/);
+    assert.match(received[0].text, /question: Proceed\?/);
+    assert.match(received[0].text, /answer: Use CLI\./);
+    assert.match(received[0].text, /reason: codex exited with 1/);
+    assert.match(received[0].text, /report: reports\/A\.md/);
+  });
+});
+
+test("CLI notification hooks return skipped Slack results without a webhook", async () => {
+  const env = { ...process.env, SLACK_WEBHOOK_URL: "" };
+  const cases = [
+    {
+      command: "done",
+      prepare: async (graphPath) => claimNode(graphPath, { session: "codex-A", nodeId: "A" }),
+      args: ["done", "--node", "A", "--session", "codex-A", "--report", "reports/A.md"]
+    },
+    {
+      command: "block",
+      prepare: async (graphPath) => claimNode(graphPath, { session: "codex-A", nodeId: "A" }),
+      args: ["block", "--node", "A", "--session", "codex-A", "--question", "Need operator decision"]
+    },
+    {
+      command: "answer",
+      prepare: async (graphPath) => {
+        await claimNode(graphPath, { session: "codex-A", nodeId: "A" });
+        await blockNode(graphPath, { nodeId: "A", session: "codex-A", question: "Proceed?" });
+      },
+      args: ["answer", "--node", "A", "--answer", "Continue.", "--responder", "test"]
+    },
+    {
+      command: "fail",
+      prepare: async (graphPath) => claimNode(graphPath, { session: "codex-A", nodeId: "A" }),
+      args: ["fail", "--node", "A", "--session", "codex-A", "--reason", "failed check", "--report", "reports/A.md"]
+    },
+    {
+      command: "decompose",
+      prepare: async (graphPath) => claimNode(graphPath, { session: "codex-A", nodeId: "A" }),
+      args: ["decompose", "--node", "A", "--session", "codex-A", "--kind", "series", "--child", "A1=First", "--child", "A2=Second"]
+    }
+  ];
+
+  for (const item of cases) {
+    await withTempGraph(async (graphPath) => {
+      await item.prepare(graphPath);
+      const cli = await execFileAsync(process.execPath, [
+        schedulerScriptPath,
+        item.args[0],
+        "--graph",
+        graphPath,
+        ...item.args.slice(1)
+      ], { env });
+      const result = JSON.parse(cli.stdout);
+      assert.equal(result.slack.skipped, true, `${item.command} should skip Slack without webhook`);
+      assert.equal(result.slack.reason, "SLACK_WEBHOOK_URL is not set");
+    });
+  }
 });
 
 test("visualizer worker API starts managed workers from shared settings", async () => {
@@ -291,6 +890,110 @@ test("visualizer worker API starts managed workers from shared settings", async 
 
       const graph = await readGraph(graphPath);
       assert.equal(graph.graph.nodes.A.status, "done");
+    } finally {
+      await visualizer.close();
+    }
+  });
+});
+
+test("visualizer worker API rejects invalid numeric worker settings", async () => {
+  await withTempGraph(async (graphPath, dir) => {
+    const visualizer = await createVisualizerServer({ graphPath, port: 0, defaultWorkerCwd: dir });
+    try {
+      const cases = [
+        {
+          body: { count: "NaN", idleMs: "5000" },
+          pattern: /Invalid --count: expected integer from 1 to 100; received "NaN"/
+        },
+        {
+          body: { count: 101 },
+          pattern: /Invalid --count: expected integer from 1 to 100; received 101/
+        },
+        {
+          body: { count: { nested: true } },
+          pattern: /Invalid --count: expected number or numeric string/
+        },
+        {
+          body: { idleMs: 86_400_001 },
+          pattern: /Invalid --idle-ms: expected integer from 1 to 86400000; received 86400001/
+        },
+        {
+          body: { leaseSeconds: 0 },
+          pattern: /Invalid --lease: expected integer from 1 to 86400; received 0/
+        }
+      ];
+
+      for (const item of cases) {
+        const response = await fetch(`${visualizer.url}/api/workers/start`, {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify(item.body)
+        });
+        assert.equal(response.status, 400);
+        assert.match(await response.text(), item.pattern);
+
+        const manager = await (await fetch(`${visualizer.url}/api/workers`)).json();
+        assert.equal(manager.workers.length, 0);
+      }
+    } finally {
+      await visualizer.close();
+    }
+  });
+});
+
+test("visualizer worker API rejects oversized or malformed worker command fields", async () => {
+  await withTempGraph(async (graphPath, dir) => {
+    const visualizer = await createVisualizerServer({ graphPath, port: 0, defaultWorkerCwd: dir });
+    try {
+      const longPath = "x".repeat(4097);
+      const longArgs = Array.from({ length: 65 }, () => "arg");
+      const cases = [
+        {
+          body: { cwd: longPath },
+          pattern: /Invalid cwd: expected string length <= 4096/
+        },
+        {
+          body: { cwd: ["not", "a", "path"] },
+          pattern: /Invalid cwd: expected string/
+        },
+        {
+          body: { codexCommand: "" },
+          pattern: /Invalid codexCommand: expected non-empty string/
+        },
+        {
+          body: { codexArgs: "--model=gpt-5" },
+          pattern: /Invalid codexArgs: expected string array/
+        },
+        {
+          body: { codexArgs: longArgs },
+          pattern: /Invalid codexArgs: expected at most 64 entries/
+        },
+        {
+          body: { codexArgs: ["x".repeat(4097)] },
+          pattern: /Invalid codexArgs\[0\]: expected string length <= 4096/
+        },
+        {
+          body: { codexArgs: [false] },
+          pattern: /Invalid codexArgs\[0\]: expected string/
+        },
+        {
+          body: { count: 2, codexArgs: [false] },
+          pattern: /Invalid codexArgs\[0\]: expected string/
+        }
+      ];
+
+      for (const item of cases) {
+        const response = await fetch(`${visualizer.url}/api/workers/start`, {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify(item.body)
+        });
+        assert.equal(response.status, 400);
+        assert.match(await response.text(), item.pattern);
+
+        const manager = await (await fetch(`${visualizer.url}/api/workers`)).json();
+        assert.equal(manager.workers.length, 0);
+      }
     } finally {
       await visualizer.close();
     }
@@ -414,7 +1117,7 @@ test("CLI reset clears a leased task without the old owner session", async () =>
     await claimNode(graphPath, { session: "stale-worker", nodeId: "A" });
 
     const cli = await execFileAsync(process.execPath, [
-      "scripts/plan-scheduler.mjs",
+      schedulerScriptPath,
       "reset",
       "--graph",
       graphPath,
@@ -430,6 +1133,126 @@ test("CLI reset clears a leased task without the old owner session", async () =>
     assert.equal(graph.graph.nodes.A.status, "pending");
     assert.equal(graph.graph.nodes.A.lease, undefined);
     assert.deepEqual(listReadyLeafNodes(graph).map((node) => node.id), ["A"]);
+  });
+});
+
+test("reset-subtree clears a node and child descendants without reopening parents", async () => {
+  await withTempGraph(async (graphPath) => {
+    for (const nodeId of ["A", "B", "C", "G"]) {
+      await claimNode(graphPath, { session: `codex-${nodeId}`, nodeId });
+      await completeNode(graphPath, { nodeId, session: `codex-${nodeId}`, report: `reports/${nodeId}.md` });
+    }
+
+    const result = await resetSubtree(graphPath, { nodeId: "P", reason: "rerun branch" });
+    assert.deepEqual(result.resetNodes, ["P", "B", "C"]);
+
+    const graph = await readGraph(graphPath);
+    assert.equal(graph.graph.nodes.ROOT.status, "done");
+    assert.equal(graph.graph.nodes.P.status, "pending");
+    assert.equal(graph.graph.nodes.B.status, "pending");
+    assert.equal(graph.graph.nodes.C.status, "pending");
+    assert.equal(graph.graph.nodes.G.status, "done");
+    assert.equal(graph.graph.nodes.B.report, undefined);
+    assert.deepEqual(listReadyLeafNodes(graph).map((node) => node.id).sort(), ["B", "C"]);
+    assert.ok(graph.graph.nodes.P.history.some((entry) => entry.event === "reset_subtree" && entry.reason === "rerun branch"));
+    assert.ok(graph.graph.nodes.B.history.some((entry) => entry.event === "reset_subtree" && entry.rootId === "P"));
+  });
+});
+
+test("CLI reset-subtree clears child-reachable graph nodes", async () => {
+  await withTempGraph(async (graphPath) => {
+    await claimNode(graphPath, { session: "codex-A", nodeId: "A" });
+    await completeNode(graphPath, { nodeId: "A", session: "codex-A" });
+    await claimNode(graphPath, { session: "codex-B", nodeId: "B" });
+
+    const cli = await execFileAsync(process.execPath, [
+      schedulerScriptPath,
+      "reset-subtree",
+      "--graph",
+      graphPath,
+      "--node",
+      "P",
+      "--reason",
+      "operator subtree retry"
+    ]);
+    const result = JSON.parse(cli.stdout);
+    assert.deepEqual(result.resetNodes, ["P", "B", "C"]);
+
+    const graph = await readGraph(graphPath);
+    assert.equal(graph.graph.nodes.A.status, "done");
+    assert.equal(graph.graph.nodes.P.status, "pending");
+    assert.equal(graph.graph.nodes.B.status, "pending");
+    assert.equal(graph.graph.nodes.B.lease, undefined);
+    assert.equal(graph.graph.nodes.C.status, "pending");
+  });
+});
+
+test("reset-reachable clears downstream series work without resetting parents", async () => {
+  await withTempGraph(async (graphPath) => {
+    for (const nodeId of ["A", "B", "C", "G"]) {
+      await claimNode(graphPath, { session: `codex-${nodeId}`, nodeId });
+      await completeNode(graphPath, { nodeId, session: `codex-${nodeId}`, report: `reports/${nodeId}.md` });
+    }
+
+    const result = await resetReachable(graphPath, { nodeId: "B", reason: "rerun from branch B" });
+    assert.deepEqual(result.resetNodes, ["B", "G"]);
+
+    const graph = await readGraph(graphPath);
+    assert.equal(graph.graph.nodes.ROOT.status, "done");
+    assert.equal(graph.graph.nodes.P.status, "done");
+    assert.equal(graph.graph.nodes.B.status, "pending");
+    assert.equal(graph.graph.nodes.C.status, "done");
+    assert.equal(graph.graph.nodes.G.status, "pending");
+    assert.equal(graph.graph.nodes.B.report, undefined);
+    assert.ok(graph.graph.nodes.B.history.some((entry) => entry.event === "reset_reachable" && entry.reason === "rerun from branch B"));
+    assert.ok(graph.graph.nodes.G.history.some((entry) => entry.event === "reset_reachable" && entry.rootId === "B"));
+  });
+});
+
+test("CLI reset-reachable follows later series siblings from nested leaves", async () => {
+  await withTempGraph(async (graphPath) => {
+    const graph = {
+      graphVersion: 1,
+      title: "Nested Series",
+      graph: {
+        root: "ROOT",
+        nodes: {
+          ROOT: { title: "Root", kind: "series", status: "done", children: ["DISCOVERY", "BASELINE"] },
+          DISCOVERY: { title: "Discovery", kind: "series", status: "done", children: ["TS1", "TS2", "TS3"] },
+          TS1: { title: "TS1", kind: "task", status: "done", report: "reports/TS1.md" },
+          TS2: { title: "TS2", kind: "task", status: "done", report: "reports/TS2.md" },
+          TS3: { title: "TS3", kind: "task", status: "done", report: "reports/TS3.md" },
+          BASELINE: { title: "Baseline", kind: "series", status: "done", children: ["TS4", "TS5"] },
+          TS4: { title: "TS4", kind: "task", status: "done", report: "reports/TS4.md" },
+          TS5: { title: "TS5", kind: "task", status: "done", report: "reports/TS5.md" }
+        }
+      }
+    };
+    await writeFile(graphPath, `${JSON.stringify(graph, null, 2)}\n`, "utf8");
+
+    const cli = await execFileAsync(process.execPath, [
+      schedulerScriptPath,
+      "reset-reachable",
+      "--graph",
+      graphPath,
+      "--node",
+      "TS3",
+      "--reason",
+      "rerun from TS3"
+    ]);
+    const result = JSON.parse(cli.stdout);
+    assert.deepEqual(result.resetNodes, ["TS3", "BASELINE", "TS4", "TS5"]);
+
+    const updated = await readGraph(graphPath);
+    assert.equal(updated.graph.nodes.ROOT.status, "done");
+    assert.equal(updated.graph.nodes.DISCOVERY.status, "done");
+    assert.equal(updated.graph.nodes.TS1.status, "done");
+    assert.equal(updated.graph.nodes.TS2.status, "done");
+    assert.equal(updated.graph.nodes.TS3.status, "pending");
+    assert.equal(updated.graph.nodes.BASELINE.status, "pending");
+    assert.equal(updated.graph.nodes.TS4.status, "pending");
+    assert.equal(updated.graph.nodes.TS5.status, "pending");
+    assert.equal(updated.graph.nodes.TS5.report, undefined);
   });
 });
 
@@ -461,7 +1284,7 @@ test("decompose replaces a leaf with a child subgraph", async () => {
 test("CLI decompose updates a claimed leaf graph", async () => {
   await withTempGraph(async (graphPath) => {
     await execFileAsync(process.execPath, [
-      "scripts/plan-scheduler.mjs",
+      schedulerScriptPath,
       "claim",
       "--graph",
       graphPath,
@@ -471,7 +1294,7 @@ test("CLI decompose updates a claimed leaf graph", async () => {
       "codex-A"
     ]);
     await execFileAsync(process.execPath, [
-      "scripts/plan-scheduler.mjs",
+      schedulerScriptPath,
       "decompose",
       "--graph",
       graphPath,
@@ -492,6 +1315,86 @@ test("CLI decompose updates a claimed leaf graph", async () => {
     assert.equal(graph.graph.nodes.A1.title, "First CLI child");
     assert.deepEqual(listReadyLeafNodes(graph).map((node) => node.id), ["A1"]);
   });
+});
+
+test("CLI decompose rejects ambiguous child definitions with actionable errors", async () => {
+  await withTempGraph(async (graphPath) => {
+    await assertCliFails(
+      ["decompose", "--graph", graphPath, "--node", "A", "--child"],
+      /Missing --child value\. Use ID=Title or ID:Title/
+    );
+    await assertCliFails(
+      ["decompose", "--graph", graphPath, "--node", "A", "--child", "=Missing id"],
+      /--child #1 id cannot be empty/
+    );
+    await assertCliFails(
+      ["decompose", "--graph", graphPath, "--node", "A", "--child", "A1="],
+      /--child #1 title cannot be empty/
+    );
+    await assertCliFails(
+      ["decompose", "--graph", graphPath, "--node", "A", "--child", "A1=First", "--child-json", "[{\"id\":\"A2\",\"title\":\"Second\"}]"],
+      /Use either --child or --child-json, not both/
+    );
+    await assertCliFails(
+      ["decompose", "--graph", graphPath, "--node", "A", "--child-json", "not-json"],
+      /Invalid --child-json JSON:/
+    );
+    await assertCliFails(
+      ["decompose", "--graph", graphPath, "--node", "A", "--child-json", "{\"id\":\"A1\",\"title\":\"First\"}"],
+      /--child-json must be a JSON array/
+    );
+    await assertCliFails(
+      ["decompose", "--graph", graphPath, "--node", "A", "--child-json", "[{\"id\":\"\",\"title\":\"First\"}]"],
+      /--child-json\[0\] id cannot be empty/
+    );
+    await assertCliFails(
+      ["decompose", "--graph", graphPath, "--node", "A", "--child-json", "[{\"id\":\"A1\",\"title\":\"First\",\"children\":[7]}]"],
+      /--child-json\[0\]\.children\[0\] must be a string/
+    );
+  });
+});
+
+test("CLI rejects repeated scalar flags and missing command fields", async () => {
+  await withTempGraph(async (graphPath) => {
+    await assertCliFails(
+      ["prompt", "--graph", graphPath, "--node", "A", "--node", "B"],
+      /Option --node can only be provided once/
+    );
+    await assertCliFails(
+      ["prompt", "--graph", graphPath],
+      /prompt requires --node/
+    );
+    await assertCliFails(
+      ["answer", "--graph", graphPath, "--node", "A"],
+      /answer requires --answer/
+    );
+    await assertCliFails(
+      ["start", "--graph", graphPath, "--node", "--session", "codex-A"],
+      /Missing --node value/
+    );
+  });
+});
+
+test("structured CLI parser keeps repeatable flags explicit", () => {
+  assert.deepEqual(
+    parseChildrenArgs({ child: ["A1=First", "A2:Second"] }),
+    [
+      { id: "A1", title: "First" },
+      { id: "A2", title: "Second" }
+    ]
+  );
+  assert.deepEqual(
+    parseChildrenArgs({ "child-json": "[{\"id\":\"A1\",\"title\":\"First\",\"children\":[\"A1a\"]}]" }),
+    [{ id: "A1", title: "First", children: ["A1a"] }]
+  );
+  assert.throws(
+    () => parseArgs(["worker", "--once", "false"]),
+    /Boolean flag --once does not accept a value; received "false"/
+  );
+  assert.throws(
+    () => parseArgs(["worker", "--quiet=false"]),
+    /Boolean flag --quiet does not accept a value; received "false"/
+  );
 });
 
 test("prompt command renders an external template", async () => {
@@ -518,7 +1421,7 @@ test("prompt command renders an external template", async () => {
     assert.match(prompt, /Report=reports\/A.md/);
 
     const { stdout } = await execFileAsync(process.execPath, [
-      "scripts/plan-scheduler.mjs",
+      schedulerScriptPath,
       "prompt",
       "--graph",
       graphPath,
@@ -576,7 +1479,7 @@ test("CLI worker streams child output by default and supports quiet mode", async
     await writeFile(fakeRunnerPath, "console.log('stream visible'); console.error('stream error');\n", "utf8");
 
     const loud = await execFileAsync(process.execPath, [
-      "scripts/plan-scheduler.mjs",
+      schedulerScriptPath,
       "worker",
       "--graph",
       graphPath,
@@ -601,7 +1504,7 @@ test("CLI worker streams child output by default and supports quiet mode", async
     await writeFile(graphPath, `${JSON.stringify(graph, null, 2)}\n`, "utf8");
 
     const quiet = await execFileAsync(process.execPath, [
-      "scripts/plan-scheduler.mjs",
+      schedulerScriptPath,
       "worker",
       "--graph",
       graphPath,
@@ -631,7 +1534,7 @@ test("CLI worker accepts --codex-arg=value syntax", async () => {
     );
 
     const result = await execFileAsync(process.execPath, [
-      "scripts/plan-scheduler.mjs",
+      schedulerScriptPath,
       "worker",
       "--graph",
       graphPath,
@@ -663,6 +1566,10 @@ test("default codex worker flags are passed through codex exec", () => {
     parseCodexArgs({ "codex-arg": "--flag-for-custom-runner" }, "/tmp/custom-runner"),
     ["--flag-for-custom-runner"]
   );
+  assert.throws(
+    () => parseCodexArgs({ "codex-arg": true }),
+    /Missing --codex-arg value\. Use --codex-arg=value for values that start with '-'\./
+  );
 });
 
 test("visualizer builds graph payload and real-time HTML shell", async () => {
@@ -684,6 +1591,63 @@ test("visualizer builds graph payload and real-time HTML shell", async () => {
     assert.deepEqual(payload.workerManager.workers, []);
     assert.match(payload.graphSvg, /<svg class="sp-graph"/);
   });
+});
+
+test("visualizer browser renderers escape graph text and worker logs", () => {
+  const { context, element } = runVisualizerClientScript();
+
+  context.render({
+    summary: {
+      graphVersion: "1<script>alert(1)</script>",
+      totalNodes: "6<img src=x onerror=alert(1)>",
+      counts: { "ready\"><img src=x onerror=alert(1)>": 1 }
+    },
+    graphSvg: '<svg class="sp-graph"><text>&lt;script&gt;label&lt;/script&gt;</text></svg>',
+    ready: [
+      {
+        id: 'A" onclick="alert(1)',
+        title: "<img src=x onerror=alert(1)>",
+        question: "<script>question()</script>",
+        answer: "<b>answer</b>"
+      }
+    ],
+    working: [
+      {
+        id: 'B" onclick="alert(1)',
+        title: "<script>work()</script>",
+        status: 'blocked" onmouseover="alert(1)',
+        session: "<img src=x onerror=alert(1)>",
+        runId: "<script>run()</script>",
+        expiresAt: "<script>expiry()</script>",
+        question: "<script>question()</script>",
+        answer: "<script>answer()</script>",
+        report: "<script>report()</script>"
+      }
+    ],
+    workerManager: {
+      defaults: { cwd: "", sessionPrefix: "codex", codexCommand: "codex" },
+      workers: [
+        {
+          id: 'worker-1" onclick="alert(1)',
+          session: "<img src=x onerror=alert(1)>",
+          status: "running",
+          pid: "<script>pid()</script>",
+          cwd: "<script>cwd()</script>",
+          logTail: [{ text: "<script>alert(1)</script><img src=x onerror=alert(1)>" }]
+        }
+      ]
+    }
+  });
+
+  assert.equal(element("graph").innerHTML, '<svg class="sp-graph"><text>&lt;script&gt;label&lt;/script&gt;</text></svg>');
+  const renderedHtml = ["summary", "ready", "working", "workers"]
+    .map((id) => element(id).innerHTML)
+    .join("\n");
+
+  assert.match(renderedHtml, /&lt;script&gt;alert\(1\)&lt;\/script&gt;/);
+  assert.match(renderedHtml, /&lt;img src=x onerror=alert\(1\)&gt;/);
+  assert.doesNotMatch(renderedHtml, /<script\b/);
+  assert.doesNotMatch(renderedHtml, /<img\b/);
 });
 
 test("planar layout places series before parallel branches before final gate", () => {
@@ -732,31 +1696,46 @@ test("static renderer escapes graph document HTML fields", async () => {
   const graph = fixtureGraph();
   graph.title = "Unsafe <Title>";
   graph.document = {
-    pageTitle: "Unsafe",
+    pageTitle: "Unsafe <script>title()</script>",
+    nav: [
+      { label: "Docs <img src=x onerror=alert(1)>", href: "javascript:alert(1)" },
+      { label: "Safe", href: "README.md?x=<script>bad()</script>" }
+    ],
+    meta: [{ label: "Owner <script>bad()</script>", value: "Team <img src=x onerror=alert(1)>" }],
     intro: ["Intro <img src=x onerror=alert(1)>"],
     notation: {
-      heading: "Notation",
-      columns: ["A", "B"],
+      heading: "Notation <script>bad()</script>",
+      columns: ["A <script>bad()</script>", "B"],
       rows: [["<code>S(a)</code>", "<script>alert(1)</script>"]]
     },
     sections: [
       {
-        heading: "Section",
-        paragraphs: ["Paragraph"],
+        heading: "Section <script>bad()</script>",
+        paragraphs: ["Paragraph <script>bad()</script>"],
         flow: "A < B"
       }
     ],
     gates: { heading: "Gates", columns: ["Gate"], rows: [["<script>bad()</script>"]] },
-    callouts: [{ bodyHtml: "Safe <code>inline</code> but not <script>bad()</script>" }]
+    callouts: [
+      {
+        type: 'note" onclick="bad',
+        strong: "Strong <script>bad()</script>",
+        bodyHtml: "Safe <code>inline</code> but not <script>bad()</script>"
+      }
+    ]
   };
   await writeFile(inputPath, `${JSON.stringify(graph, null, 2)}\n`, "utf8");
 
   try {
-    await execFileAsync(process.execPath, ["scripts/render-plan.mjs", inputPath, outputPath]);
+    await execFileAsync(process.execPath, [rendererScriptPath, inputPath, outputPath]);
     const html = await readFile(outputPath, "utf8");
     assert.match(html, /&lt;script&gt;alert\(1\)&lt;\/script&gt;/);
+    assert.match(html, /<a href="#">Docs &lt;img src=x onerror=alert\(1\)&gt;<\/a>/);
+    assert.match(html, /<a href="README.md\?x=&lt;script&gt;bad\(\)&lt;\/script&gt;">Safe<\/a>/);
     assert.match(html, /<code>S\(a\)<\/code>/);
     assert.match(html, /Safe <code>inline<\/code> but not &lt;script&gt;bad\(\)&lt;\/script&gt;/);
+    assert.match(html, /Strong &lt;script&gt;bad\(\)&lt;\/script&gt;/);
+    assert.doesNotMatch(html, /javascript:alert/);
     assert.doesNotMatch(html, /<script>alert\(1\)<\/script>/);
     assert.doesNotMatch(html, /<img src=x/);
   } finally {
@@ -766,14 +1745,62 @@ test("static renderer escapes graph document HTML fields", async () => {
 
 test("CLI commands accept graph path through --graph and PLAN_GRAPH", async () => {
   await withTempGraph(async (graphPath) => {
-    const byFlag = await execFileAsync(process.execPath, ["scripts/plan-scheduler.mjs", "ready", "--graph", graphPath]);
+    const byFlag = await execFileAsync(process.execPath, [schedulerScriptPath, "ready", "--graph", graphPath]);
     assert.deepEqual(JSON.parse(byFlag.stdout).map((node) => node.id), ["A"]);
 
-    const byEnv = await execFileAsync(process.execPath, ["scripts/plan-scheduler.mjs", "ready"], {
+    const byEnv = await execFileAsync(process.execPath, [schedulerScriptPath, "ready"], {
       env: { ...process.env, PLAN_GRAPH: graphPath }
     });
     assert.deepEqual(JSON.parse(byEnv.stdout).map((node) => node.id), ["A"]);
   });
+});
+
+test("scheduler CLI reports graph validation errors without traversing invalid graphs", async (t) => {
+  for (const validationCase of graphValidationCases()) {
+    await t.test(validationCase.name, async () => {
+      await withTempGraph(async (graphPath) => {
+        const graph = fixtureGraph();
+        validationCase.mutate(graph);
+        await writeFile(graphPath, `${JSON.stringify(graph, null, 2)}\n`, "utf8");
+
+        await assert.rejects(
+          () => execFileAsync(process.execPath, [schedulerScriptPath, "ready", "--graph", graphPath]),
+          (error) => {
+            assert.ok(error instanceof Error);
+            assert.equal(error.stdout, "");
+            const stderr = typeof error.stderr === "string" ? error.stderr : "";
+            assertReadableGraphValidationOutput(stderr, graphPath, validationCase);
+            return true;
+          }
+        );
+      });
+    });
+  }
+});
+
+test("built package bin entry points smoke test scheduler and renderer CLIs", async () => {
+  const schedulerBinPath = builtBinPath("spg-scheduler");
+  const rendererBinPath = builtBinPath("spg-render-plan");
+  const help = await execFileAsync(process.execPath, [schedulerBinPath, "help"]);
+  assert.match(help.stdout, /node scripts\/plan-scheduler\.mjs ready/);
+
+  const dir = await mkdtemp(join(tmpdir(), "plan-bin-smoke-"));
+  const graphPath = join(dir, "bin.graph.json");
+  const outputPath = join(dir, "bin.html");
+  const graph = fixtureGraph();
+  graph.document = {
+    pageTitle: "Built Bin Smoke",
+    intro: ["Renderer smoke"],
+    sections: [{ heading: "Smoke", paragraphs: ["Built renderer CLI works."] }]
+  };
+  await writeFile(graphPath, `${JSON.stringify(graph, null, 2)}\n`, "utf8");
+
+  try {
+    await execFileAsync(process.execPath, [rendererBinPath, "--graph", graphPath, "--output", outputPath]);
+    assert.match(await readFile(outputPath, "utf8"), /Built Bin Smoke/);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
 });
 
 test("reconcile marks internal nodes done when all children are done", async () => {
@@ -793,7 +1820,7 @@ test("reconcile marks internal nodes done when all children are done", async () 
     assert.equal(reconciled.graph.nodes.ROOT.status, "done");
     assert.ok(reconciled.graph.nodes.P.history.some((entry) => entry.event === "subtree_done"));
 
-    const cli = await execFileAsync(process.execPath, ["scripts/plan-scheduler.mjs", "reconcile", "--graph", graphPath]);
+    const cli = await execFileAsync(process.execPath, [schedulerScriptPath, "reconcile", "--graph", graphPath]);
     assert.deepEqual(JSON.parse(cli.stdout).changed, []);
   });
 });
@@ -814,10 +1841,68 @@ test("renderer accepts --graph and writes html next to that graph", async () => 
   await writeFile(graphPath, `${JSON.stringify(graph, null, 2)}\n`, "utf8");
 
   try {
-    await execFileAsync(process.execPath, ["scripts/render-plan.mjs", "--graph", graphPath]);
+    await execFileAsync(process.execPath, [rendererScriptPath, "--graph", graphPath]);
     const html = await readFile(join(dir, "custom.html"), "utf8");
     assert.match(html, /Custom Graph/);
     assert.match(html, /<svg class="sp-graph"/);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("renderer CLI reports graph validation errors before layout traversal", async (t) => {
+  for (const validationCase of graphValidationCases()) {
+    await t.test(validationCase.name, async () => {
+      const dir = await mkdtemp(join(tmpdir(), "plan-render-invalid-"));
+      const graphPath = join(dir, "invalid.graph.json");
+      const outputPath = join(dir, "invalid.html");
+      const graph = fixtureGraph();
+      graph.document = rendererDocumentFixture();
+      validationCase.mutate(graph);
+      await writeFile(graphPath, `${JSON.stringify(graph, null, 2)}\n`, "utf8");
+
+      try {
+        await assert.rejects(
+          () => execFileAsync(process.execPath, [rendererScriptPath, "--graph", graphPath, "--output", outputPath]),
+          (error) => {
+            assert.ok(error instanceof Error);
+            assert.equal(error.stdout, "");
+            const stderr = typeof error.stderr === "string" ? error.stderr : "";
+            assertReadableGraphValidationOutput(stderr, graphPath, validationCase);
+            return true;
+          }
+        );
+      } finally {
+        await rm(dir, { recursive: true, force: true });
+      }
+    });
+  }
+});
+
+test("renderer rejects invalid graph files before layout traversal", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "plan-render-invalid-"));
+  const graphPath = join(dir, "invalid.graph.json");
+  const outputPath = join(dir, "invalid.html");
+  const graph = fixtureGraph();
+  graph.document = rendererDocumentFixture();
+  graph.graph.nodes.ROOT.children = ["MISSING"];
+  await writeFile(graphPath, `${JSON.stringify(graph, null, 2)}\n`, "utf8");
+
+  try {
+    await assert.rejects(
+      () => execFileAsync(process.execPath, [rendererScriptPath, "--graph", graphPath, "--output", outputPath]),
+      (error) => {
+        assert.ok(error instanceof Error);
+        const stderr = typeof error.stderr === "string" ? error.stderr : "";
+        const output = `${error.message}\n${stderr}`;
+        assert.match(output, /Invalid graph file/);
+        assert.ok(output.includes(graphPath));
+        assert.match(output, /\$\.graph\.nodes\.ROOT\.children/);
+        assert.match(output, /Unknown child node id: MISSING/);
+        assert.doesNotMatch(output, /Unknown child node referenced by graph/);
+        return true;
+      }
+    );
   } finally {
     await rm(dir, { recursive: true, force: true });
   }

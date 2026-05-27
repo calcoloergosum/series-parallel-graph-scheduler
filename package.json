@@ -4,18 +4,27 @@
   "private": true,
   "type": "module",
   "bin": {
-    "spg-scheduler": "./scripts/plan-scheduler.mjs",
-    "spg-render-plan": "./scripts/render-plan.mjs"
+    "spg-scheduler": "./dist/scripts/plan-scheduler.js",
+    "spg-render-plan": "./dist/scripts/render-plan.js"
   },
   "scripts": {
-    "ready": "node scripts/plan-scheduler.mjs ready",
-    "summary": "node scripts/plan-scheduler.mjs summary",
-    "serve": "node scripts/plan-scheduler.mjs serve",
-    "worker": "node scripts/plan-scheduler.mjs worker",
-    "render": "node scripts/render-plan.mjs",
-    "test": "node --test --test-timeout 10000 tests/plan-scheduler.test.mjs"
+    "ready": "npm run build --silent && node dist/scripts/plan-scheduler.js ready",
+    "summary": "npm run build --silent && node dist/scripts/plan-scheduler.js summary",
+    "serve": "npm run build --silent && node dist/scripts/plan-scheduler.js serve",
+    "worker": "npm run build --silent && node dist/scripts/plan-scheduler.js worker",
+    "render": "npm run build --silent && node dist/scripts/render-plan.js",
+    "smoke:migration": "npm run build && node scripts/migration-smoke.mjs",
+    "clean": "node -e \"require('node:fs').rmSync('dist', { recursive: true, force: true })\"",
+    "format:check": "node scripts/check-format.mjs",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "build": "npm run clean && tsc -p tsconfig.json && node -e \"const fs=require('node:fs'); fs.cpSync('prompts', 'dist/prompts', { recursive: true, force: true }); for (const f of ['dist/scripts/plan-scheduler.js', 'dist/scripts/render-plan.js']) fs.chmodSync(f, 0o755)\"",
+    "test": "npm run typecheck && npm run build && node --test --test-timeout 10000 tests/plan-scheduler.test.mjs"
   },
   "engines": {
     "node": ">=20"
+  },
+  "devDependencies": {
+    "@types/node": "^20.19.41",
+    "typescript": "^6.0.3"
   }
 }

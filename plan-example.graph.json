@@ -20,7 +20,7 @@
     "reportsDir": "reports",
     "leaseSeconds": 1800,
     "claimPolicy": "A session may claim only ready leaf nodes. Parent nodes describe series or parallel composition; child leaves are the units of work.",
-    "slackPolicy": "Use chat for attention and approvals. Canonical state remains in this graph file."
+    "slackPolicy": "Use chat for attention and approvals. Canonical state remains in this graph file. Refer to .env for SLACK_WEBHOOK_URL environment variable."
   },
   "graph": {
     "root": "ROOT",

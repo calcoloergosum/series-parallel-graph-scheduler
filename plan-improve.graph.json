@@ -1,0 +1,772 @@
+{
+  "schemaVersion": 1,
+  "graphVersion": 92,
+  "title": "Improvement Plan for Series-Parallel Graph Scheduler",
+  "description": "Raise the scheduler from a solid local tool to a more robust, maintainable, and safer codebase by tightening graph validation, CLI input handling, lock behavior, visualizer safety, tooling, and verification.",
+  "statusModel": [
+    "pending",
+    "ready",
+    "claimed",
+    "running",
+    "blocked",
+    "review",
+    "done",
+    "failed"
+  ],
+  "scheduler": {
+    "stateFile": "plan-improve.graph.json",
+    "htmlView": "plan-improve.html",
+    "runsDir": "runs",
+    "reportsDir": "reports",
+    "leaseSeconds": 1800,
+    "claimPolicy": "A session may claim only ready leaf nodes. Parent nodes describe series or parallel composition; child leaves are the units of work.",
+    "slackPolicy": "Use chat for attention and approvals when configured. Canonical state remains in this graph file."
+  },
+  "graph": {
+    "root": "ROOT",
+    "nodes": {
+      "ROOT": {
+        "title": "Improve scheduler robustness and maintainability",
+        "kind": "series",
+        "status": "done",
+        "children": [
+          "BASELINE",
+          "HARDENING",
+          "INTEGRATION_GATE",
+          "FINAL_VERIFY"
+        ],
+        "description": "Establish the current baseline, then run independent hardening branches in parallel before integrating the changes and performing final verification.",
+        "completedAt": "2026-05-27T02:05:44.100Z",
+        "history": [
+          {
+            "at": "2026-05-27T02:05:44.100Z",
+            "event": "subtree_done"
+          }
+        ]
+      },
+      "BASELINE": {
+        "title": "Confirm baseline behavior and improvement scope",
+        "kind": "series",
+        "status": "done",
+        "children": [
+          "IMP1",
+          "IMP2"
+        ],
+        "description": "Capture the current working state and turn the review findings into concrete implementation boundaries before touching runtime behavior.",
+        "completedAt": "2026-05-27T01:46:34.551Z",
+        "history": [
+          {
+            "at": "2026-05-27T01:46:34.551Z",
+            "event": "subtree_done"
+          }
+        ]
+      },
+      "IMP1": {
+        "title": "Record baseline commands and risks",
+        "kind": "task",
+        "status": "done",
+        "description": "Run the current authoritative checks and write a short baseline report covering the commands, observed results, dirty working tree considerations, and the main risks being addressed.",
+        "deliverables": [
+          "A report listing exact baseline commands and results for npm test, npm run typecheck, npm run build, and smoke:migration if practical.",
+          "A short risk list covering unchecked graph JSON, permissive CLI number parsing, filesystem lock races, visualizer worker APIs, and missing lint/CI automation."
+        ],
+        "acceptanceCriteria": [
+          "Baseline command results are recorded with pass/fail status.",
+          "Any pre-existing failure or dirty working tree concern is explicitly called out.",
+          "No runtime code is changed as part of this task."
+        ],
+        "history": [
+          {
+            "at": "2026-05-27T01:43:11.327Z",
+            "event": "claimed",
+            "session": "codex-A",
+            "runId": "run_20260527_014311326_IMP1_6b69b85f"
+          },
+          {
+            "at": "2026-05-27T01:43:11.332Z",
+            "event": "running"
+          },
+          {
+            "at": "2026-05-27T01:44:17.956Z",
+            "event": "done"
+          }
+        ],
+        "startedAt": "2026-05-27T01:43:11.332Z",
+        "completedAt": "2026-05-27T01:44:17.956Z",
+        "report": "reports/IMP1-run_20260527_014311326_IMP1_6b69b85f.md"
+      },
+      "IMP2": {
+        "title": "Define compatibility boundaries",
+        "kind": "task",
+        "status": "done",
+        "description": "Document the public behavior that must remain compatible while the hardening branches proceed.",
+        "deliverables": [
+          "A compatibility note covering CLI command names, JSON output shapes, graph state semantics, visualizer endpoints, worker execution, generated reports, and renderer output locations.",
+          "A short list of allowed behavior changes, such as clearer validation errors for invalid input."
+        ],
+        "acceptanceCriteria": [
+          "Workers can use the note to avoid accidental CLI or graph schema breakage.",
+          "The note identifies which changes require updating README examples or tests.",
+          "The plan remains compatible with the existing scheduler graph format."
+        ],
+        "history": [
+          {
+            "at": "2026-05-27T01:44:18.318Z",
+            "event": "claimed",
+            "session": "codex-A",
+            "runId": "run_20260527_014418318_IMP2_d7b86a5f"
+          },
+          {
+            "at": "2026-05-27T01:44:18.323Z",
+            "event": "running"
+          },
+          {
+            "at": "2026-05-27T01:46:34.551Z",
+            "event": "done"
+          }
+        ],
+        "startedAt": "2026-05-27T01:44:18.323Z",
+        "completedAt": "2026-05-27T01:46:34.551Z",
+        "report": "reports/IMP2-run_20260527_014418318_IMP2_d7b86a5f.md"
+      },
+      "HARDENING": {
+        "title": "Parallel hardening work",
+        "kind": "parallel",
+        "status": "done",
+        "children": [
+          "GRAPH_VALIDATION",
+          "CLI_VALIDATION",
+          "LOCKING",
+          "VISUALIZER_SAFETY",
+          "TOOLING"
+        ],
+        "description": "Independent branches that can be worked on at the same time after the baseline is known.",
+        "completedAt": "2026-05-27T01:59:02.881Z",
+        "history": [
+          {
+            "at": "2026-05-27T01:59:02.881Z",
+            "event": "subtree_done"
+          }
+        ]
+      },
+      "GRAPH_VALIDATION": {
+        "title": "Graph file validation branch",
+        "kind": "series",
+        "status": "done",
+        "children": [
+          "IMP3",
+          "IMP4",
+          "IMP5"
+        ],
+        "description": "Use the existing runtime validators consistently so malformed graph files fail early with useful errors.",
+        "completedAt": "2026-05-27T01:53:58.187Z",
+        "history": [
+          {
+            "at": "2026-05-27T01:53:58.187Z",
+            "event": "subtree_done"
+          }
+        ]
+      },
+      "IMP3": {
+        "title": "Route graph reads through runtime validation",
+        "kind": "task",
+        "status": "done",
+        "description": "Update graph loading paths to parse JSON as unknown, call the existing graph validator, and return typed graph data only after validation succeeds.",
+        "deliverables": [
+          "readGraph validates parsed graph files before returning them.",
+          "Renderer graph loading applies equivalent validation or shares the same helper.",
+          "Validation errors include the graph path and validator issue details."
+        ],
+        "acceptanceCriteria": [
+          "Valid existing graph files still load and render.",
+          "Malformed graph files fail before traversal or mutation logic runs.",
+          "No broad schema expansion is introduced beyond the existing graph contract unless tests require it."
+        ],
+        "history": [
+          {
+            "at": "2026-05-27T01:46:34.870Z",
+            "event": "claimed",
+            "session": "codex-A",
+            "runId": "run_20260527_014634870_IMP3_48286414"
+          },
+          {
+            "at": "2026-05-27T01:46:34.876Z",
+            "event": "running"
+          },
+          {
+            "at": "2026-05-27T01:49:27.081Z",
+            "event": "done"
+          }
+        ],
+        "startedAt": "2026-05-27T01:46:34.876Z",
+        "completedAt": "2026-05-27T01:49:27.081Z",
+        "report": "reports/IMP3-run_20260527_014634870_IMP3_48286414.md"
+      },
+      "IMP4": {
+        "title": "Expand graph validation coverage",
+        "kind": "task",
+        "status": "done",
+        "description": "Add focused tests for invalid graph shapes and unknown child references in CLI, renderer, and direct readGraph usage.",
+        "deliverables": [
+          "Tests for missing graph body, missing root, missing nodes map, unknown child ids, and invalid children arrays.",
+          "Assertions that validation errors are readable and stable enough for operators."
+        ],
+        "acceptanceCriteria": [
+          "npm test covers invalid graph loading paths.",
+          "Tests prove valid fixture graphs continue to work.",
+          "Error messages do not expose stack traces in normal CLI output beyond the current CLI behavior expectations."
+        ],
+        "history": [
+          {
+            "at": "2026-05-27T01:49:27.347Z",
+            "event": "claimed",
+            "session": "codex-A",
+            "runId": "run_20260527_014927346_IMP4_96b7c53f"
+          },
+          {
+            "at": "2026-05-27T01:49:27.352Z",
+            "event": "running"
+          },
+          {
+            "at": "2026-05-27T01:52:22.521Z",
+            "event": "done"
+          }
+        ],
+        "startedAt": "2026-05-27T01:49:27.352Z",
+        "completedAt": "2026-05-27T01:52:22.521Z",
+        "report": "reports/IMP4-run_20260527_014927346_IMP4_96b7c53f.md"
+      },
+      "IMP5": {
+        "title": "Document graph validation expectations",
+        "kind": "task",
+        "status": "done",
+        "description": "Update README guidance so operators and workers know what the scheduler validates and what graph authoring mistakes are rejected.",
+        "deliverables": [
+          "README section or command note describing graph validation behavior.",
+          "Example invalid graph cases summarized in plain language."
+        ],
+        "acceptanceCriteria": [
+          "Documentation matches the implemented validation behavior.",
+          "Existing quickstart examples remain correct.",
+          "No generated dist files are documented as source files."
+        ],
+        "history": [
+          {
+            "at": "2026-05-27T01:52:22.779Z",
+            "event": "claimed",
+            "session": "codex-A",
+            "runId": "run_20260527_015222779_IMP5_7c665c6e"
+          },
+          {
+            "at": "2026-05-27T01:52:22.785Z",
+            "event": "running"
+          },
+          {
+            "at": "2026-05-27T01:53:58.187Z",
+            "event": "done"
+          }
+        ],
+        "startedAt": "2026-05-27T01:52:22.785Z",
+        "completedAt": "2026-05-27T01:53:58.187Z",
+        "report": "reports/IMP5-run_20260527_015222779_IMP5_7c665c6e.md"
+      },
+      "CLI_VALIDATION": {
+        "title": "CLI input validation branch",
+        "kind": "series",
+        "status": "done",
+        "children": [
+          "IMP6",
+          "IMP7"
+        ],
+        "description": "Make command-line parsing fail clearly for invalid numeric and structured inputs.",
+        "completedAt": "2026-05-27T01:59:02.881Z",
+        "history": [
+          {
+            "at": "2026-05-27T01:59:02.881Z",
+            "event": "subtree_done"
+          }
+        ]
+      },
+      "IMP6": {
+        "title": "Validate numeric CLI arguments",
+        "kind": "task",
+        "status": "done",
+        "description": "Replace permissive Number(...) parsing with explicit validation for lease seconds, idle milliseconds, ports, worker counts, and similar numeric fields.",
+        "deliverables": [
+          "A shared numeric argument helper that rejects missing, NaN, infinite, negative, and out-of-range values as appropriate.",
+          "Clear error messages naming the invalid flag and expected range."
+        ],
+        "acceptanceCriteria": [
+          "Valid current CLI examples still work.",
+          "Invalid values such as --lease nope and --port NaN fail deterministically.",
+          "Tests cover the new validation behavior."
+        ],
+        "history": [
+          {
+            "at": "2026-05-27T01:46:37.000Z",
+            "event": "claimed",
+            "session": "codex-C",
+            "runId": "run_20260527_014636997_IMP6_0f2546b7"
+          },
+          {
+            "at": "2026-05-27T01:46:37.008Z",
+            "event": "running"
+          },
+          {
+            "at": "2026-05-27T01:52:13.983Z",
+            "event": "done"
+          }
+        ],
+        "startedAt": "2026-05-27T01:46:37.008Z",
+        "completedAt": "2026-05-27T01:52:13.983Z",
+        "report": "reports/IMP6-run_20260527_014636997_IMP6_0f2546b7.md"
+      },
+      "IMP7": {
+        "title": "Tighten structured CLI input errors",
+        "kind": "task",
+        "status": "done",
+        "description": "Improve validation around repeated flags, child JSON, empty child ids, and boolean flags that accidentally receive values.",
+        "deliverables": [
+          "More precise tests for --child, --child-json, --codex-arg, and command-specific required fields.",
+          "Small parser refinements only where they reduce ambiguous behavior."
+        ],
+        "acceptanceCriteria": [
+          "Existing supported invocation styles remain supported.",
+          "Invalid child definitions produce actionable errors.",
+          "No new dependency is introduced solely for argument parsing unless the existing parser becomes meaningfully simpler."
+        ],
+        "history": [
+          {
+            "at": "2026-05-27T01:52:14.290Z",
+            "event": "claimed",
+            "session": "codex-C",
+            "runId": "run_20260527_015214290_IMP7_34a27c8d"
+          },
+          {
+            "at": "2026-05-27T01:52:14.296Z",
+            "event": "running"
+          },
+          {
+            "at": "2026-05-27T01:59:02.881Z",
+            "event": "done"
+          }
+        ],
+        "startedAt": "2026-05-27T01:52:14.296Z",
+        "completedAt": "2026-05-27T01:59:02.881Z",
+        "report": "reports/IMP7-run_20260527_015214290_IMP7_34a27c8d.md"
+      },
+      "LOCKING": {
+        "title": "Filesystem lock hardening branch",
+        "kind": "series",
+        "status": "done",
+        "children": [
+          "IMP8",
+          "IMP9"
+        ],
+        "description": "Reduce race risk around stale lock cleanup and make lock failures easier to diagnose.",
+        "completedAt": "2026-05-27T01:59:02.881Z",
+        "history": [
+          {
+            "at": "2026-05-27T01:59:02.881Z",
+            "event": "subtree_done"
+          }
+        ]
+      },
+      "IMP8": {
+        "title": "Make lock ownership observable",
+        "kind": "task",
+        "status": "done",
+        "description": "Add minimal metadata to graph lock directories so stale lock cleanup and timeout messages can report which process created the lock and when.",
+        "deliverables": [
+          "A lock metadata file containing pid, createdAt, graphPath, and optional host information when available.",
+          "Timeout and stale-lock errors that include useful metadata when present."
+        ],
+        "acceptanceCriteria": [
+          "Lock acquisition still works on plain local filesystems.",
+          "Existing stale lock tests pass or are updated to assert the richer metadata behavior.",
+          "No lock metadata is left behind after successful lock release."
+        ],
+        "history": [
+          {
+            "at": "2026-05-27T01:46:38.025Z",
+            "event": "claimed",
+            "session": "codex-B",
+            "runId": "run_20260527_014638024_IMP8_b039ce7d"
+          },
+          {
+            "at": "2026-05-27T01:46:38.030Z",
+            "event": "running"
+          },
+          {
+            "at": "2026-05-27T01:49:17.044Z",
+            "event": "done"
+          }
+        ],
+        "startedAt": "2026-05-27T01:46:38.030Z",
+        "completedAt": "2026-05-27T01:49:17.044Z",
+        "report": "reports/IMP8-run_20260527_014638024_IMP8_b039ce7d.md"
+      },
+      "IMP9": {
+        "title": "Test concurrent mutation behavior",
+        "kind": "task",
+        "status": "done",
+        "description": "Add stress-oriented tests around simultaneous claims, stale lock cleanup, and lock timeout behavior.",
+        "deliverables": [
+          "A test that concurrent claim attempts do not claim the same ready leaf.",
+          "A test that timeout behavior remains bounded and readable.",
+          "A test that stale lock cleanup does not leave temporary files behind."
+        ],
+        "acceptanceCriteria": [
+          "Tests are deterministic enough for local and CI execution.",
+          "The suite stays fast and avoids long sleeps.",
+          "Failure output points to the graph path or lock path involved."
+        ],
+        "history": [
+          {
+            "at": "2026-05-27T01:49:17.371Z",
+            "event": "claimed",
+            "session": "codex-B",
+            "runId": "run_20260527_014917371_IMP9_9abc9747"
+          },
+          {
+            "at": "2026-05-27T01:49:17.379Z",
+            "event": "running"
+          },
+          {
+            "at": "2026-05-27T01:51:20.734Z",
+            "event": "done"
+          }
+        ],
+        "startedAt": "2026-05-27T01:49:17.379Z",
+        "completedAt": "2026-05-27T01:51:20.734Z",
+        "report": "reports/IMP9-run_20260527_014917371_IMP9_9abc9747.md"
+      },
+      "VISUALIZER_SAFETY": {
+        "title": "Visualizer safety branch",
+        "kind": "series",
+        "status": "done",
+        "children": [
+          "IMP10",
+          "IMP11",
+          "IMP12"
+        ],
+        "description": "Keep the visualizer useful as a local operator tool while reducing accidental exposure and unsafe worker starts.",
+        "completedAt": "2026-05-27T01:59:02.881Z",
+        "history": [
+          {
+            "at": "2026-05-27T01:59:02.881Z",
+            "event": "subtree_done"
+          }
+        ]
+      },
+      "IMP10": {
+        "title": "Clarify local-only server posture",
+        "kind": "task",
+        "status": "done",
+        "description": "Make the visualizer's localhost-oriented security model explicit in code and documentation.",
+        "deliverables": [
+          "README wording that the worker manager API is intended for trusted local use.",
+          "A startup warning or help text when binding to a non-local host."
+        ],
+        "acceptanceCriteria": [
+          "Default host remains 127.0.0.1.",
+          "Binding to 0.0.0.0 or a non-local address makes the risk visible to the operator.",
+          "Existing visualizer tests still pass."
+        ],
+        "history": [
+          {
+            "at": "2026-05-27T01:46:38.865Z",
+            "event": "claimed",
+            "session": "codex-D",
+            "runId": "run_20260527_014638864_IMP10_721041e9"
+          },
+          {
+            "at": "2026-05-27T01:46:38.869Z",
+            "event": "running"
+          },
+          {
+            "at": "2026-05-27T01:49:30.044Z",
+            "event": "done"
+          }
+        ],
+        "startedAt": "2026-05-27T01:46:38.869Z",
+        "completedAt": "2026-05-27T01:49:30.044Z",
+        "report": "reports/IMP10-run_20260527_014638864_IMP10_721041e9.md"
+      },
+      "IMP11": {
+        "title": "Constrain visualizer worker inputs",
+        "kind": "task",
+        "status": "done",
+        "description": "Add server-side validation for worker manager requests so count, paths, commands, and argument arrays are bounded and predictable.",
+        "deliverables": [
+          "Validation for count, idleMs, leaseSeconds, cwd, codexCommand, codexArgs length, and string sizes.",
+          "Readable HTTP 400 responses for invalid worker start requests."
+        ],
+        "acceptanceCriteria": [
+          "Current worker manager happy-path tests still pass.",
+          "Invalid request tests cover oversized or malformed fields.",
+          "The API does not spawn a process when validation fails."
+        ],
+        "history": [
+          {
+            "at": "2026-05-27T01:49:30.355Z",
+            "event": "claimed",
+            "session": "codex-D",
+            "runId": "run_20260527_014930355_IMP11_542100ce"
+          },
+          {
+            "at": "2026-05-27T01:49:30.361Z",
+            "event": "running"
+          },
+          {
+            "at": "2026-05-27T01:53:56.222Z",
+            "event": "done"
+          }
+        ],
+        "startedAt": "2026-05-27T01:49:30.361Z",
+        "completedAt": "2026-05-27T01:53:56.221Z",
+        "report": "reports/IMP11-run_20260527_014930355_IMP11_542100ce.md"
+      },
+      "IMP12": {
+        "title": "Review browser-rendered HTML safety",
+        "kind": "task",
+        "status": "done",
+        "description": "Audit visualizer and static renderer HTML insertion paths, especially graph SVG, worker logs, and graph-provided text.",
+        "deliverables": [
+          "A short audit note listing each innerHTML use and why it is safe or how it was fixed.",
+          "Tests proving graph labels, worker logs, and document fields are escaped where needed."
+        ],
+        "acceptanceCriteria": [
+          "No untrusted graph text can inject script through normal visualizer or renderer output.",
+          "Legitimate SVG graph rendering still works.",
+          "Existing escaping tests remain green."
+        ],
+        "history": [
+          {
+            "at": "2026-05-27T01:53:56.483Z",
+            "event": "claimed",
+            "session": "codex-D",
+            "runId": "run_20260527_015356483_IMP12_db3b1960"
+          },
+          {
+            "at": "2026-05-27T01:53:56.489Z",
+            "event": "running"
+          },
+          {
+            "at": "2026-05-27T01:57:52.457Z",
+            "event": "done"
+          }
+        ],
+        "startedAt": "2026-05-27T01:53:56.489Z",
+        "completedAt": "2026-05-27T01:57:52.457Z",
+        "report": "reports/IMP12-run_20260527_015356483_IMP12_db3b1960.md"
+      },
+      "TOOLING": {
+        "title": "Tooling and automation branch",
+        "kind": "series",
+        "status": "done",
+        "children": [
+          "IMP13",
+          "IMP14"
+        ],
+        "description": "Add lightweight project hygiene without turning this focused tool into a framework-heavy package.",
+        "completedAt": "2026-05-27T01:59:02.881Z",
+        "history": [
+          {
+            "at": "2026-05-27T01:59:02.881Z",
+            "event": "subtree_done"
+          }
+        ]
+      },
+      "IMP13": {
+        "title": "Add lint or formatting guard",
+        "kind": "task",
+        "status": "done",
+        "description": "Introduce a minimal linting or formatting check that fits the existing TypeScript and Node setup.",
+        "deliverables": [
+          "A package script such as npm run lint or npm run format:check.",
+          "Configuration kept small and compatible with the current code style."
+        ],
+        "acceptanceCriteria": [
+          "The new script runs locally without changing unrelated generated files.",
+          "npm test remains focused on typecheck, build, and behavior tests unless the project intentionally folds lint into test.",
+          "README command list is updated if a new authoritative check is added."
+        ],
+        "history": [
+          {
+            "at": "2026-05-27T01:51:21.045Z",
+            "event": "claimed",
+            "session": "codex-B",
+            "runId": "run_20260527_015121045_IMP13_4d4df343"
+          },
+          {
+            "at": "2026-05-27T01:51:21.051Z",
+            "event": "running"
+          },
+          {
+            "at": "2026-05-27T01:53:28.417Z",
+            "event": "done"
+          }
+        ],
+        "startedAt": "2026-05-27T01:51:21.051Z",
+        "completedAt": "2026-05-27T01:53:28.417Z",
+        "report": "reports/IMP13-run_20260527_015121045_IMP13_4d4df343.md"
+      },
+      "IMP14": {
+        "title": "Add CI workflow for authoritative checks",
+        "kind": "task",
+        "status": "done",
+        "description": "Add a simple CI workflow that installs dependencies and runs the project checks on pull requests or pushes.",
+        "deliverables": [
+          "A GitHub Actions workflow or documented equivalent for npm ci and npm test.",
+          "Optional lint/typecheck step if separate from npm test."
+        ],
+        "acceptanceCriteria": [
+          "The workflow uses Node 20 or newer.",
+          "The workflow avoids secrets and does not require Slack or Codex credentials.",
+          "Local npm test behavior remains unchanged."
+        ],
+        "history": [
+          {
+            "at": "2026-05-27T01:53:28.798Z",
+            "event": "claimed",
+            "session": "codex-B",
+            "runId": "run_20260527_015328798_IMP14_56c044d8"
+          },
+          {
+            "at": "2026-05-27T01:53:28.805Z",
+            "event": "running"
+          },
+          {
+            "at": "2026-05-27T01:54:16.041Z",
+            "event": "done"
+          }
+        ],
+        "startedAt": "2026-05-27T01:53:28.805Z",
+        "completedAt": "2026-05-27T01:54:16.041Z",
+        "report": "reports/IMP14-run_20260527_015328798_IMP14_56c044d8.md"
+      },
+      "INTEGRATION_GATE": {
+        "title": "Integrate hardening branches",
+        "kind": "gate",
+        "status": "done",
+        "description": "Confirm the parallel branches work together and resolve any collisions in tests, docs, CLI behavior, or shared helper modules.",
+        "deliverables": [
+          "All branch changes integrated without duplicated helper logic.",
+          "README and package scripts reflect the final authoritative workflow.",
+          "A short integration report summarizing compatibility impact."
+        ],
+        "acceptanceCriteria": [
+          "npm run typecheck passes.",
+          "npm run build passes.",
+          "npm test passes.",
+          "No generated dist or HTML churn is included unless intentionally regenerated."
+        ],
+        "history": [
+          {
+            "at": "2026-05-27T01:59:03.155Z",
+            "event": "claimed",
+            "session": "codex-C",
+            "runId": "run_20260527_015903155_INTEGRATION_GATE_7ae2b7ff"
+          },
+          {
+            "at": "2026-05-27T01:59:03.161Z",
+            "event": "running"
+          },
+          {
+            "at": "2026-05-27T02:03:11.375Z",
+            "event": "done"
+          }
+        ],
+        "startedAt": "2026-05-27T01:59:03.161Z",
+        "completedAt": "2026-05-27T02:03:11.375Z",
+        "report": "reports/INTEGRATION_GATE-run_20260527_015903155_INTEGRATION_GATE_7ae2b7ff.md"
+      },
+      "FINAL_VERIFY": {
+        "title": "Final verification and release notes",
+        "kind": "series",
+        "status": "done",
+        "children": [
+          "IMP15",
+          "IMP16"
+        ],
+        "description": "Run the full verification path and leave future operators with a clear summary of what changed.",
+        "completedAt": "2026-05-27T02:05:44.100Z",
+        "history": [
+          {
+            "at": "2026-05-27T02:05:44.100Z",
+            "event": "subtree_done"
+          }
+        ]
+      },
+      "IMP15": {
+        "title": "Run full verification suite",
+        "kind": "task",
+        "status": "done",
+        "description": "Run all authoritative checks after integration and capture the results.",
+        "deliverables": [
+          "Final command output summary for npm run typecheck, npm run build, npm test, and smoke:migration if available.",
+          "A note explaining any skipped check."
+        ],
+        "acceptanceCriteria": [
+          "All required checks pass or any failure is explicitly blocked for operator decision.",
+          "The final graph and docs remain valid JSON/Markdown.",
+          "No unexpected graph state files, lock directories, or temporary files are left behind."
+        ],
+        "history": [
+          {
+            "at": "2026-05-27T02:03:11.654Z",
+            "event": "claimed",
+            "session": "codex-C",
+            "runId": "run_20260527_020311654_IMP15_b17b4fe5"
+          },
+          {
+            "at": "2026-05-27T02:03:11.750Z",
+            "event": "running"
+          },
+          {
+            "at": "2026-05-27T02:04:19.316Z",
+            "event": "done"
+          }
+        ],
+        "startedAt": "2026-05-27T02:03:11.750Z",
+        "completedAt": "2026-05-27T02:04:19.316Z",
+        "report": "reports/IMP15-run_20260527_020311654_IMP15_b17b4fe5.md"
+      },
+      "IMP16": {
+        "title": "Write improvement summary",
+        "kind": "task",
+        "status": "done",
+        "description": "Produce a concise final summary suitable for a commit message, pull request body, or operator handoff.",
+        "deliverables": [
+          "Summary of implemented improvements grouped by validation, CLI UX, locking, visualizer safety, tooling, and tests.",
+          "Residual risks and suggested next improvements, if any."
+        ],
+        "acceptanceCriteria": [
+          "The summary references the final verification results.",
+          "Residual risks are honest and specific.",
+          "The project is left in a state where a reviewer can evaluate the changes quickly."
+        ],
+        "history": [
+          {
+            "at": "2026-05-27T02:04:19.587Z",
+            "event": "claimed",
+            "session": "codex-C",
+            "runId": "run_20260527_020419587_IMP16_d0d1fe69"
+          },
+          {
+            "at": "2026-05-27T02:04:19.595Z",
+            "event": "running"
+          },
+          {
+            "at": "2026-05-27T02:05:44.100Z",
+            "event": "done"
+          }
+        ],
+        "startedAt": "2026-05-27T02:04:19.595Z",
+        "completedAt": "2026-05-27T02:05:44.100Z",
+        "report": "reports/IMP16-run_20260527_020419587_IMP16_d0d1fe69.md"
+      }
+    }
+  }
+}
