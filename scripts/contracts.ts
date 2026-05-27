@@ -517,9 +517,51 @@ export interface WorkerManager {
   status(): WorkerManagerStatus;
 }
 
+export interface VisualizerNodeRefs {
+  baseRef?: Record<string, unknown>;
+  workRef?: Record<string, unknown>;
+  outputRef?: Record<string, unknown>;
+  integrationRef?: Record<string, unknown>;
+}
+
+export interface VisualizerNodeTimestamps {
+  startedAt?: IsoDateString;
+  completedAt?: IsoDateString;
+  blockedAt?: IsoDateString;
+  answeredAt?: IsoDateString;
+  failedAt?: IsoDateString;
+  expiredAt?: IsoDateString;
+}
+
+export interface VisualizerNodeDetail {
+  id: NodeId;
+  title?: string;
+  kind: NodeKind;
+  status: NodeStatus;
+  description?: string;
+  children: NodeId[];
+  deliverables: string[];
+  acceptanceCriteria: string[];
+  lease?: Record<string, unknown>;
+  refs: VisualizerNodeRefs;
+  workspace?: Record<string, unknown>;
+  report?: string;
+  question?: string;
+  answer?: string;
+  answeredBy?: string;
+  blockedReason?: string;
+  failureReason?: string;
+  timestamps: VisualizerNodeTimestamps;
+  history: Record<string, unknown>[];
+  historyCount: number;
+  historyLimit: number;
+}
+
 export interface VisualizerPayload {
   graph: PlanGraphFile;
   graphSvg: string;
+  nodes: VisualizerNodeDetail[];
+  nodeHistoryLimit: number;
   ready: ReadyNode[];
   working: WorkingNode[];
   summary: GraphSummary;

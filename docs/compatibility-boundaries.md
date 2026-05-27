@@ -330,7 +330,24 @@ The local visualizer started by `serve` should keep these routes:
 - `POST /api/answer`: answers a blocked node and returns the same answer result shape as the CLI, including `slack`.
 - `GET /events`: server-sent events carrying visualizer payload JSON.
 
-The `/api/graph` and `/events` payload should keep at least `graph`, `graphSvg`, `ready`, `working`, `summary`, and `workerManager`.
+The `/api/graph` and `/events` payload should keep at least `graph`,
+`graphSvg`, `nodes`, `nodeHistoryLimit`, `ready`, `working`, `summary`, and
+`workerManager`.
+
+`nodes` is a normalized array for browser detail rendering without reparsing
+the SVG. Each entry keeps at least `id`, `title`, `kind`, `status`,
+`description`, `children`, `deliverables`, `acceptanceCriteria`, `lease`,
+`refs`, `workspace`, `report`, `question`, `answer`, `answeredBy`,
+`blockedReason`, `failureReason`, `timestamps`, `history`, `historyCount`, and
+`historyLimit` when those values are known on the graph node. `refs` groups
+`baseRef`, `workRef`, `outputRef`, and `integrationRef`. `timestamps` groups
+the node lifecycle timestamps such as `startedAt`, `completedAt`, `blockedAt`,
+`answeredAt`, `failedAt`, and `expiredAt`. The `history` array is the latest
+`historyLimit` entries, not the full node history; `historyCount` reports the
+full graph history length for that node. Detail fields are JSON data, not
+pre-escaped HTML. Browser renderers must insert text with `textContent` or
+equivalent escaping. Secret-shaped strings in detail payloads pass through the
+operational redaction rules before being exposed.
 
 `workerManager` status keeps at least `defaults`, lifecycle counts, and
 `workers`. `defaults` keeps `cwd`, `sessionPrefix`, `codexCommand`,

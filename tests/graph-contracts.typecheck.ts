@@ -204,6 +204,21 @@ const invalidWorkerProcess: WorkerManagerProcess = { ...workerProcess, status: "
 const payload: VisualizerPayload = {
   graph: parsed,
   graphSvg: "<svg></svg>",
+  nodes: [{
+    id: "A",
+    title: "Task",
+    kind: "task",
+    status: permissiveStatus,
+    children: [],
+    deliverables: [],
+    acceptanceCriteria: [],
+    refs: {},
+    timestamps: {},
+    history: [],
+    historyCount: 0,
+    historyLimit: 10
+  }],
+  nodeHistoryLimit: 10,
   ready: [{ id: "A", title: "Task", kind: "task", status: permissiveStatus }],
   working: [],
   summary: { totalNodes: 2, root: "ROOT", counts: { pending: 1, "waiting-for-review": 1 } },

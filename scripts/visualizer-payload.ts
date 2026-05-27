@@ -1,9 +1,20 @@
 import { dirname } from "node:path";
 
-import type { VisualizerPayload, WorkerManager, WorkerManagerStatus } from "./contracts.js";
+import type {
+  GraphHistoryEntry,
+  GraphNode,
+  PlanGraphFile,
+  VisualizerNodeDetail,
+  VisualizerPayload,
+  WorkerManager,
+  WorkerManagerStatus
+} from "./contracts.js";
 import { defaultGraphPath, readGraph } from "./graph-io.js";
 import { listReadyLeafNodes, listWorkingNodes, summarizeGraph } from "./graph-traversal.js";
+import { redactOperationalEventDetails } from "./operational-events.js";
 import { renderPlanarSvg } from "./sp-layout.js";
+
+export const visualizerNodeHistoryLimit = 10;
 
 export async function buildVisualizerPayload(
   graphPath = defaultGraphPath,
@@ -13,11 +24,81 @@ export async function buildVisualizerPayload(
   return {
     graph,
     graphSvg: renderPlanarSvg(graph),
+    nodes: buildVisualizerNodeDetails(graph),
+    nodeHistoryLimit: visualizerNodeHistoryLimit,
     ready: listReadyLeafNodes(graph),
     working: listWorkingNodes(graph),
     summary: summarizeGraph(graph),
     workerManager: workerManager?.status?.() || emptyWorkerManagerStatus(dirname(graphPath))
   };
+}
+
+export function buildVisualizerNodeDetails(
+  graph: PlanGraphFile,
+  historyLimit = visualizerNodeHistoryLimit
+): VisualizerNodeDetail[] {
+  const boundedHistoryLimit = Math.max(0, Math.floor(historyLimit));
+  return Object.entries(graph.graph.nodes)
+    .map(([id, node]) => normalizeVisualizerNode(id, node, boundedHistoryLimit))
+    .sort((left, right) => left.id.localeCompare(right.id));
+}
+
+function normalizeVisualizerNode(
+  id: string,
+  node: GraphNode,
+  historyLimit: number
+): VisualizerNodeDetail {
+  const history = Array.isArray(node.history) ? node.history : [];
+  return redactNodeDetail(omitUndefined({
+    id,
+    title: node.title,
+    kind: node.kind || "task",
+    status: node.status || "pending",
+    description: node.description,
+    children: Array.isArray(node.children) ? [...node.children] : [],
+    deliverables: Array.isArray(node.deliverables) ? [...node.deliverables] : [],
+    acceptanceCriteria: Array.isArray(node.acceptanceCriteria) ? [...node.acceptanceCriteria] : [],
+    lease: node.lease,
+    refs: omitUndefined({
+      baseRef: node.baseRef,
+      workRef: node.workRef,
+      outputRef: node.outputRef,
+      integrationRef: node.integrationRef
+    }),
+    workspace: node.workspace,
+    report: node.report,
+    question: node.question,
+    answer: node.answer,
+    answeredBy: node.answeredBy,
+    blockedReason: node.blockedReason,
+    failureReason: node.failureReason,
+    timestamps: omitUndefined({
+      startedAt: node.startedAt,
+      completedAt: node.completedAt,
+      blockedAt: node.blockedAt,
+      answeredAt: node.answeredAt,
+      failedAt: node.failedAt,
+      expiredAt: node.expiredAt
+    }),
+    history: historyTail(history, historyLimit),
+    historyCount: history.length,
+    historyLimit
+  }));
+}
+
+function historyTail(history: GraphHistoryEntry[], limit: number): GraphHistoryEntry[] {
+  if (limit <= 0) {
+    return [];
+  }
+  return history.slice(-limit);
+}
+
+function redactNodeDetail(detail: Record<string, unknown>): VisualizerNodeDetail {
+  return redactOperationalEventDetails(detail) as unknown as VisualizerNodeDetail;
+}
+
+function omitUndefined<T extends Record<string, unknown>>(details: T): T {
+  return Object.fromEntries(Object.entries(details).filter(([, value]) => value !== undefined)) as T;
 }
 
 function emptyWorkerManagerStatus(cwd: string): WorkerManagerStatus {

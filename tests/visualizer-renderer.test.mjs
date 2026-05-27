@@ -636,19 +636,49 @@ test("visualizer builds graph payload and real-time HTML shell", async () => {
 
     await claimNode(graphPath, { session: "codex-A", nodeId: "A" });
     const graph = await readGraph(graphPath);
+    graph.graph.nodes.A.description = "Bootstrap the workspace";
+    graph.graph.nodes.A.deliverables = ["Workspace ready"];
+    graph.graph.nodes.A.acceptanceCriteria = ["Tests can run"];
     graph.graph.nodes.A.baseRef = { name: "refs/remotes/origin/main" };
     graph.graph.nodes.A.workRef = { name: "refs/heads/spg/node/A/run-a" };
     graph.graph.nodes.A.outputRef = { name: "refs/heads/spg/node/A/run-a" };
-    graph.graph.nodes.A.history = [{
-      at: "2026-05-27T00:00:00.000Z",
-      event: "clone-prepared",
+    graph.graph.nodes.A.workspace = {
+      remote: "https://user:secret-token@example.com/org/repo.git",
+      cloneCwd: "/tmp/spg/workspaces/codex-A/A/run-a"
+    };
+    graph.graph.nodes.A.startedAt = "2026-05-27T00:00:01.000Z";
+    graph.graph.nodes.A.history = Array.from({ length: 12 }, (_, index) => ({
+      at: `2026-05-27T00:00:${String(index).padStart(2, "0")}.000Z`,
+      event: index === 11 ? "clone-prepared" : "progress",
       cloneCwd: "/tmp/spg/workspaces/codex-A/A/run-a",
       bareRepo: "/tmp/spg/git/cache/repo.git",
-      baseRef: "refs/remotes/origin/main"
-    }];
+      baseRef: "refs/remotes/origin/main",
+      remote: "https://user:secret-token@example.com/org/repo.git"
+    }));
     await writeFile(graphPath, `${JSON.stringify(graph, null, 2)}\n`, "utf8");
     const payload = await buildVisualizerPayload(graphPath);
     assert.equal(payload.summary.totalNodes, 6);
+    assert.equal(payload.nodeHistoryLimit, 10);
+    assert.equal(payload.nodes.length, 6);
+    const detail = payload.nodes.find((node) => node.id === "A");
+    assert.equal(detail.title, "Bootstrap");
+    assert.equal(detail.kind, "task");
+    assert.equal(detail.status, "claimed");
+    assert.equal(detail.description, "Bootstrap the workspace");
+    assert.deepEqual(detail.children, []);
+    assert.deepEqual(detail.deliverables, ["Workspace ready"]);
+    assert.deepEqual(detail.acceptanceCriteria, ["Tests can run"]);
+    assert.equal(detail.lease.session, "codex-A");
+    assert.equal(detail.refs.baseRef.name, "refs/remotes/origin/main");
+    assert.equal(detail.refs.workRef.name, "refs/heads/spg/node/A/run-a");
+    assert.equal(detail.refs.outputRef.name, "refs/heads/spg/node/A/run-a");
+    assert.equal(detail.workspace.remote, "https://[REDACTED]@example.com/org/repo.git");
+    assert.equal(detail.workspace.cloneCwd, "/tmp/spg/workspaces/codex-A/A/run-a");
+    assert.equal(detail.timestamps.startedAt, "2026-05-27T00:00:01.000Z");
+    assert.equal(detail.historyCount, 12);
+    assert.equal(detail.history.length, 10);
+    assert.equal(detail.history[0].at, "2026-05-27T00:00:02.000Z");
+    assert.equal(detail.history.at(-1).remote, "https://[REDACTED]@example.com/org/repo.git");
     assert.deepEqual(payload.ready.map((node) => node.id), []);
     assert.deepEqual(payload.working.map((node) => node.id), ["A"]);
     assert.equal(payload.working[0].session, "codex-A");
