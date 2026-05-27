@@ -14,18 +14,7 @@ export interface VisualizerActionContext {
   runId?: string;
 }
 
-type VisualizerActionId =
-  | "claim"
-  | "start"
-  | "renew"
-  | "done"
-  | "block"
-  | "answer"
-  | "fail"
-  | "reset"
-  | "reset-subtree"
-  | "reset-reachable"
-  | "decompose";
+type VisualizerActionId = VisualizerNodeAction["id"];
 
 interface ActionDefinition {
   id: VisualizerActionId;

@@ -538,10 +538,10 @@ export interface WorkerManager {
 }
 
 export interface VisualizerNodeRefs {
-  baseRef?: Record<string, unknown>;
-  workRef?: Record<string, unknown>;
-  outputRef?: Record<string, unknown>;
-  integrationRef?: Record<string, unknown>;
+  baseRef?: NodeBaseRefMetadata;
+  workRef?: NodeWorkRefMetadata;
+  outputRef?: NodeOutputRefMetadata;
+  integrationRef?: NodeIntegrationRefMetadata;
 }
 
 export interface VisualizerNodeTimestamps {
@@ -555,6 +555,19 @@ export interface VisualizerNodeTimestamps {
 
 export type VisualizerActionDanger = "none" | "caution" | "danger";
 
+type VisualizerActionId =
+  | "claim"
+  | "start"
+  | "renew"
+  | "done"
+  | "block"
+  | "answer"
+  | "fail"
+  | "reset"
+  | "reset-subtree"
+  | "reset-reachable"
+  | "decompose";
+
 export interface VisualizerActionConfirmation {
   required: boolean;
   label: string;
@@ -562,7 +575,7 @@ export interface VisualizerActionConfirmation {
 }
 
 export interface VisualizerNodeAction {
-  id: string;
+  id: VisualizerActionId;
   label: string;
   danger: VisualizerActionDanger;
   requiredFields: string[];
@@ -591,9 +604,9 @@ export interface VisualizerNodeDetail {
   children: NodeId[];
   deliverables: string[];
   acceptanceCriteria: string[];
-  lease?: Record<string, unknown>;
+  lease?: GraphLease;
   refs: VisualizerNodeRefs;
-  workspace?: Record<string, unknown>;
+  workspace?: NodeWorkspaceMetadata;
   report?: string;
   question?: string;
   answer?: string;
@@ -601,7 +614,7 @@ export interface VisualizerNodeDetail {
   blockedReason?: string;
   failureReason?: string;
   timestamps: VisualizerNodeTimestamps;
-  history: Record<string, unknown>[];
+  history: GraphHistoryEntry[];
   historyCount: number;
   historyLimit: number;
   actions: VisualizerNodeAction[];
