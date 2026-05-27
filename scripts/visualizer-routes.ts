@@ -8,13 +8,18 @@ import { basename, dirname } from "node:path";
 import { isRecord } from "./contracts.js";
 import type {
   AnswerNodeResult,
+  GraphDiagnostics,
+  GraphNode,
+  GraphSummary,
   JsonValue,
+  PlanGraphFile,
+  ReadyNode,
   SlackNotificationResult,
   VisualizerServerHandle
 } from "./contracts.js";
 import { defaultGraphPath } from "./graph-io.js";
 import { NumericArgumentError, numericArgumentRanges, parseNumericArgument } from "./numeric-args.js";
-import { operationalEvents } from "./operational-events.js";
+import { exportOperationalEvents, operationalEvents } from "./operational-events.js";
 import { errorMessage } from "./shared-utils.js";
 import { renderVisualizerHtml } from "./visualizer-client.js";
 import { buildVisualizerPayload } from "./visualizer-payload.js";
@@ -22,11 +27,20 @@ import {
   createWorkerManager,
   WorkerStartValidationError
 } from "./visualizer-worker-manager.js";
+import { buildWorkerPrompt } from "./worker.js";
 
 export interface VisualizerRuntime {
   defaultGraphPath: string;
+  defaultPromptTemplatePath: string;
+  schedulerCommand: string;
   schedulerScriptPath: string;
   rootDir: string;
+  readGraph(graphPath: string): Promise<PlanGraphFile>;
+  getNode(graph: PlanGraphFile, nodeId: string): GraphNode;
+  listReadyLeafNodes(graph: PlanGraphFile): ReadyNode[];
+  summarizeGraph(graph: PlanGraphFile): GraphSummary;
+  defaultReportPath(nodeId: string, runId: string): string;
+  diagnoseGraph(graphPath: string): Promise<GraphDiagnostics>;
   answerNode(graphPath: string, options: {
     nodeId?: string;
     answer?: string;
@@ -126,6 +140,49 @@ export async function createVisualizerServer({
       if (req.method === "GET" && url.pathname === "/api/graph") {
         res.writeHead(200, { "content-type": "application/json; charset=utf-8", "cache-control": "no-store" });
         res.end(JSON.stringify(await buildVisualizerPayload(graphPath, workerManager)));
+        return;
+      }
+
+      if (req.method === "GET" && url.pathname === "/api/summary") {
+        res.writeHead(200, { "content-type": "application/json; charset=utf-8", "cache-control": "no-store" });
+        res.end(JSON.stringify(runtime.summarizeGraph(await runtime.readGraph(graphPath))));
+        return;
+      }
+
+      if (req.method === "GET" && url.pathname === "/api/ready") {
+        res.writeHead(200, { "content-type": "application/json; charset=utf-8", "cache-control": "no-store" });
+        res.end(JSON.stringify(runtime.listReadyLeafNodes(await runtime.readGraph(graphPath))));
+        return;
+      }
+
+      if (req.method === "GET" && url.pathname === "/api/diagnostics") {
+        res.writeHead(200, { "content-type": "application/json; charset=utf-8", "cache-control": "no-store" });
+        res.end(JSON.stringify(await runtime.diagnoseGraph(graphPath)));
+        return;
+      }
+
+      if (req.method === "GET" && url.pathname === "/api/events") {
+        const limit = numericQueryParam(url, "limit", { ...numericArgumentRanges.eventLimit, defaultValue: 50 });
+        res.writeHead(200, { "content-type": "application/json; charset=utf-8", "cache-control": "no-store" });
+        res.end(JSON.stringify(exportOperationalEvents(await runtime.readGraph(graphPath), {
+          limit,
+          nodeId: queryStringParam(url, "node"),
+          event: queryStringParam(url, "event")
+        })));
+        return;
+      }
+
+      if (req.method === "GET" && url.pathname === "/api/prompt") {
+        const prompt = await buildWorkerPrompt(graphPath, {
+          nodeId: requiredQueryStringParam(url, "node", "prompt"),
+          session: queryStringParam(url, "session"),
+          runId: queryStringParam(url, "run"),
+          templatePath: queryStringParam(url, "template"),
+          cwd: queryStringParam(url, "cwd") || dirname(graphPath),
+          reportPath: queryStringParam(url, "report")
+        }, runtime);
+        res.writeHead(200, { "content-type": "text/plain; charset=utf-8", "cache-control": "no-store" });
+        res.end(prompt);
         return;
       }
 
@@ -334,6 +391,37 @@ function constantTimeStringEqual(left: string, right: string): boolean {
   const leftBuffer = Buffer.from(left);
   const rightBuffer = Buffer.from(right);
   return leftBuffer.length === rightBuffer.length && timingSafeEqual(leftBuffer, rightBuffer);
+}
+
+function queryStringParam(url: URL, key: string): string | undefined {
+  const values = url.searchParams.getAll(key);
+  if (values.length === 0) {
+    return undefined;
+  }
+  if (values.length > 1) {
+    throw new RequestValidationError(`Query parameter ${key} can only be provided once`);
+  }
+  return values[0];
+}
+
+function requiredQueryStringParam(url: URL, key: string, command: string): string {
+  const value = queryStringParam(url, key);
+  if (value === undefined || value.trim() === "") {
+    throw new RequestValidationError(`${command} requires ${key}`);
+  }
+  return value;
+}
+
+function numericQueryParam(
+  url: URL,
+  key: string,
+  options: Omit<Parameters<typeof parseNumericArgument>[1], "flag">
+): number | undefined {
+  const values = url.searchParams.getAll(key);
+  if (values.length > 1) {
+    throw new RequestValidationError(`Query parameter ${key} can only be provided once`);
+  }
+  return parseNumericArgument(values.length === 0 ? undefined : values[0], { flag: `--${key}`, ...options });
 }
 
 function stringBodyField(body: Record<string, unknown>, field: string): string {

@@ -32,7 +32,7 @@ authoritative coverage that should fail when the surface regresses.
 | Graph behavior | Series/parallel/gate readiness, busy and terminal statuses, lease ownership and expiry, status transitions, reset scopes, decomposition, reconciliation, composition output refs | `README.md` "Operating Model"; this document "Graph State Semantics"; `docs/mutation-ownership.md`; `docs/worker-isolation-remote-cache.md` | `tests/scheduler-mutations.test.mjs`; `tests/worker-runtime.test.mjs`; `tests/validation-contracts.test.mjs` |
 | Prompt variables | `cwd`, `graphPath`, `nodeId`, `runId`, `session`, `reportPath`, `schedulerCommand`, `planTitle`, `planDescription`, `nodeTitle`, `nodeKind`, `nodeStatus`, `nodeJson`, `readyJson`, `summaryJson` | `README.md` "Worker Usage"; this document "Worker Execution Contract"; `prompts/codex-worker-task.md` | `tests/worker-runtime.test.mjs` "prompt command renders an external template"; `scripts/migration-smoke.mjs` |
 | Worker execution | Shared-cwd worker mode, Git-only isolation mode, report generation, Codex command invocation, streaming/quiet behavior, heartbeat renewal, workspace-retention controls | `README.md` "Worker Usage"; `docs/worker-isolation-remote-cache.md`; this document "Worker Execution Contract" | `tests/worker-runtime.test.mjs`; `tests/cli-goldens.test.mjs` worker CLI tests |
-| Visualizer routes | `GET /`, `GET /index.html`, `GET /api/graph`, `GET /api/workers`, `GET /events`, `POST /api/answer`, `POST /api/workers/start`, `POST /api/workers/stop`, `POST /api/workers/stop-all` | `README.md` "Visualizer Safety"; `docs/security.md`; this document "Visualizer Contract" | `tests/visualizer-renderer.test.mjs` visualizer API and payload tests; `tests/visualizer-browser.test.mjs`; `scripts/migration-smoke.mjs` |
+| Visualizer routes | `GET /`, `GET /index.html`, `GET /api/graph`, `GET /api/workers`, `GET /api/summary`, `GET /api/ready`, `GET /api/diagnostics`, `GET /api/events`, `GET /api/prompt`, `GET /events`, `POST /api/answer`, `POST /api/workers/start`, `POST /api/workers/stop`, `POST /api/workers/stop-all` | `README.md` "Visualizer Safety"; `docs/security.md`; this document "Visualizer Contract" | `tests/visualizer-renderer.test.mjs` visualizer API and payload tests; `tests/visualizer-browser.test.mjs`; `scripts/migration-smoke.mjs` |
 | Renderer outputs | Static HTML output resolution, atomic replacement, escaped document text, safe href handling, structural tables, and planar graph SVG | `README.md` "Renderer Usage"; this document "Renderer Output Locations" | `tests/visualizer-renderer.test.mjs` static renderer and planar SVG tests; `scripts/migration-smoke.mjs` |
 | Reports and generated artifacts | `reports/<safe-node-id>-<safe-run-id>.md`, manual report writes, `dist/`, copied prompts, optional generated `plan.html`, graph lock metadata, two-space graph JSON with trailing newline | `README.md`; this document "Reports" and "Generated Artifacts"; `docs/output-safety-audit.md` | `tests/validation-contracts.test.mjs`; `tests/worker-runtime.test.mjs`; `tests/package-smoke.test.mjs` |
 | Operational events | Graph history names, worker-manager names, lock diagnostic names, stable fields, redaction rules | `docs/operational-events.md`; this document "Graph State Semantics" | `tests/validation-contracts.test.mjs`; `tests/scheduler-mutations.test.mjs`; `tests/visualizer-renderer.test.mjs`; `tests/worker-runtime.test.mjs`; `tests/graph-contracts.typecheck.ts` |
@@ -324,6 +324,11 @@ The local visualizer started by `serve` should keep these routes:
 - `GET /` and `GET /index.html`: HTML application.
 - `GET /api/graph`: visualizer payload JSON.
 - `GET /api/workers`: worker-manager status JSON.
+- `GET /api/summary`: same graph summary JSON shape as the CLI.
+- `GET /api/ready`: same ready leaf JSON shape as the CLI.
+- `GET /api/diagnostics`: same diagnostics JSON shape as the CLI.
+- `GET /api/events`: same operational event export JSON shape as the CLI, with optional `limit`, `node`, and `event` query parameters.
+- `GET /api/prompt`: rendered prompt preview as plain text, with required `node` and optional `session`, `run`, `template`, `cwd`, and `report` query parameters.
 - `POST /api/workers/start`: starts managed workers and returns `{ started, workerManager }`.
 - `POST /api/workers/stop`: stops one managed worker and returns `{ worker, workerManager }`.
 - `POST /api/workers/stop-all`: stops managed workers and returns `{ stopped, workerManager }`.
@@ -349,6 +354,8 @@ Visualizer request contracts:
   `remote`, `workspaceRoot`, and `workspaceRetention`.
 - `POST /api/workers/stop` accepts JSON with string `id`.
 - `POST /api/workers/stop-all` does not require a body.
+- `GET /api/events` applies the same `--limit` numeric bounds as the CLI.
+- `GET /api/prompt` resolves `template` from the graph directory and defaults `cwd` to the graph directory, matching the CLI prompt command.
 - `/events` emits server-sent events whose `data:` payload is the same minimum shape as `/api/graph`.
 
 Security assumptions are public:

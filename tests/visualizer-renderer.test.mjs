@@ -167,6 +167,81 @@ test("visualizer write token protects mutation routes", async () => {
   });
 });
 
+test("visualizer exposes read-only CLI parity routes without write token", async () => {
+  await withTempGraph(async (graphPath, dir) => {
+    await claimNode(graphPath, { session: "codex-A", nodeId: "A", leaseSeconds: 60 });
+    const templatePath = join(dir, "preview-template.md");
+    await writeFile(
+      templatePath,
+      "cwd={{cwd}}\nnode={{nodeId}}\nsession={{session}}\nrun={{runId}}\nreport={{reportPath}}\ntitle={{nodeTitle}}\n",
+      "utf8"
+    );
+
+    const visualizer = await createVisualizerServer({
+      graphPath,
+      port: 0,
+      host: "0.0.0.0",
+      writeToken: "secret-token"
+    });
+    const url = visualizer.url.replace("0.0.0.0", "127.0.0.1");
+    try {
+      const summaryResponse = await fetch(`${url}/api/summary`);
+      assert.equal(summaryResponse.status, 200);
+      assert.equal((await summaryResponse.json()).title, "Fixture Implementation Plan");
+
+      const readyResponse = await fetch(`${url}/api/ready`);
+      assert.equal(readyResponse.status, 200);
+      assert.deepEqual((await readyResponse.json()).map((node) => node.id), []);
+
+      const diagnosticsResponse = await fetch(`${url}/api/diagnostics`);
+      assert.equal(diagnosticsResponse.status, 200);
+      const diagnostics = await diagnosticsResponse.json();
+      assert.equal(diagnostics.summary.totalNodes, 6);
+      assert.deepEqual(diagnostics.leases.active.map((node) => node.id), ["A"]);
+
+      const eventsResponse = await fetch(`${url}/api/events?limit=1&node=A&event=claimed`);
+      assert.equal(eventsResponse.status, 200);
+      const events = await eventsResponse.json();
+      assert.equal(events.length, 1);
+      assert.equal(events[0].event, "claimed");
+      assert.equal(events[0].nodeId, "A");
+
+      const promptResponse = await fetch(
+        `${url}/api/prompt?node=A&session=codex-B&run=run-preview&template=${encodeURIComponent("preview-template.md")}&cwd=${encodeURIComponent("/tmp/preview-cwd")}&report=${encodeURIComponent("reports/preview.md")}`
+      );
+      assert.equal(promptResponse.status, 200);
+      assert.match(promptResponse.headers.get("content-type"), /^text\/plain/);
+      assert.equal(
+        await promptResponse.text(),
+        "cwd=/tmp/preview-cwd\nnode=A\nsession=codex-B\nrun=run-preview\nreport=reports/preview.md\ntitle=Bootstrap\n"
+      );
+    } finally {
+      await visualizer.close();
+    }
+  });
+});
+
+test("visualizer read-only parity routes validate query parameters", async () => {
+  await withTempGraph(async (graphPath) => {
+    const visualizer = await createVisualizerServer({ graphPath, port: 0 });
+    try {
+      const invalidLimit = await fetch(`${visualizer.url}/api/events?limit=0`);
+      assert.equal(invalidLimit.status, 400);
+      assert.match(await invalidLimit.text(), /Invalid --limit/);
+
+      const duplicateLimit = await fetch(`${visualizer.url}/api/events?limit=1&limit=2`);
+      assert.equal(duplicateLimit.status, 400);
+      assert.match(await duplicateLimit.text(), /limit can only be provided once/);
+
+      const missingPromptNode = await fetch(`${visualizer.url}/api/prompt`);
+      assert.equal(missingPromptNode.status, 400);
+      assert.match(await missingPromptNode.text(), /prompt requires node/);
+    } finally {
+      await visualizer.close();
+    }
+  });
+});
+
 test("Slack notification skips cleanly when webhook is not configured", async () => {
   const previousWebhook = process.env.SLACK_WEBHOOK_URL;
   delete process.env.SLACK_WEBHOOK_URL;
