@@ -689,6 +689,42 @@ test("visualizer builds graph payload and real-time HTML shell", async () => {
   });
 });
 
+test("visualizer payload includes selected-node action availability metadata", async () => {
+  await withTempGraph(async (graphPath) => {
+    let payload = await buildVisualizerPayload(graphPath);
+    let detail = payload.nodes.find((node) => node.id === "A");
+    let claim = actionById(detail, "claim");
+    let reset = actionById(detail, "reset");
+    assert.equal(claim.disabledReason, undefined);
+    assert.equal(reset.danger, "danger");
+    assert.equal(reset.confirmation.required, true);
+
+    await claimNode(graphPath, { session: "codex-A", nodeId: "A" });
+    payload = await buildVisualizerPayload(graphPath);
+    detail = payload.nodes.find((node) => node.id === "A");
+    const start = actionById(detail, "start");
+    const fail = actionById(detail, "fail");
+    assert.match(start.disabledReason, /no worker credentials/);
+    assert.equal(start.requiredFields.includes("session|runId"), true);
+    assert.equal(fail.danger, "danger");
+    assert.equal(fail.confirmation.required, true);
+    for (const action of detail.actions.filter((candidate) => candidate.danger === "danger")) {
+      assert.equal(action.confirmation.required, true, `${action.id} should require confirmation`);
+    }
+
+    await blockNode(graphPath, { nodeId: "A", session: "codex-A", question: "Proceed?" });
+    payload = await buildVisualizerPayload(graphPath);
+    detail = payload.nodes.find((node) => node.id === "A");
+    assert.equal(actionById(detail, "answer").disabledReason, undefined);
+    assert.match(actionById(detail, "done").disabledReason, /no worker credentials/);
+    assert.deepEqual(payload.actionPolicy.leaseProtectedWorkerActions, {
+      whenCredentialsAbsent: "disable-leased-node-actions",
+      requiredCredential: "matching-session-or-runId"
+    });
+    assert.equal(payload.actionPolicy.serverAuthority, "scheduler-mutation-guards");
+  });
+});
+
 test("visualizer browser renderers escape graph text and worker logs", () => {
   const { context, element } = runVisualizerClientScript();
 
@@ -1078,3 +1114,9 @@ test("renderer rejects invalid graph files before layout traversal", async () =>
     await rm(dir, { recursive: true, force: true });
   }
 });
+
+function actionById(node, id) {
+  const action = node?.actions.find((candidate) => candidate.id === id);
+  assert.ok(action, `missing action ${id}`);
+  return action;
+}

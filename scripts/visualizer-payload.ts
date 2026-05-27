@@ -13,6 +13,7 @@ import { defaultGraphPath, readGraph } from "./graph-io.js";
 import { listReadyLeafNodes, listWorkingNodes, summarizeGraph } from "./graph-traversal.js";
 import { redactOperationalEventDetails } from "./operational-events.js";
 import { renderPlanarSvg } from "./sp-layout.js";
+import { buildVisualizerNodeActionMap, visualizerActionPolicy } from "./visualizer-actions.js";
 
 export const visualizerNodeHistoryLimit = 10;
 
@@ -21,11 +22,13 @@ export async function buildVisualizerPayload(
   workerManager?: Pick<WorkerManager, "status">
 ): Promise<VisualizerPayload> {
   const graph = await readGraph(graphPath);
+  const actionMap = buildVisualizerNodeActionMap(graph);
   return {
     graph,
     graphSvg: renderPlanarSvg(graph),
-    nodes: buildVisualizerNodeDetails(graph),
+    nodes: buildVisualizerNodeDetails(graph, visualizerNodeHistoryLimit, actionMap),
     nodeHistoryLimit: visualizerNodeHistoryLimit,
+    actionPolicy: visualizerActionPolicy,
     ready: listReadyLeafNodes(graph),
     working: listWorkingNodes(graph),
     summary: summarizeGraph(graph),
@@ -35,18 +38,20 @@ export async function buildVisualizerPayload(
 
 export function buildVisualizerNodeDetails(
   graph: PlanGraphFile,
-  historyLimit = visualizerNodeHistoryLimit
+  historyLimit = visualizerNodeHistoryLimit,
+  actionMap = buildVisualizerNodeActionMap(graph)
 ): VisualizerNodeDetail[] {
   const boundedHistoryLimit = Math.max(0, Math.floor(historyLimit));
   return Object.entries(graph.graph.nodes)
-    .map(([id, node]) => normalizeVisualizerNode(id, node, boundedHistoryLimit))
+    .map(([id, node]) => normalizeVisualizerNode(id, node, boundedHistoryLimit, actionMap[id] || []))
     .sort((left, right) => left.id.localeCompare(right.id));
 }
 
 function normalizeVisualizerNode(
   id: string,
   node: GraphNode,
-  historyLimit: number
+  historyLimit: number,
+  actions: VisualizerNodeDetail["actions"]
 ): VisualizerNodeDetail {
   const history = Array.isArray(node.history) ? node.history : [];
   return redactNodeDetail(omitUndefined({
@@ -82,7 +87,8 @@ function normalizeVisualizerNode(
     }),
     history: historyTail(history, historyLimit),
     historyCount: history.length,
-    historyLimit
+    historyLimit,
+    actions
   }));
 }
 

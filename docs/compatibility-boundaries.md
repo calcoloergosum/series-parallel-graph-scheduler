@@ -331,8 +331,8 @@ The local visualizer started by `serve` should keep these routes:
 - `GET /events`: server-sent events carrying visualizer payload JSON.
 
 The `/api/graph` and `/events` payload should keep at least `graph`,
-`graphSvg`, `nodes`, `nodeHistoryLimit`, `ready`, `working`, `summary`, and
-`workerManager`.
+`graphSvg`, `nodes`, `nodeHistoryLimit`, `actionPolicy`, `ready`, `working`,
+`summary`, and `workerManager`.
 
 `nodes` is a normalized array for browser detail rendering without reparsing
 the SVG. Each entry keeps at least `id`, `title`, `kind`, `status`,
@@ -348,6 +348,15 @@ full graph history length for that node. Detail fields are JSON data, not
 pre-escaped HTML. Browser renderers must insert text with `textContent` or
 equivalent escaping. Secret-shaped strings in detail payloads pass through the
 operational redaction rules before being exposed.
+
+Each node detail also includes `actions`, a server-computed prediction of
+selected-node operations. Action entries keep `id`, `label`, `danger`,
+`requiredFields`, optional `disabledReason`, and confirmation metadata for
+danger-level destructive actions. When the visualizer request has no worker
+`session` or `runId`, lease-protected worker actions for leased nodes are
+disabled with a credential reason. The scheduler mutation guards remain
+authoritative and may still reject an action whose availability was predicted
+by the visualizer payload.
 
 `workerManager` status keeps at least `defaults`, lifecycle counts, and
 `workers`. `defaults` keeps `cwd`, `sessionPrefix`, `codexCommand`,

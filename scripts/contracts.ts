@@ -533,6 +533,35 @@ export interface VisualizerNodeTimestamps {
   expiredAt?: IsoDateString;
 }
 
+export type VisualizerActionDanger = "none" | "caution" | "danger";
+
+export interface VisualizerActionConfirmation {
+  required: boolean;
+  label: string;
+  message: string;
+}
+
+export interface VisualizerNodeAction {
+  id: string;
+  label: string;
+  danger: VisualizerActionDanger;
+  requiredFields: string[];
+  disabledReason?: string;
+  confirmation?: VisualizerActionConfirmation;
+}
+
+export interface VisualizerActionPolicy {
+  leaseProtectedWorkerActions: {
+    whenCredentialsAbsent: "disable-leased-node-actions";
+    requiredCredential: "matching-session-or-runId";
+  };
+  destructiveActions: {
+    danger: "danger";
+    requireConfirmationMetadata: true;
+  };
+  serverAuthority: "scheduler-mutation-guards";
+}
+
 export interface VisualizerNodeDetail {
   id: NodeId;
   title?: string;
@@ -555,6 +584,7 @@ export interface VisualizerNodeDetail {
   history: Record<string, unknown>[];
   historyCount: number;
   historyLimit: number;
+  actions: VisualizerNodeAction[];
 }
 
 export interface VisualizerPayload {
@@ -562,6 +592,7 @@ export interface VisualizerPayload {
   graphSvg: string;
   nodes: VisualizerNodeDetail[];
   nodeHistoryLimit: number;
+  actionPolicy: VisualizerActionPolicy;
   ready: ReadyNode[];
   working: WorkingNode[];
   summary: GraphSummary;

@@ -216,9 +216,26 @@ const payload: VisualizerPayload = {
     timestamps: {},
     history: [],
     historyCount: 0,
-    historyLimit: 10
+    historyLimit: 10,
+    actions: [{
+      id: "claim",
+      label: "Claim",
+      danger: "none",
+      requiredFields: ["nodeId"]
+    }]
   }],
   nodeHistoryLimit: 10,
+  actionPolicy: {
+    leaseProtectedWorkerActions: {
+      whenCredentialsAbsent: "disable-leased-node-actions",
+      requiredCredential: "matching-session-or-runId"
+    },
+    destructiveActions: {
+      danger: "danger",
+      requireConfirmationMetadata: true
+    },
+    serverAuthority: "scheduler-mutation-guards"
+  },
   ready: [{ id: "A", title: "Task", kind: "task", status: permissiveStatus }],
   working: [],
   summary: { totalNodes: 2, root: "ROOT", counts: { pending: 1, "waiting-for-review": 1 } },
