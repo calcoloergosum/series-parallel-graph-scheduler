@@ -207,11 +207,17 @@ export async function createVisualizerServer({
       res.writeHead(404, { "content-type": "text/plain; charset=utf-8" });
       res.end("Not found");
     } catch (error) {
+      if (res.headersSent || res.writableEnded) {
+        if (!res.writableEnded) {
+          res.end();
+        }
+        return;
+      }
       const badRequest = error instanceof NumericArgumentError
         || error instanceof WorkerStartValidationError
         || error instanceof RequestValidationError;
       res.writeHead(badRequest ? 400 : 500, { "content-type": "text/plain; charset=utf-8" });
-      res.end(error instanceof Error ? (badRequest ? error.message : error.stack || error.message) : String(error));
+      res.end(formatVisualizerErrorResponse(error, { badRequest }));
     }
   });
 
@@ -276,6 +282,11 @@ export async function readRequestJson(req: IncomingMessage): Promise<Record<stri
     throw new RequestValidationError("Request body must be a JSON object");
   }
   return parsed;
+}
+
+function formatVisualizerErrorResponse(error: unknown, { badRequest }: { badRequest: boolean }): string {
+  const message = error instanceof Error ? error.message : String(error);
+  return badRequest ? message : `Unexpected visualizer error: ${message}`;
 }
 
 function normalizeWriteToken(token: string | undefined): string | undefined {

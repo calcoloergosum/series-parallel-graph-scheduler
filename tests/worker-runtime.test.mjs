@@ -655,7 +655,7 @@ test("series reconciliation blocks when a done child is missing its output ref",
   });
 });
 
-test("resetting a composition subtree clears parent refs and preserves child output refs", async () => {
+test("resetting a composition subtree clears stale isolation refs from every reset node", async () => {
   await withTempGraph(async (graphPath) => {
     const graph = {
       graphVersion: 1,
@@ -700,8 +700,8 @@ test("resetting a composition subtree clears parent refs and preserves child out
     assert.equal(reset.graph.nodes.SERIES.status, "pending");
     assert.equal(reset.graph.nodes.SERIES.outputRef, undefined);
     assert.equal(reset.graph.nodes.SERIES.integrationRef, undefined);
-    assert.equal(reset.graph.nodes.S1.outputRef.name, "refs/heads/spg/node/S1/run-s1");
-    assert.equal(reset.graph.nodes.S2.outputRef.name, "refs/heads/spg/node/S2/run-s2");
+    assert.equal(reset.graph.nodes.S1.outputRef, undefined);
+    assert.equal(reset.graph.nodes.S2.outputRef, undefined);
     assert.ok(lastHistory(reset.graph.nodes.SERIES).clearedFields.includes("outputRef"));
     assert.ok(lastHistory(reset.graph.nodes.SERIES).clearedFields.includes("integrationRef"));
   });
@@ -805,6 +805,43 @@ test("git runtime prepares a bare cache, creates a clone branch, and publishes a
 
     const resolved = await execFileAsync("git", ["--git-dir", bareRepoPath, "rev-parse", published.outputRef]);
     assert.equal(resolved.stdout.trim(), published.commit);
+  });
+});
+
+test("git runtime creates downstream branches from published head refs after cloning", async () => {
+  await withLocalBareRemote(async ({ dir, remotePath }) => {
+    const bareRepoPath = join(dir, "cache", "repo.git");
+    const upstreamCloneCwd = join(dir, "workspaces", "codex-A", "A", "run-upstream");
+    const downstreamCloneCwd = join(dir, "workspaces", "codex-B", "B", "run-downstream");
+
+    await prepareBareRepository({ remote: remotePath, bareRepoPath });
+    await createRunClone({ bareRepoPath, cloneCwd: upstreamCloneCwd });
+    const upstream = await createWorkBranch({
+      cloneCwd: upstreamCloneCwd,
+      nodeId: "A",
+      runId: "run-upstream",
+      baseRef: "HEAD",
+      bareRepoPath
+    });
+    await execFileAsync("git", ["config", "user.email", "scheduler-tests@example.test"], { cwd: upstreamCloneCwd });
+    await execFileAsync("git", ["config", "user.name", "Scheduler Tests"], { cwd: upstreamCloneCwd });
+    await writeFile(join(upstreamCloneCwd, "upstream.txt"), "upstream output\n", "utf8");
+    await execFileAsync("git", ["add", "upstream.txt"], { cwd: upstreamCloneCwd });
+    await execFileAsync("git", ["commit", "-m", "upstream output"], { cwd: upstreamCloneCwd });
+    const published = await publishOutputRef({ cloneCwd: upstreamCloneCwd, workRef: upstream.workRef });
+
+    await createRunClone({ bareRepoPath, cloneCwd: downstreamCloneCwd });
+    const downstream = await createWorkBranch({
+      cloneCwd: downstreamCloneCwd,
+      nodeId: "B",
+      runId: "run-downstream",
+      baseRef: published.outputRef,
+      bareRepoPath
+    });
+
+    assert.equal(downstream.baseRef, published.outputRef);
+    assert.equal(downstream.commit, published.commit);
+    assert.equal(await readFile(join(downstreamCloneCwd, "upstream.txt"), "utf8"), "upstream output\n");
   });
 });
 

@@ -327,7 +327,7 @@ The local visualizer started by `serve` should keep these routes:
 - `POST /api/workers/start`: starts managed workers and returns `{ started, workerManager }`.
 - `POST /api/workers/stop`: stops one managed worker and returns `{ worker, workerManager }`.
 - `POST /api/workers/stop-all`: stops managed workers and returns `{ stopped, workerManager }`.
-- `POST /api/answer`: answers a blocked node and returns the same answer result shape as the CLI, including `slack`.
+- `POST /api/answer`: answers a blocked node and returns the raw scheduler answer result shape, augmented with `slack`.
 - `GET /events`: server-sent events carrying visualizer payload JSON.
 
 The `/api/graph` and `/events` payload should keep at least `graph`, `graphSvg`, `ready`, `working`, `summary`, and `workerManager`.
@@ -350,6 +350,40 @@ Visualizer request contracts:
 - `POST /api/workers/stop` accepts JSON with string `id`.
 - `POST /api/workers/stop-all` does not require a body.
 - `/events` emits server-sent events whose `data:` payload is the same minimum shape as `/api/graph`.
+
+Visualizer response and error conventions:
+
+- Successful read routes return direct JSON resources, not an envelope:
+  `/api/graph` returns the visualizer payload and `/api/workers` returns
+  worker-manager status.
+- Successful mutation routes return the action result directly with any useful
+  refreshed state beside it. Scheduler-backed mutations return raw scheduler
+  results plus non-blocking Slack delivery status when applicable; worker
+  manager actions return `{ started, workerManager }`, `{ worker,
+  workerManager }`, or `{ stopped, workerManager }`.
+- Slack notification results are never top-level route failures after a graph
+  mutation succeeds. They remain embedded as `slack` with `sent`, `skipped`, or
+  `failed` details so the UI can show the operation result and notification
+  status separately.
+- Expected request, validation, and lease/ownership failures return HTTP 400
+  with `text/plain; charset=utf-8` and a single actionable message. Existing
+  tests that assert plain-text validation errors should remain valid unless a
+  route is intentionally migrated with tests.
+- Write-token authorization failures return HTTP 403 with
+  `text/plain; charset=utf-8`; clients should display the message as a global
+  operator error because the request did not reach route validation.
+- Unknown routes return HTTP 404 with plain text. Unexpected failures return
+  HTTP 500 with plain text beginning `Unexpected visualizer error:` followed by
+  the error message, not a stack trace.
+- If a future visualizer route needs structured validation details, it may use a
+  JSON error body with at least `{ "error": { "message": string, "field"?:
+  string } }`; clients must still handle plain-text errors because 403 and
+  existing validation routes depend on them.
+- Client UI should show route-specific validation and mutation failures next to
+  the related form when there is one, and show authorization, read, SSE, or
+  unexpected failures as global operator errors. Clients must read JSON success
+  bodies as data and convert non-2xx text or JSON error bodies to one display
+  message without parsing stack traces.
 
 Security assumptions are public:
 

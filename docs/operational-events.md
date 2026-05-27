@@ -64,7 +64,7 @@ Graph history entries always include `at` and `event`.
 | `decomposed` | A worker replaced a leaf with a child graph. | `previousStatus`, `status`, `previousKind`, `kind`, `childIds`, `session`, `runId`, `clearedFields` |
 | `expired` | The scheduler released an expired claimed or running lease. | `previousStatus`, `status`, `session`, `runId`, `leaseExpiresAt`, `expiredAt`, `clearedFields` |
 | `subtree-done` | Reconciliation marked an internal subtree done. | `previousStatus`, `status`, `completedAt`, `childIds` |
-| `child-reset` | A leaf reset reopened a completed ancestor. | `previousStatus`, `status`, `childId`, `clearedFields` |
+| `child-reset` | A reset reopened a completed or unresolved composition ancestor. | `previousStatus`, `status`, `childId`, `clearedFields` |
 | `clone-prepared` | An isolated worker prepared a local clone from the bare repository cache. | `session`, `runId`, `remote`, `bareRepo`, `cloneCwd`, `baseRef` |
 | `branch-created` | An isolated worker created or checked out the per-run work branch. | `session`, `runId`, `cloneCwd`, `baseRef`, `workRef` |
 | `output-ref-recorded` | An isolated worker recorded the output ref produced by a completed run. | `session`, `runId`, `workRef`, `outputRef`, `commit`, `report` |

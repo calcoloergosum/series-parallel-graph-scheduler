@@ -312,11 +312,14 @@ export function buildGraphDiagnostics(
       });
     }
     if (status === "blocked" || status === "review") {
+      const leaf = isLeaf(graph, id);
       diagnostics.blocked.push({
         ...diagnosticNode(id, node, now),
         blockedReason: node.blockedReason,
-        nextStep: `answer --node ${id} --answer "..." or reset --node ${id} --reason "..."`,
-        remediation: blockedWorkRemediation(id, options.graphPath, status)
+        nextStep: leaf
+          ? `answer --node ${id} --answer "..." or reset --node ${id} --reason "..."`
+          : `inspect events for ${id}, then reset-subtree --node ${id} if retrying the blocked composition`,
+        remediation: blockedWorkRemediation(id, options.graphPath, status, leaf)
       });
     }
     if (status === "failed") {
@@ -460,7 +463,14 @@ function diagnosticActions(diagnostics: GraphDiagnostics): string[] {
     actions.push(`Review ${parkedExpired.length} expired lease(s) on blocked/review/failed/done or custom-status work before reset, answer, or renew.`);
   }
   if (diagnostics.blocked.length > 0) {
-    actions.push(`Answer or reset ${diagnostics.blocked.length} blocked/review node(s).`);
+    const answerable = diagnostics.blocked.filter((node) => node.remediation?.commands.some((command) => command.command.includes(" answer ")));
+    const internal = diagnostics.blocked.length - answerable.length;
+    if (answerable.length > 0) {
+      actions.push(`Answer or reset ${answerable.length} blocked/review leaf node(s).`);
+    }
+    if (internal > 0) {
+      actions.push(`Inspect or reset-subtree ${internal} blocked/review internal node(s).`);
+    }
   }
   if (diagnostics.failed.length > 0) {
     actions.push(`Inspect reports and reset ${diagnostics.failed.length} failed node(s) that should be retried.`);
@@ -522,10 +532,10 @@ function diagnosticRemediation(diagnostics: GraphDiagnostics, graphPath?: string
     remediation.push({
       category: "blocked-work",
       severity: "warning",
-      summary: `${diagnostics.blocked.length} blocked/review node(s) need an operator answer or verified reset.`,
+      summary: `${diagnostics.blocked.length} blocked/review node(s) need operator or composition recovery.`,
       commands: [{
         command: schedulerCommand("events", graphPath, ["--event", "blocked", "--limit", "20"]),
-        description: "Review recent blocked questions and context.",
+        description: "Review recent blocked questions and composition context.",
         safeToRun: true
       }]
     });
@@ -605,7 +615,27 @@ function parkedExpiredLeaseRemediation(nodeId: string, graphPath: string | undef
   };
 }
 
-function blockedWorkRemediation(nodeId: string, graphPath: string | undefined, status: string): DiagnosticRemediation {
+function blockedWorkRemediation(nodeId: string, graphPath: string | undefined, status: string, leaf: boolean): DiagnosticRemediation {
+  if (!leaf) {
+    return {
+      category: "blocked-work",
+      severity: "warning",
+      summary: `Internal node ${nodeId} is ${status} and needs composition recovery or a verified subtree reset.`,
+      nodeId,
+      commands: [{
+        command: schedulerCommand("events", graphPath, ["--node", nodeId, "--limit", "20"]),
+        description: "Inspect recent composition events before deciding how much work to retry.",
+        safeToRun: true
+      }, {
+        command: schedulerCommand("reset-subtree", graphPath, ["--node", nodeId, "--reason", "<verified retry reason>"]),
+        description: "Retry the blocked internal subtree after its composition state has been reviewed.",
+        safeToRun: true,
+        prerequisites: ["Confirm that resetting the full subtree is intended."]
+      }],
+      prerequisites: ["Internal blocked nodes cannot be answered directly; inspect the composition report first."]
+    };
+  }
+
   return {
     category: "blocked-work",
     severity: "warning",

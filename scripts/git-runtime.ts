@@ -229,8 +229,9 @@ export async function createWorkBranch({
     throw new GitRuntimeError(`Worker isolation branch collision for ${workRef} in ${bareRepoPath}`);
   }
 
+  const checkoutBaseRef = await resolveCloneCheckoutRef({ cloneCwd, baseRef, git });
   await git({
-    args: ["-C", cloneCwd, "checkout", "-b", branchName, baseRef],
+    args: ["-C", cloneCwd, "checkout", "-b", branchName, checkoutBaseRef],
     failurePrefix: `Worker isolation branch creation failed for ${workRef}:`
   });
   const commit = await revParseCommit({ cloneCwd, ref: workRef, git });
@@ -317,6 +318,32 @@ async function gitRefExists({
     : ["--git-dir", bareRepoPath || "", "show-ref", "--verify", "--quiet", ref];
   const result = await git({ args, allowedExitCodes: [0, 1] });
   return result.exitCode === 0;
+}
+
+async function resolveCloneCheckoutRef({
+  cloneCwd,
+  baseRef,
+  git
+}: {
+  cloneCwd: string;
+  baseRef: string;
+  git: GitRunner;
+}): Promise<string> {
+  if (await gitRefExists({ cloneCwd, ref: baseRef, git })) {
+    return baseRef;
+  }
+
+  const remoteHeadRef = remoteTrackingRefForHead(baseRef);
+  if (remoteHeadRef && await gitRefExists({ cloneCwd, ref: remoteHeadRef, git })) {
+    return remoteHeadRef;
+  }
+
+  return baseRef;
+}
+
+function remoteTrackingRefForHead(ref: string): string | undefined {
+  const prefix = "refs/heads/";
+  return ref.startsWith(prefix) ? `refs/remotes/origin/${ref.slice(prefix.length)}` : undefined;
 }
 
 async function revParseCommit({ cloneCwd, ref, git }: { cloneCwd: string; ref: string; git: GitRunner }): Promise<string> {

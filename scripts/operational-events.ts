@@ -114,7 +114,7 @@ export const operationalEventTaxonomy = [
     name: operationalEvents.childReset,
     producer: "graph-history",
     stableFields: ["at", "event", "previousStatus", "status", "childId", "clearedFields"],
-    description: "A leaf reset reopened a completed ancestor."
+    description: "A reset reopened a completed or unresolved composition ancestor."
   },
   {
     name: operationalEvents.clonePrepared,

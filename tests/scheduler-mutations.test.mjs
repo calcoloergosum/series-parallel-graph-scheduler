@@ -1,5 +1,5 @@
 import test from "node:test";
-import { addUnknownMetadata, answerNode, assert, assertUnknownMetadata, blockNode, checkSchedulerTransitionReference, claimNode, completeNode, completedDeepReadinessGraph, concurrentMutationGraph, decomposeNode, deepReadinessGraph, dirname, escapeRegExp, execFileAsync, failNode, knownTransitionStatuses, lastHistory, listReadyLeafNodes, listWorkingNodes, lockArtifacts, mutationOwnershipDocsPath, nestedResetReachabilityGraph, readGraph, readyIds, reconcileGraphStatus, releaseExpiredLeases, renewNodeLease, resetNode, resetReachable, resetSubtree, schedulerScriptPath, schedulerTransitionTable, setNodeStatus, startNode, stressScriptPath, withTempGraph, writeFile } from "./helpers/plan-scheduler-harness.mjs";
+import { addUnknownMetadata, answerNode, assert, assertUnknownMetadata, blockNode, checkSchedulerTransitionReference, claimNode, completeNode, completedDeepReadinessGraph, concurrentMutationGraph, decomposeNode, deepReadinessGraph, diagnoseGraph, dirname, escapeRegExp, execFileAsync, failNode, knownTransitionStatuses, lastHistory, listReadyLeafNodes, listWorkingNodes, lockArtifacts, mutationOwnershipDocsPath, nestedResetReachabilityGraph, readGraph, readyIds, reconcileGraphStatus, releaseExpiredLeases, renewNodeLease, resetNode, resetReachable, resetSubtree, schedulerScriptPath, schedulerTransitionTable, setNodeStatus, startNode, stressScriptPath, withTempGraph, writeFile } from "./helpers/plan-scheduler-harness.mjs";
 
 test("series-parallel readiness exposes only legal leaf nodes", async () => {
   await withTempGraph(async (graphPath) => {
@@ -844,6 +844,105 @@ test("reset-subtree clears a node and child descendants without reopening parent
     assert.deepEqual(listReadyLeafNodes(graph).map((node) => node.id).sort(), ["B", "C"]);
     assert.ok(graph.graph.nodes.P.history.some((entry) => entry.event === "reset" && entry.resetScope === "subtree" && entry.reason === "rerun branch"));
     assert.ok(graph.graph.nodes.B.history.some((entry) => entry.event === "reset" && entry.resetScope === "subtree" && entry.rootId === "P"));
+  });
+});
+
+test("completion requires output refs once sibling composition is isolated", async () => {
+  await withTempGraph(async (graphPath) => {
+    const graph = {
+      graphVersion: 1,
+      graph: {
+        root: "ROOT",
+        nodes: {
+          ROOT: { title: "Root", kind: "series", status: "pending", children: ["A", "B"] },
+          A: {
+            title: "Isolated predecessor",
+            kind: "task",
+            status: "done",
+            outputRef: { name: "refs/heads/spg/node/A/run-a" }
+          },
+          B: {
+            title: "Shared-cwd successor",
+            kind: "task",
+            status: "claimed",
+            lease: {
+              session: "codex-B",
+              runId: "run-b",
+              claimedAt: "2026-05-27T00:00:00.000Z",
+              expiresAt: "2099-01-01T00:00:00.000Z"
+            }
+          }
+        }
+      }
+    };
+    await writeFile(graphPath, `${JSON.stringify(graph, null, 2)}\n`, "utf8");
+
+    await assert.rejects(
+      completeNode(graphPath, { nodeId: "B", session: "codex-B", runId: "run-b" }),
+      /Cannot complete isolated\/composed node without outputRef\.name: B/
+    );
+
+    const after = await readGraph(graphPath);
+    assert.equal(after.graph.nodes.B.status, "claimed");
+    assert.equal(after.graph.nodes.B.outputRef, undefined);
+  });
+});
+
+test("resetting a child reopens unresolved blocked composition ancestors", async () => {
+  await withTempGraph(async (graphPath) => {
+    const graph = {
+      graphVersion: 1,
+      graph: {
+        root: "ROOT",
+        nodes: {
+          ROOT: { title: "Root", kind: "series", status: "pending", children: ["BASELINE", "TAIL"] },
+          BASELINE: {
+            title: "Blocked baseline",
+            kind: "series",
+            status: "blocked",
+            children: ["GUI01", "GUI04"],
+            blockedAt: "2026-05-27T09:17:52.534Z",
+            blockedReason: "series final child is done without outputRef: GUI04",
+            question: "Resolve series integration for BASELINE.",
+            report: "reports/BASELINE-integration.md",
+            integrationRef: {
+              name: "refs/heads/spg/node/GUI01/run-a",
+              kind: "series",
+              status: "pending",
+              missingChildId: "GUI04"
+            }
+          },
+          GUI01: {
+            title: "Done isolated child",
+            kind: "task",
+            status: "done",
+            outputRef: { name: "refs/heads/spg/node/GUI01/run-a" }
+          },
+          GUI04: { title: "Reset child", kind: "task", status: "pending" },
+          TAIL: { title: "Tail", kind: "task", status: "pending" }
+        }
+      }
+    };
+    await writeFile(graphPath, `${JSON.stringify(graph, null, 2)}\n`, "utf8");
+
+    assert.deepEqual(readyIds(await readGraph(graphPath)), []);
+    const diagnostics = await diagnoseGraph(graphPath);
+    assert.deepEqual(diagnostics.actions.filter((action) => /blocked\/review/.test(action)), [
+      "Inspect or reset-subtree 1 blocked/review internal node(s)."
+    ]);
+    const blocked = diagnostics.blocked.find((node) => node.id === "BASELINE");
+    assert.match(blocked.nextStep, /reset-subtree --node BASELINE/);
+    assert.equal(blocked.remediation.commands.some((command) => command.command.includes(" answer ")), false);
+
+    await resetReachable(graphPath, { nodeId: "GUI04", reason: "retry final child" });
+
+    const after = await readGraph(graphPath);
+    assert.equal(after.graph.nodes.BASELINE.status, "pending");
+    assert.equal(after.graph.nodes.BASELINE.blockedReason, undefined);
+    assert.equal(after.graph.nodes.BASELINE.question, undefined);
+    assert.equal(after.graph.nodes.BASELINE.integrationRef, undefined);
+    assert.deepEqual(readyIds(after), ["GUI04"]);
+    assert.ok(after.graph.nodes.BASELINE.history.some((entry) => entry.event === "child-reset" && entry.previousStatus === "blocked" && entry.childId === "GUI04"));
   });
 });
 

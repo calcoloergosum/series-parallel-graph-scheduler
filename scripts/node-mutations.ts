@@ -255,7 +255,12 @@ const resetClearedFields = [
   "blockedReason",
   "question",
   "report",
-  "expiredAt"
+  "expiredAt",
+  "baseRef",
+  "workspace",
+  "workRef",
+  "outputRef",
+  "integrationRef"
 ] as const;
 const compositionResetClearedFields = ["outputRef", "integrationRef"] as const;
 
@@ -346,6 +351,7 @@ export async function completeNode(
     validate: (graph, node) => {
       assertLeafNode(graph, nodeId);
       assertStatus(node, schedulerTransitionTable.done.allowedFrom, "complete");
+      assertOutputRefWhenIsolationRequired(graph, nodeId, node, refMetadata);
     },
     patch: (node) => {
       node.completedAt = new Date().toISOString();
@@ -564,6 +570,10 @@ export async function resetNode(graphPath: string, { nodeId, reason }: ResetNode
         resetAncestors.push(ancestorId);
       }
     }
+    reopenUnresolvedCompositionAncestors(graph, nodeId, {
+      resetScope: "node",
+      reason: reason || "manual_reset"
+    });
 
     graph.graphVersion = (graph.graphVersion || 0) + 1;
     await writeGraphAtomic(graph, graphPath);
@@ -587,6 +597,11 @@ export async function resetSubtree(graphPath: string, { nodeId, reason }: ResetN
         rootId: nodeId
       });
     }
+    reopenUnresolvedCompositionAncestors(graph, nodeId, {
+      resetScope: "subtree",
+      reason: reason || "manual_subtree_reset",
+      rootId: nodeId
+    });
 
     graph.graphVersion = (graph.graphVersion || 0) + 1;
     await writeGraphAtomic(graph, graphPath);
@@ -610,6 +625,11 @@ export async function resetReachable(graphPath: string, { nodeId, reason }: Rese
         rootId: nodeId
       });
     }
+    reopenUnresolvedCompositionAncestors(graph, nodeId, {
+      resetScope: "reachable",
+      reason: reason || "manual_reachable_reset",
+      rootId: nodeId
+    });
 
     graph.graphVersion = (graph.graphVersion || 0) + 1;
     await writeGraphAtomic(graph, graphPath);
@@ -1562,6 +1582,36 @@ function clearCompositionRefMetadata(node: GraphNode): string[] {
   return clearedFields;
 }
 
+function reopenUnresolvedCompositionAncestors(
+  graph: PlanGraphFile,
+  nodeId: NodeId,
+  metadata: { resetScope: string; reason: string; rootId?: NodeId }
+): NodeId[] {
+  const reopened: NodeId[] = [];
+  for (const ancestorId of findAncestorIds(graph, nodeId)) {
+    const ancestor = getNode(graph, ancestorId);
+    if (!isUnresolvedCompositionBuffer(ancestor, ancestor.kind === "parallel" ? "parallel" : "series")) {
+      continue;
+    }
+
+    const previousStatus = ancestor.status || "pending";
+    ancestor.status = "pending";
+    for (const field of resetClearedFields) {
+      delete ancestor[field];
+    }
+    const clearedFields = [...resetClearedFields, ...clearCompositionRefMetadata(ancestor)];
+    appendHistory(ancestor, operationalEvents.childReset, {
+      previousStatus,
+      status: ancestor.status,
+      childId: nodeId,
+      clearedFields,
+      ...metadata
+    });
+    reopened.push(ancestorId);
+  }
+  return reopened;
+}
+
 function applyWorkerRefMetadata(
   node: GraphNode,
   refMetadata: WorkerRunRefMetadata | undefined,
@@ -1689,6 +1739,46 @@ function assertLeaseOwner(node: GraphNode, owner: LeaseOwner = {}): void {
   if (session && node.lease.session !== session) {
     throw new Error(`Lease session mismatch for node; expected ${node.lease.session}`);
   }
+}
+
+function assertOutputRefWhenIsolationRequired(
+  graph: PlanGraphFile,
+  nodeId: NodeId,
+  node: GraphNode,
+  refMetadata: WorkerRunRefMetadata | undefined
+): void {
+  if (refMetadata?.outputRef?.name || node.outputRef?.name) {
+    return;
+  }
+  if (!completionRequiresOutputRef(graph, nodeId, node)) {
+    return;
+  }
+  throw new Error(`Cannot complete isolated/composed node without outputRef.name: ${nodeId}`);
+}
+
+function completionRequiresOutputRef(graph: PlanGraphFile, nodeId: NodeId, node: GraphNode): boolean {
+  if (
+    node.baseRef?.name
+      || node.workRef?.name
+      || node.workspace?.cloneCwd
+      || node.workspace?.bareRepo
+      || node.integrationRef?.name
+  ) {
+    return true;
+  }
+
+  for (const ancestorId of findAncestorIds(graph, nodeId)) {
+    const ancestor = getNode(graph, ancestorId);
+    if (
+      ancestor.baseRef?.name
+        || ancestor.outputRef?.name
+        || ancestor.integrationRef?.name
+        || ancestor.children?.some((childId) => getNode(graph, childId).outputRef?.name)
+    ) {
+      return true;
+    }
+  }
+  return false;
 }
 
 function mutationEventForStatus(status: NodeStatus): OperationalEventName {
