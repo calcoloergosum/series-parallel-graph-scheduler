@@ -44,7 +44,7 @@ Out of scope:
 - Worker commands are trusted code at the scheduler boundary. `worker` and the visualizer Worker Manager pass arguments without a shell, but the selected command still receives the operator environment and can read or write anything allowed by OS permissions.
 - Git isolation is operational isolation, not a sandbox. It gives each run a separate clone, branch, and output ref, but fetched repository contents and retained workspaces remain local sensitive files.
 - The default visualizer is trusted-local. Loopback binding limits network reachability, but it is still unauthenticated and local browser/process access is enough to read state or submit writes.
-- Non-loopback visualizer reads are public to every reachable client. `--visualizer-write-token` protects write routes only; `GET /`, `GET /api/graph`, `GET /api/workers`, and `GET /events` still disclose operational state.
+- Non-loopback visualizer reads are public to every reachable client. `--visualizer-write-token` protects write routes only; `GET /`, `GET /index.html`, `GET /api/graph`, `GET /api/summary`, `GET /api/ready`, `GET /api/diagnostics`, `GET /api/events`, `GET /api/prompt`, `GET /api/workers`, and `GET /events` still disclose operational state.
 - Slack is an external attention channel. Notifications intentionally cross the local trust boundary and should not carry secrets.
 
 ## Non-goals
@@ -90,7 +90,7 @@ The visualizer exposes these write-capable HTTP routes. They are unauthenticated
 - `POST /api/node/claim`, `/start`, `/renew`, `/done`, `/block`, `/answer`, `/fail`, `/reset`, `/reset-subtree`, `/reset-reachable`, and `/decompose`: expose the matching scheduler node mutations through injected runtime handlers. `POST /api/answer` remains a legacy alias for `POST /api/node/answer`.
 - `POST /api/graph/reconcile` and `POST /api/leases/release-expired`: expose graph-level operational recovery commands through injected runtime handlers.
 
-Read-only visualizer routes are `GET /`, `GET /index.html`, `GET /api/graph`, `GET /api/workers`, and `GET /events`. They can still disclose graph state, report paths, worker process ids, repository paths, and recent worker output.
+Read-only visualizer routes are `GET /`, `GET /index.html`, `GET /api/graph`, `GET /api/summary`, `GET /api/ready`, `GET /api/diagnostics`, `GET /api/events`, `GET /api/prompt`, `GET /api/workers`, and `GET /events`. They can still disclose graph state, rendered prompts, report paths, worker process ids, repository paths, and recent worker output.
 
 When the visualizer is bound to a non-loopback host, read-only routes are intentionally reachable without a token by every client that can connect to the host and port. The write token is not an authentication system for read access; it only gates worker start, worker stop, stop-all, node mutations, and graph-level recovery mutations.
 
@@ -134,7 +134,7 @@ client can use unauthenticated write controls.
 | --- | --- | --- |
 | `serve --host 127.0.0.1` or default `npm run serve` | Medium | The unauthenticated API is reachable only from the local machine, but any local process, browser extension, or same-browser web context that can reach loopback may read state or submit mutating requests while the server is running. |
 | `serve --host 0.0.0.0 --visualizer-write-token TOKEN` | High | Read-only graph and worker state remain reachable from other machines, but start, stop, node mutation, and graph-level recovery routes return HTTP 403 unless the request includes the token. |
-| `serve --host 0.0.0.0 --unsafe-visualizer-write` | Critical | The unauthenticated start, stop, node mutation, graph, worker, and log-tail surfaces become reachable from other machines on accessible networks. Use only when every reachable client is trusted. |
+| `serve --host 0.0.0.0 --unsafe-visualizer-write` | Critical | The unauthenticated start, stop, node mutation, graph-level recovery mutation, graph, worker, and log-tail surfaces become reachable from other machines on accessible networks. Use only when every reachable client is trusted. |
 
 ## Trust Boundary Evidence Map
 
@@ -150,7 +150,7 @@ This table maps each documented boundary to automated test coverage or manual re
 | Worker output/report boundary | Code: worker reports escape Markdown code fences and redact common secret shapes in commands, args, stdout, stderr, errors, and isolation metadata. Tests: report-format and failed-worker tests assert redaction of Slack webhook and token-shaped output. |
 | Git isolation boundary | Code: isolation requires `scheduler.remote` or `--remote`, rejects placeholders, creates per-run clones/refs, records redacted provenance, and keeps workspace roots inside the graph directory. Tests: isolated worker setup, concurrent clone/ref separation, placeholder rejection, workspace-root rejection, fetch-failure redaction, and no-shell Git invocation. |
 | Visualizer loopback boundary | Code: default host is `127.0.0.1`; `localhost`, `127.0.0.1`, `::1`, and `[::1]` are treated as local. Tests: visualizer host warning tests assert default loopback behavior and non-loopback warning text. |
-| Visualizer non-loopback write boundary | Code: non-loopback startup refuses without `--visualizer-write-token` or `--unsafe-visualizer-write`; write routes require `X-SPG-Visualizer-Token` or `Authorization: Bearer` when a token is configured. Tests: serve rejects unprotected non-loopback binding; write-token tests verify 403 for missing/wrong tokens and success with valid headers. |
+| Visualizer non-loopback write boundary | Code: non-loopback startup refuses without `--visualizer-write-token` or `--unsafe-visualizer-write`; write routes require `X-SPG-Visualizer-Token` or `Authorization: Bearer` when a token is configured. Tests: serve rejects unprotected non-loopback binding; write-token tests verify 403 for missing/wrong tokens and token-authenticated worker, node mutation, and graph-level recovery writes. |
 | Visualizer read/disclosure boundary | Code: `GET /api/graph`, `GET /api/workers`, and `GET /events` return graph state, worker manager state, and log tails without token checks. Tests: visualizer payload and Worker Manager tests assert exposed state; manual review required before any non-loopback read exposure. |
 | Visualizer HTML/script boundary | Code: browser renderers escape dynamic graph text and worker logs before DOM insertion; static renderer escapes graph document HTML fields and link hrefs. Tests: visualizer browser renderer escaping, planar SVG escaping, and static renderer escaping/link-safety tests. |
 | Slack boundary | Code: `sendSlackNotification` only runs when `SLACK_WEBHOOK_URL` is set, posts compact event text, escapes Slack formatting, includes only selected detail keys, and times out via `SPG_SLACK_TIMEOUT_MS`. Tests: Slack notification behavior is covered in scheduler tests; manual review required for workspace membership and webhook storage. |

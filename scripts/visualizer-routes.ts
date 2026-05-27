@@ -151,9 +151,9 @@ export function visualizerHostSecurityWarning(host: string, allowUnsafeWrites = 
     return undefined;
   }
   if (allowUnsafeWrites) {
-    return `Warning: unsafe visualizer writes are enabled on ${host}. Any reachable client can start or stop workers and mutate graph nodes without a token.`;
+    return `Warning: unsafe visualizer writes are enabled on ${host}. Any reachable client can start or stop workers, mutate graph nodes, and run graph-level recovery mutations without a token.`;
   }
-  return `Warning: the visualizer write API is intended for trusted local use. Binding to ${host} may expose worker start/stop controls and node mutation routes to other machines unless write requests require a token.`;
+  return `Warning: the visualizer write API is intended for trusted local use. Binding to ${host} may expose worker start/stop controls, node mutation routes, and graph-level recovery mutation routes to other machines unless write requests require a token.`;
 }
 
 export async function createVisualizerServer({

@@ -285,7 +285,7 @@ test("visualizer graph and lease operational routes refresh renderer output and 
   });
 });
 
-test("visualizer warns when worker controls bind beyond loopback", async () => {
+test("visualizer warns when write routes bind beyond loopback", async () => {
   assert.equal(isLocalVisualizerHost("127.0.0.1"), true);
   assert.equal(isLocalVisualizerHost("localhost"), true);
   assert.equal(isLocalVisualizerHost("::1"), true);
@@ -294,7 +294,11 @@ test("visualizer warns when worker controls bind beyond loopback", async () => {
   assert.equal(visualizerHostSecurityWarning("127.0.0.1"), undefined);
   assert.match(visualizerHostSecurityWarning("0.0.0.0"), /trusted local use/);
   assert.match(visualizerHostSecurityWarning("192.168.1.10"), /worker start\/stop controls/);
+  assert.match(visualizerHostSecurityWarning("192.168.1.10"), /node mutation routes/);
+  assert.match(visualizerHostSecurityWarning("192.168.1.10"), /graph-level recovery mutation routes/);
   assert.match(visualizerHostSecurityWarning("0.0.0.0", true), /unsafe visualizer writes are enabled/);
+  assert.match(visualizerHostSecurityWarning("0.0.0.0", true), /mutate graph nodes/);
+  assert.match(visualizerHostSecurityWarning("0.0.0.0", true), /graph-level recovery mutations/);
   assert.match(visualizerHostSecurityWarning("0.0.0.0", true), /without a token/);
 
   await withTempGraph(async (graphPath) => {
@@ -389,6 +393,22 @@ test("visualizer write token protects mutation routes", async () => {
         headers: { "x-spg-visualizer-token": "secret-token" }
       });
       assert.equal(reconcileResponse.status, 200);
+
+      const claimResponse = await fetch(`${url}/api/node/claim`, {
+        method: "POST",
+        headers: { "content-type": "application/json", "x-spg-visualizer-token": "secret-token" },
+        body: JSON.stringify({ nodeId: "A", session: "token-test" })
+      });
+      assert.equal(claimResponse.status, 200);
+      assert.equal((await claimResponse.json()).nodeId, "A");
+
+      const resetResponse = await fetch(`${url}/api/node/reset`, {
+        method: "POST",
+        headers: { "content-type": "application/json", "x-spg-visualizer-token": "secret-token" },
+        body: JSON.stringify({ nodeId: "A", reason: "token-protected node mutation" })
+      });
+      assert.equal(resetResponse.status, 200);
+      assert.equal((await resetResponse.json()).status, "pending");
 
       const stopAllResponse = await fetch(`${url}/api/workers/stop-all`, {
         method: "POST",

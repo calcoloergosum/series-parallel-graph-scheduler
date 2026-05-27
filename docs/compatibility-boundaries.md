@@ -376,7 +376,7 @@ Security assumptions are public:
 - `serve` binds to `127.0.0.1` by default.
 - Binding to `localhost`, `127.0.0.1`, `::1`, or `[::1]` is treated as local.
 - Binding to any other host refuses startup unless `--visualizer-write-token` is provided or `--unsafe-visualizer-write` is explicitly set.
-- Binding to any other host prints a warning because the worker manager can start and stop local processes.
+- Binding to any other host prints a warning because write routes can start and stop local worker processes, mutate graph nodes, and run graph-level recovery mutations.
 - With `--visualizer-write-token`, all visualizer `POST` routes return HTTP 403 unless the request includes either `X-SPG-Visualizer-Token: TOKEN` or `Authorization: Bearer TOKEN`.
 - Without `--visualizer-write-token`, loopback mode and explicit unsafe mode keep the existing unauthenticated trusted-client behavior.
 - Visualizer HTML and client renderers must escape graph text, worker log text, and user-provided values before inserting them into the page.
