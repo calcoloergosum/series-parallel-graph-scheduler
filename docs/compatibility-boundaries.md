@@ -32,7 +32,7 @@ authoritative coverage that should fail when the surface regresses.
 | Graph behavior | Series/parallel/gate readiness, busy and terminal statuses, lease ownership and expiry, status transitions, reset scopes, decomposition, reconciliation, composition output refs | `README.md` "Operating Model"; this document "Graph State Semantics"; `docs/mutation-ownership.md`; `docs/worker-isolation-remote-cache.md` | `tests/scheduler-mutations.test.mjs`; `tests/worker-runtime.test.mjs`; `tests/validation-contracts.test.mjs` |
 | Prompt variables | `cwd`, `graphPath`, `nodeId`, `runId`, `session`, `reportPath`, `schedulerCommand`, `planTitle`, `planDescription`, `nodeTitle`, `nodeKind`, `nodeStatus`, `nodeJson`, `readyJson`, `summaryJson` | `README.md` "Worker Usage"; this document "Worker Execution Contract"; `prompts/codex-worker-task.md` | `tests/worker-runtime.test.mjs` "prompt command renders an external template"; `scripts/migration-smoke.mjs` |
 | Worker execution | Shared-cwd worker mode, Git-only isolation mode, report generation, Codex command invocation, streaming/quiet behavior, heartbeat renewal, workspace-retention controls | `README.md` "Worker Usage"; `docs/worker-isolation-remote-cache.md`; this document "Worker Execution Contract" | `tests/worker-runtime.test.mjs`; `tests/cli-goldens.test.mjs` worker CLI tests |
-| Visualizer routes | `GET /`, `GET /index.html`, `GET /api/graph`, `GET /api/workers`, `GET /events`, `POST /api/answer`, `POST /api/workers/start`, `POST /api/workers/stop`, `POST /api/workers/stop-all` | `README.md` "Visualizer Safety"; `docs/security.md`; this document "Visualizer Contract" | `tests/visualizer-renderer.test.mjs` visualizer API and payload tests; `tests/visualizer-browser.test.mjs`; `scripts/migration-smoke.mjs` |
+| Visualizer routes | `GET /`, `GET /index.html`, `GET /api/graph`, `GET /api/workers`, `GET /api/summary`, `GET /api/ready`, `GET /api/diagnostics`, `GET /api/events`, `GET /api/prompt`, `GET /events`, `POST /api/answer`, `POST /api/node/claim`, `POST /api/node/start`, `POST /api/node/renew`, `POST /api/node/done`, `POST /api/node/block`, `POST /api/node/answer`, `POST /api/node/fail`, `POST /api/node/reset`, `POST /api/node/reset-subtree`, `POST /api/node/reset-reachable`, `POST /api/node/decompose`, `POST /api/graph/reconcile`, `POST /api/leases/release-expired`, `POST /api/workers/start`, `POST /api/workers/stop`, `POST /api/workers/stop-all` | `README.md` "Visualizer Safety"; `docs/security.md`; this document "Visualizer Contract" | `tests/visualizer-renderer.test.mjs` visualizer API and payload tests; `tests/visualizer-browser.test.mjs`; `scripts/migration-smoke.mjs` |
 | Renderer outputs | Static HTML output resolution, atomic replacement, escaped document text, safe href handling, structural tables, and planar graph SVG | `README.md` "Renderer Usage"; this document "Renderer Output Locations" | `tests/visualizer-renderer.test.mjs` static renderer and planar SVG tests; `scripts/migration-smoke.mjs` |
 | Reports and generated artifacts | `reports/<safe-node-id>-<safe-run-id>.md`, manual report writes, `dist/`, copied prompts, optional generated `plan.html`, graph lock metadata, two-space graph JSON with trailing newline | `README.md`; this document "Reports" and "Generated Artifacts"; `docs/output-safety-audit.md` | `tests/validation-contracts.test.mjs`; `tests/worker-runtime.test.mjs`; `tests/package-smoke.test.mjs` |
 | Operational events | Graph history names, worker-manager names, lock diagnostic names, stable fields, redaction rules | `docs/operational-events.md`; this document "Graph State Semantics" | `tests/validation-contracts.test.mjs`; `tests/scheduler-mutations.test.mjs`; `tests/visualizer-renderer.test.mjs`; `tests/worker-runtime.test.mjs`; `tests/graph-contracts.typecheck.ts` |
@@ -324,10 +324,19 @@ The local visualizer started by `serve` should keep these routes:
 - `GET /` and `GET /index.html`: HTML application.
 - `GET /api/graph`: visualizer payload JSON.
 - `GET /api/workers`: worker-manager status JSON.
+- `GET /api/summary`: same graph summary JSON shape as the CLI.
+- `GET /api/ready`: same ready leaf JSON shape as the CLI.
+- `GET /api/diagnostics`: same diagnostics JSON shape as the CLI.
+- `GET /api/events`: same operational event export JSON shape as the CLI, with optional `limit`, `node`, and `event` query parameters.
+- `GET /api/prompt`: rendered prompt preview as plain text, with required `node` and optional `session`, `run`, `template`, `cwd`, and `report` query parameters.
 - `POST /api/workers/start`: starts managed workers and returns `{ started, workerManager }`.
 - `POST /api/workers/stop`: stops one managed worker and returns `{ worker, workerManager }`.
 - `POST /api/workers/stop-all`: stops managed workers and returns `{ stopped, workerManager }`.
-- `POST /api/answer`: answers a blocked node and returns the same answer result shape as the CLI, including `slack`.
+- `POST /api/node/claim`, `/start`, `/renew`, `/reset`, `/reset-subtree`, and `/reset-reachable`: mutate nodes and return the same result shapes as the matching CLI commands.
+- `POST /api/node/done`, `/block`, `/answer`, `/fail`, and `/decompose`: mutate nodes and return the same result shapes as the matching CLI commands, including `slack`.
+- `POST /api/graph/reconcile`: reconciles completed graph subtrees and returns the same result shape as the `reconcile` CLI command.
+- `POST /api/leases/release-expired`: releases expired leases and returns the same result shape as the `release-expired` CLI command.
+- `POST /api/answer`: legacy browser-flow alias for `POST /api/node/answer`.
 - `GET /events`: server-sent events carrying visualizer payload JSON.
 
 The `/api/graph` and `/events` payload should keep at least `graph`, `graphSvg`, `ready`, `working`, `summary`, and `workerManager`.
@@ -342,13 +351,24 @@ least `id`, `session`, `status`, `startedAt`, and `logTail`; `pid`, `cwd`,
 
 Visualizer request contracts:
 
-- `POST /api/answer` accepts JSON with string `nodeId`, string `answer`, and optional string `responder`.
+- `POST /api/node/claim` accepts JSON with optional string `nodeId`, optional string `session`, and optional numeric `leaseSeconds` or `lease`.
+- `POST /api/node/start` accepts JSON with string `nodeId`, optional string `session`, and optional string `runId` or `run`.
+- `POST /api/node/renew` accepts JSON with string `nodeId`, optional string `session`, optional string `runId` or `run`, and optional numeric `leaseSeconds` or `lease`.
+- `POST /api/node/done` accepts JSON with string `nodeId`, optional string `session`, optional string `runId` or `run`, optional string `report`, and optional `reportBody` or `report-body`. Report bodies are written through the scheduler report writer, constrained to the graph directory, before the node is completed.
+- `POST /api/node/block` accepts JSON with string `nodeId`, optional string `session`, optional string `runId` or `run`, optional string `question`, and optional string `reason`.
+- `POST /api/node/answer` and its legacy alias `POST /api/answer` accept JSON with string `nodeId`, string `answer`, and optional string `responder`.
+- `POST /api/node/fail` accepts JSON with string `nodeId`, optional string `session`, optional string `runId` or `run`, optional string `reason`, and optional string `report`.
+- `POST /api/node/reset`, `/reset-subtree`, and `/reset-reachable` accept JSON with string `nodeId` and optional string `reason`.
+- `POST /api/node/decompose` accepts JSON with string `nodeId`, optional string `session`, optional string `runId` or `run`, optional string `kind`, and `children`, an array of child node objects with string `id` and `title`.
+- `POST /api/graph/reconcile` and `POST /api/leases/release-expired` do not require a body.
 - `POST /api/workers/start` accepts JSON with optional `count`,
   `sessionPrefix`, `cwd`, `codexCommand`, `codexArgs`, `idleMs`, `timeoutMs`,
   `leaseSeconds`, `templatePath`, `nodeId`, `quiet`, `once`, `isolation`,
   `remote`, `workspaceRoot`, and `workspaceRetention`.
 - `POST /api/workers/stop` accepts JSON with string `id`.
 - `POST /api/workers/stop-all` does not require a body.
+- `GET /api/events` applies the same `--limit` numeric bounds as the CLI.
+- `GET /api/prompt` resolves `template` from the graph directory and defaults `cwd` to the graph directory, matching the CLI prompt command.
 - `/events` emits server-sent events whose `data:` payload is the same minimum shape as `/api/graph`.
 
 Security assumptions are public:
@@ -356,8 +376,8 @@ Security assumptions are public:
 - `serve` binds to `127.0.0.1` by default.
 - Binding to `localhost`, `127.0.0.1`, `::1`, or `[::1]` is treated as local.
 - Binding to any other host refuses startup unless `--visualizer-write-token` is provided or `--unsafe-visualizer-write` is explicitly set.
-- Binding to any other host prints a warning because the worker manager can start and stop local processes.
-- With `--visualizer-write-token`, `POST /api/answer`, `POST /api/workers/start`, `POST /api/workers/stop`, and `POST /api/workers/stop-all` return HTTP 403 unless the request includes either `X-SPG-Visualizer-Token: TOKEN` or `Authorization: Bearer TOKEN`.
+- Binding to any other host prints a warning because write routes can start and stop local worker processes, mutate graph nodes, and run graph-level recovery mutations.
+- With `--visualizer-write-token`, all visualizer `POST` routes return HTTP 403 unless the request includes either `X-SPG-Visualizer-Token: TOKEN` or `Authorization: Bearer TOKEN`.
 - Without `--visualizer-write-token`, loopback mode and explicit unsafe mode keep the existing unauthenticated trusted-client behavior.
 - Visualizer HTML and client renderers must escape graph text, worker log text, and user-provided values before inserting them into the page.
 

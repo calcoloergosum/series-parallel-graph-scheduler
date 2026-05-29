@@ -732,8 +732,8 @@ Recovery:
   ```
 
 Use `--unsafe-visualizer-write` only when every reachable client is trusted to
-read graph state, answer blocked nodes, and start or stop local worker
-processes.
+read graph state, start or stop local worker processes, mutate graph nodes, and
+run graph-level recovery mutations.
 
 ## Sandbox And Local Environment Notes
 

@@ -381,7 +381,8 @@ http://HOST:8787/#write-token=TOKEN
 ```
 
 Explicit unsafe mode is only for a trusted network boundary where every
-reachable client may start and stop workers. It requires the explicit
+reachable client may start and stop workers, mutate graph nodes, and run graph
+level recovery mutations. It requires the explicit
 `--unsafe-visualizer-write` flag and prints a warning that unauthenticated
 write controls are exposed:
 
