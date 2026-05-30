@@ -460,6 +460,92 @@ test("parallel reconciliation merges clean child output refs into a parent outpu
   });
 });
 
+test("parallel reconciliation retries a missing-base block using the series predecessor output", async () => {
+  await withLocalBareRemote(async ({ dir, sourcePath, remotePath }) => {
+    const graphDir = join(dir, "graph");
+    const graphPath = join(graphDir, "plan.graph.json");
+    await mkdir(graphDir);
+
+    const baselineOutput = await createSourceBranch({
+      sourcePath,
+      remotePath,
+      branchName: "spg/node/BASELINE/run-baseline",
+      files: { "baseline.txt": "baseline\n" },
+      message: "baseline output"
+    });
+    const apiOutput = await createSourceBranch({
+      sourcePath,
+      remotePath,
+      branchName: "spg/node/API/run-api",
+      files: { "api.txt": "api\n" },
+      message: "api output"
+    });
+    const uiOutput = await createSourceBranch({
+      sourcePath,
+      remotePath,
+      branchName: "spg/node/UI/run-ui",
+      files: { "ui.txt": "ui\n" },
+      message: "ui output"
+    });
+    const bareRepoPath = await prepareCompositionBareRepository({ graphDir, remotePath });
+
+    await writeFile(graphPath, JSON.stringify({
+      graphVersion: 1,
+      title: "Series Predecessor Parallel Integration Plan",
+      scheduler: { remote: remotePath },
+      graph: {
+        root: "ROOT",
+        nodes: {
+          ROOT: { title: "Root", kind: "series", status: "pending", children: ["BASELINE", "IMPLEMENTATION", "FOLLOWUP"] },
+          BASELINE: { title: "Baseline", kind: "task", status: "done", outputRef: baselineOutput },
+          IMPLEMENTATION: {
+            title: "Implementation",
+            kind: "parallel",
+            status: "blocked",
+            children: ["API", "UI"],
+            blockedAt: "2026-05-28T00:05:04.770Z",
+            blockedReason: "parallel parent is missing baseRef.name",
+            question: "Resolve parallel integration for IMPLEMENTATION; see reports/stale.md.",
+            integrationRef: {
+              name: "refs/heads/spg/integration/IMPLEMENTATION/run-stale",
+              kind: "parallel",
+              status: "pending",
+              report: "reports/stale.md"
+            }
+          },
+          API: { title: "API", kind: "task", status: "done", outputRef: apiOutput },
+          UI: { title: "UI", kind: "task", status: "done", outputRef: uiOutput },
+          FOLLOWUP: { title: "Follow-up", kind: "task", status: "pending" }
+        }
+      }
+    }, null, 2) + "\n", "utf8");
+
+    const result = await reconcileGraphStatus(graphPath);
+    assert.deepEqual(result.changed, ["IMPLEMENTATION"]);
+
+    const graph = await readGraph(graphPath);
+    const parent = graph.graph.nodes.IMPLEMENTATION;
+    assert.equal(parent.status, "done");
+    assert.equal(parent.baseRef.name, baselineOutput.name);
+    assert.equal(parent.baseRef.commit, baselineOutput.commit);
+    assert.equal(parent.baseRef.source, "series-predecessor");
+    assert.equal(parent.baseRef.predecessorId, "BASELINE");
+    assert.equal(parent.blockedAt, undefined);
+    assert.equal(parent.blockedReason, undefined);
+    assert.equal(parent.question, undefined);
+    assert.equal(parent.integrationRef.baseRef, baselineOutput.name);
+    assert.equal(parent.outputRef.source, "parallel-integration");
+    assert.deepEqual(readyIds(graph), ["FOLLOWUP"]);
+
+    assert.equal(await gitShow(bareRepoPath, parent.outputRef.name, "baseline.txt"), "baseline\n");
+    assert.equal(await gitShow(bareRepoPath, parent.outputRef.name, "api.txt"), "api\n");
+    assert.equal(await gitShow(bareRepoPath, parent.outputRef.name, "ui.txt"), "ui\n");
+
+    const report = await readFile(join(graphDir, parent.report), "utf8");
+    assert.match(report, new RegExp("- Base ref: " + escapeRegExp(baselineOutput.name)));
+  });
+});
+
 test("parallel reconciliation records conflicting child output refs for operator review", async () => {
   await withLocalBareRemote(async ({ dir, sourcePath, remotePath }) => {
     const graphDir = join(dir, "graph");
@@ -522,6 +608,80 @@ test("parallel reconciliation records conflicting child output refs for operator
     assert.match(report, /## Failed merge/);
     assert.match(report, /- Child: B/);
     assert.match(report, /- shared-conflict\.txt/);
+  });
+});
+
+
+test("worker resolves a retained integration conflict with Codex before idling", async () => {
+  await withLocalBareRemote(async ({ dir, sourcePath, remotePath }) => {
+    const graphDir = join(dir, "graph");
+    const graphPath = join(graphDir, "plan.graph.json");
+    await mkdir(graphDir);
+
+    const leftOutput = await createSourceBranch({
+      sourcePath,
+      remotePath,
+      branchName: "spg/node/A/run-worker-conflict-a",
+      files: { "shared-conflict.txt": "from A\n" },
+      message: "worker conflict output A"
+    });
+    const rightOutput = await createSourceBranch({
+      sourcePath,
+      remotePath,
+      branchName: "spg/node/B/run-worker-conflict-b",
+      files: { "shared-conflict.txt": "from B\n" },
+      message: "worker conflict output B"
+    });
+    const bareRepoPath = await prepareCompositionBareRepository({ graphDir, remotePath });
+
+    await writeFile(graphPath, JSON.stringify({
+      graphVersion: 1,
+      title: "Worker Conflict Resolution Plan",
+      scheduler: { remote: remotePath, baseRef: "refs/heads/main" },
+      graph: {
+        root: "P",
+        nodes: {
+          P: { title: "Parallel parent", kind: "parallel", status: "pending", children: ["A", "B"] },
+          A: { title: "Branch A", kind: "task", status: "done", outputRef: leftOutput },
+          B: { title: "Branch B", kind: "task", status: "done", outputRef: rightOutput }
+        }
+      }
+    }, null, 2) + "\n", "utf8");
+
+    assert.deepEqual((await reconcileGraphStatus(graphPath)).changed, ["P"]);
+    let graph = await readGraph(graphPath);
+    assert.equal(graph.graph.nodes.P.status, "review");
+
+    const resolverPath = join(dir, "fake-conflict-resolver.mjs");
+    await writeFile(resolverPath, [
+      "import { writeFileSync } from 'node:fs';",
+      "writeFileSync('shared-conflict.txt', 'resolved by codex\\n');",
+      "console.log('resolved retained integration conflict');"
+    ].join("\n"), "utf8");
+
+    const result = await runWorker(graphPath, {
+      session: "codex-conflict",
+      once: true,
+      stream: false,
+      codexCommand: process.execPath,
+      codexArgs: [resolverPath]
+    });
+
+    assert.equal(result.idle, false);
+    assert.equal(result.results[0].nodeId, "P");
+    assert.equal(result.results[0].status, "done");
+    assert.equal(result.results[0].code, 0);
+
+    graph = await readGraph(graphPath);
+    const parent = graph.graph.nodes.P;
+    assert.equal(parent.status, "done");
+    assert.equal(parent.integrationRef.status, "clean");
+    assert.equal(parent.outputRef.name, parent.integrationRef.publishedOutputRef);
+    assert.equal(await gitShow(bareRepoPath, parent.outputRef.name, "shared-conflict.txt"), "resolved by codex\n");
+
+    const report = await readFile(join(graphDir, parent.report), "utf8");
+    assert.match(report, /Integration conflict resolution: P/);
+    assert.match(report, /resolved retained integration conflict/);
   });
 });
 

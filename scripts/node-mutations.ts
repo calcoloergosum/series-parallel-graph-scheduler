@@ -9,6 +9,7 @@ import {
   type DecomposeNodeResult,
   type GraphNode,
   type LeaseClaimResult,
+  type NodeBaseRefMetadata,
   type NodeId,
   type NodeIntegrationInputRefMetadata,
   type NodeKind,
@@ -83,6 +84,11 @@ export interface RenewNodeLeaseOptions extends OwnedNodeOptions {
 export interface RecordWorkerRefMetadataOptions extends OwnedNodeOptions {
   report?: string;
   refMetadata?: WorkerRunRefMetadata;
+}
+
+export interface PublishResolvedIntegrationOptions {
+  nodeId?: NodeId;
+  report?: string;
 }
 
 export interface ResetNodeOptions {
@@ -649,6 +655,87 @@ export async function reconcileGraphStatus(graphPath = defaultGraphPath): Promis
   });
 }
 
+export async function publishResolvedIntegration(
+  graphPath = defaultGraphPath,
+  { nodeId, report }: PublishResolvedIntegrationOptions = {}
+): Promise<NodeMutationResult> {
+  if (!nodeId) {
+    throw new Error("publish-resolved-integration requires --node");
+  }
+
+  return withGraphLock(graphPath, async () => {
+    const graph = await readGraph(graphPath);
+    const node = getNode(graph, nodeId);
+    if (!Array.isArray(node.children) || node.kind !== "parallel") {
+      throw new Error("Cannot publish resolved integration for non-parallel node: " + nodeId);
+    }
+    if (!node.integrationRef?.name || node.integrationRef.kind !== "parallel") {
+      throw new Error("Cannot publish resolved integration for " + nodeId + ": missing parallel integrationRef.name");
+    }
+    if (!node.integrationRef.workspace || typeof node.integrationRef.workspace !== "string") {
+      throw new Error("Cannot publish resolved integration for " + nodeId + ": missing integration workspace");
+    }
+
+    const unresolvedPaths = conflictedGitPaths(node.integrationRef.workspace);
+    if (unresolvedPaths.length > 0) {
+      throw new Error("Cannot publish resolved integration for " + nodeId + ": unresolved conflicts remain in " + unresolvedPaths.join(", "));
+    }
+    const dirty = gitText(["-C", node.integrationRef.workspace, "status", "--porcelain"]).trim();
+    if (dirty) {
+      throw new Error("Cannot publish resolved integration for " + nodeId + ": integration workspace has uncommitted changes");
+    }
+
+    const outputRef = node.integrationRef.name;
+    const commit = gitText(["-C", node.integrationRef.workspace, "rev-parse", "HEAD"]).trim();
+    const previousStatus = node.status || "pending";
+    const completedAt = new Date().toISOString();
+    const reportPath = report || node.report;
+    const clearedFields = clearCompositionBlockState(node);
+
+    node.integrationRef = {
+      ...node.integrationRef,
+      status: "clean",
+      commit,
+      publishedOutputRef: outputRef,
+      ...(reportPath ? { report: reportPath } : {})
+    };
+    node.outputRef = {
+      name: outputRef,
+      commit,
+      runId: integrationRunId(outputRef),
+      ...(reportPath ? { report: reportPath } : {}),
+      producedAt: completedAt,
+      source: "parallel-integration"
+    };
+    node.status = "done";
+    node.completedAt = completedAt;
+    if (reportPath) {
+      node.report = reportPath;
+    }
+    appendHistory(node, operationalEvents.parentRefPublished, {
+      parentId: nodeId,
+      kind: "parallel",
+      integrationRef: outputRef,
+      outputRef,
+      commit,
+      result: "manual-resolution",
+      ...(reportPath ? { report: reportPath } : {}),
+      ...(clearedFields.length > 0 ? { clearedFields } : {})
+    });
+    appendHistory(node, operationalEvents.subtreeDone, {
+      previousStatus,
+      status: node.status,
+      completedAt,
+      childIds: node.children || []
+    });
+
+    await reconcileCompletedSubtrees(graph, graphPath);
+    graph.graphVersion = (graph.graphVersion || 0) + 1;
+    await writeGraphAtomic(graph, graphPath);
+    return { nodeId, status: node.status, title: node.title, summary: summarizeGraph(graph) };
+  });
+}
+
 export async function decomposeNode(
   graphPath: string,
   { nodeId, kind, children, session, runId }: DecomposeNodeOptions = {}
@@ -942,7 +1029,6 @@ async function publishParallelIntegrationIfRequired(
     return "unresolved";
   }
 
-  const baseRef = parallelBaseRefName(graph, node);
   const reportAttemptId = createIntegrationAttemptId(parentId);
   const integrationBranch = `spg/integration/${safeGitRefPart(parentId)}/${reportAttemptId}`;
   const integrationRef = `refs/heads/${integrationBranch}`;
@@ -950,14 +1036,18 @@ async function publishParallelIntegrationIfRequired(
   const workspace = join(dirname(graphPath), "runs", "workspaces", "integration", safeFilePart(parentId), reportAttemptId);
   const orderedChildOutputs = childOutputs as ParallelChildOutput[];
 
-  if (!baseRef) {
+  let baseRefMetadata: NodeBaseRefMetadata;
+  try {
+    baseRefMetadata = parallelBaseRefMetadata(graph, parentId);
+  } catch (error) {
     await blockParallelIntegration(graphPath, parentId, node, {
-      reason: "parallel parent is missing baseRef.name",
+      reason: `parallel parent base ref resolution failed: ${errorMessage(error)}`,
       childOutputs: orderedChildOutputs,
       integrationRef
     });
     return "unresolved";
   }
+  const baseRef = baseRefMetadata.name;
 
   let baseCommit = "";
   try {
@@ -984,10 +1074,9 @@ async function publishParallelIntegrationIfRequired(
   }
 
   node.baseRef = {
-    ...node.baseRef,
+    ...baseRefMetadata,
     name: baseRef,
     commit: baseCommit,
-    source: node.baseRef?.source || "graph-default",
     resolvedAt: new Date().toISOString()
   };
   node.integrationRef = {
@@ -1077,6 +1166,7 @@ async function publishParallelIntegrationIfRequired(
     producedAt: new Date().toISOString(),
     source: "parallel-integration"
   };
+  const clearedFields = clearCompositionBlockState(node);
   await writeReportFile(graphPath, reportPath, formatParallelIntegrationReport({
     parentId,
     result: "clean",
@@ -1096,7 +1186,8 @@ async function publishParallelIntegrationIfRequired(
     outputRef: integrationRef,
     commit,
     result: "clean",
-    report: reportPath
+    report: reportPath,
+    ...(clearedFields.length > 0 ? { clearedFields } : {})
   });
   return "published";
 }
@@ -1155,9 +1246,23 @@ async function blockSeriesAlias(
 
 function isUnresolvedCompositionBuffer(node: GraphNode, kind: "series" | "parallel"): boolean {
   const status = node.status || "pending";
-  return (status === "blocked" || status === "review" || status === "failed")
-    && node.integrationRef?.kind === kind
-    && !node.outputRef?.name;
+  const parked = status === "review" || status === "failed" || (status === "blocked" && !isRetryableCompositionBlock(node, kind));
+  return parked && node.integrationRef?.kind === kind && !node.outputRef?.name;
+}
+
+function isRetryableCompositionBlock(node: GraphNode, kind: "series" | "parallel"): boolean {
+  return kind === "parallel" && node.blockedReason === "parallel parent is missing baseRef.name";
+}
+
+function clearCompositionBlockState(node: GraphNode): string[] {
+  const clearedFields: string[] = [];
+  for (const field of ["blockedAt", "blockedReason", "question"] as const) {
+    if (node[field] !== undefined) {
+      delete node[field];
+      clearedFields.push(field);
+    }
+  }
+  return clearedFields;
 }
 
 async function blockParallelIntegration(
@@ -1232,24 +1337,8 @@ async function blockParallelIntegration(
   });
 }
 
-function parallelBaseRefName(graph: PlanGraphFile, node: GraphNode): string | undefined {
-  if (node.baseRef?.name) {
-    return node.baseRef.name;
-  }
-  const schedulerBaseRef = graph.scheduler?.baseRef;
-  if (typeof schedulerBaseRef === "string" && schedulerBaseRef.trim()) {
-    return schedulerBaseRef.trim();
-  }
-  if (
-    schedulerBaseRef &&
-    typeof schedulerBaseRef === "object" &&
-    "name" in schedulerBaseRef &&
-    typeof schedulerBaseRef.name === "string" &&
-    schedulerBaseRef.name.trim()
-  ) {
-    return schedulerBaseRef.name.trim();
-  }
-  return undefined;
+function parallelBaseRefMetadata(graph: PlanGraphFile, parentId: NodeId): NodeBaseRefMetadata {
+  return resolveNodeBaseRef(graph, parentId);
 }
 
 function parallelBareRepoPath(graphPath: string): string {
@@ -1263,6 +1352,10 @@ function createIntegrationAttemptId(parentId: NodeId): string {
 
 function safeGitRefPart(value: unknown): string {
   return safeFilePart(value).replaceAll(/\.+/g, ".").replaceAll(/^\.|\.$/g, "") || "ref";
+}
+
+function integrationRunId(refName: string): string | undefined {
+  return refName.split("/").filter(Boolean).at(-1);
 }
 
 function parallelIntegrationReportPath(parentId: NodeId, attemptId: string): string {
