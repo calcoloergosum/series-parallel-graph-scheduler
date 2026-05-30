@@ -47,6 +47,12 @@ async function openSseJsonStream(baseUrl) {
   };
 }
 
+async function assertJsonResponse(response, route) {
+  assert.equal(response.status, 200, route);
+  assert.match(response.headers.get("content-type") ?? "", /^application\/json/, route);
+  return response.json();
+}
+
 test("invalid graph fixtures fail scheduler and renderer paths before writes", async (t) => {
   for (const outcome of invalidGraphValidatorOutcomes()) {
     await t.test(outcome.fixture, async () => {
@@ -439,23 +445,24 @@ test("visualizer exposes read-only CLI parity routes without write token", async
     });
     const url = visualizer.url.replace("0.0.0.0", "127.0.0.1");
     try {
+      const before = await readFile(graphPath, "utf8");
+
       const summaryResponse = await fetch(`${url}/api/summary`);
-      assert.equal(summaryResponse.status, 200);
-      assert.equal((await summaryResponse.json()).title, "Fixture Implementation Plan");
+      const summary = await assertJsonResponse(summaryResponse, "/api/summary");
+      assert.equal(summary.title, "Fixture Implementation Plan");
+      assert.equal(summary.totalNodes, 6);
 
       const readyResponse = await fetch(`${url}/api/ready`);
-      assert.equal(readyResponse.status, 200);
-      assert.deepEqual((await readyResponse.json()).map((node) => node.id), []);
+      const ready = await assertJsonResponse(readyResponse, "/api/ready");
+      assert.deepEqual(ready.map((node) => node.id), []);
 
       const diagnosticsResponse = await fetch(`${url}/api/diagnostics`);
-      assert.equal(diagnosticsResponse.status, 200);
-      const diagnostics = await diagnosticsResponse.json();
+      const diagnostics = await assertJsonResponse(diagnosticsResponse, "/api/diagnostics");
       assert.equal(diagnostics.summary.totalNodes, 6);
       assert.deepEqual(diagnostics.leases.active.map((node) => node.id), ["A"]);
 
       const eventsResponse = await fetch(`${url}/api/events?limit=1&node=A&event=claimed`);
-      assert.equal(eventsResponse.status, 200);
-      const events = await eventsResponse.json();
+      const events = await assertJsonResponse(eventsResponse, "/api/events");
       assert.equal(events.length, 1);
       assert.equal(events[0].event, "claimed");
       assert.equal(events[0].nodeId, "A");
@@ -469,6 +476,8 @@ test("visualizer exposes read-only CLI parity routes without write token", async
         await promptResponse.text(),
         "cwd=/tmp/preview-cwd\nnode=A\nsession=codex-B\nrun=run-preview\nreport=reports/preview.md\ntitle=Bootstrap\n"
       );
+
+      assert.equal(await readFile(graphPath, "utf8"), before, "read-only routes should not mutate the graph file");
     } finally {
       await visualizer.close();
     }
@@ -479,9 +488,15 @@ test("visualizer read-only parity routes validate query parameters", async () =>
   await withTempGraph(async (graphPath) => {
     const visualizer = await createVisualizerServer({ graphPath, port: 0 });
     try {
+      const before = await readFile(graphPath, "utf8");
+
       const invalidLimit = await fetch(`${visualizer.url}/api/events?limit=0`);
       assert.equal(invalidLimit.status, 400);
       assert.match(await invalidLimit.text(), /Invalid --limit/);
+
+      const tooLargeLimit = await fetch(`${visualizer.url}/api/events?limit=10001`);
+      assert.equal(tooLargeLimit.status, 400);
+      assert.match(await tooLargeLimit.text(), /Invalid --limit/);
 
       const duplicateLimit = await fetch(`${visualizer.url}/api/events?limit=1&limit=2`);
       assert.equal(duplicateLimit.status, 400);
@@ -490,6 +505,24 @@ test("visualizer read-only parity routes validate query parameters", async () =>
       const missingPromptNode = await fetch(`${visualizer.url}/api/prompt`);
       assert.equal(missingPromptNode.status, 400);
       assert.match(await missingPromptNode.text(), /prompt requires node/);
+
+      const blankPromptNode = await fetch(`${visualizer.url}/api/prompt?node=%20`);
+      assert.equal(blankPromptNode.status, 400);
+      assert.match(await blankPromptNode.text(), /prompt requires node/);
+
+      const duplicatePromptNode = await fetch(`${visualizer.url}/api/prompt?node=A&node=B`);
+      assert.equal(duplicatePromptNode.status, 400);
+      assert.match(await duplicatePromptNode.text(), /node can only be provided once/);
+
+      const duplicatePromptSession = await fetch(`${visualizer.url}/api/prompt?node=A&session=one&session=two`);
+      assert.equal(duplicatePromptSession.status, 400);
+      assert.match(await duplicatePromptSession.text(), /session can only be provided once/);
+
+      assert.equal(
+        await readFile(graphPath, "utf8"),
+        before,
+        "invalid read-only route queries should not mutate the graph file"
+      );
     } finally {
       await visualizer.close();
     }
