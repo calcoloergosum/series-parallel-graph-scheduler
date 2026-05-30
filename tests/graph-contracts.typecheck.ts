@@ -3,16 +3,20 @@ import {
   isKnownNodeKind,
   isKnownNodeStatus,
   type CliCommand,
+  type GraphDiagnostics,
   type GraphLease,
   type GraphLockDiagnostics,
   type GraphNode,
   type JsonObject,
   type JsonValue,
   type NodeStatus,
+  type OperationalEventExportEntry,
   type ParsedArgs,
   type PlanGraphFile,
   type PublicWorker,
   type RendererDocument,
+  type VisualizerNodeAction,
+  type VisualizerNodeDetail,
   type VisualizerPayload,
   type WorkerManagerProcess
 } from "../scripts/contracts.js";
@@ -201,9 +205,155 @@ const workerProcess: WorkerManagerProcess = {
 // @ts-expect-error Managed worker internals only use concrete lifecycle statuses.
 const invalidWorkerProcess: WorkerManagerProcess = { ...workerProcess, status: "paused" };
 
+const visualizerClaimAction: VisualizerNodeAction = {
+  id: "claim",
+  label: "Claim",
+  danger: "none",
+  requiredFields: ["nodeId"]
+};
+const visualizerFailAction: VisualizerNodeAction = {
+  id: "fail",
+  label: "Fail",
+  danger: "danger",
+  requiredFields: ["nodeId", "session|runId", "reason", "report?"],
+  disabledReason: "fail requires status running, blocked, review.",
+  confirmation: {
+    required: true,
+    label: "Fail node",
+    message: "Fail A"
+  }
+};
+// @ts-expect-error Visualizer action ids are the scheduler-supported action set, not arbitrary client strings.
+const invalidVisualizerAction: VisualizerNodeAction = { ...visualizerClaimAction, id: "archive" };
+
+const visualizerNodeDetail: VisualizerNodeDetail = {
+  id: "A",
+  title: "Task",
+  kind: "task",
+  status: permissiveStatus,
+  description: "Typed detail payload",
+  children: [],
+  deliverables: ["Workspace ready"],
+  acceptanceCriteria: ["Tests can run"],
+  lease: {
+    session: "codex-A",
+    runId: "run_20260527_000000_A_abc123",
+    claimedAt: "2026-05-27T00:00:00.000Z",
+    expiresAt: "2026-05-27T00:30:00.000Z"
+  },
+  refs: {
+    baseRef: extraMetadataNode.baseRef,
+    workRef: extraMetadataNode.workRef,
+    outputRef: extraMetadataNode.outputRef,
+    integrationRef: extraMetadataNode.integrationRef
+  },
+  workspace: extraMetadataNode.workspace,
+  report: "reports/A-run_20260527_000000_A_abc123.md",
+  question: "Proceed?",
+  answer: "Yes",
+  answeredBy: "operator",
+  blockedReason: "needs_scope",
+  failureReason: "tests failed",
+  timestamps: {
+    startedAt: "2026-05-27T00:00:00.000Z",
+    completedAt: "2026-05-27T00:05:00.000Z",
+    blockedAt: "2026-05-27T00:01:00.000Z",
+    answeredAt: "2026-05-27T00:02:00.000Z",
+    failedAt: "2026-05-27T00:03:00.000Z",
+    expiredAt: "2026-05-27T00:30:00.000Z"
+  },
+  history: [{
+    at: "2026-05-27T00:00:00.000Z",
+    event: "claimed",
+    status: "claimed",
+    session: "codex-A",
+    runId: "run_20260527_000000_A_abc123"
+  }],
+  historyCount: 1,
+  historyLimit: 10,
+  actions: [visualizerClaimAction, visualizerFailAction]
+};
+// @ts-expect-error Visualizer node details must keep essential normalized fields for client renderers.
+const invalidVisualizerNodeDetail: VisualizerNodeDetail = {
+  id: "A",
+  kind: "task",
+  status: "pending",
+  children: [],
+  deliverables: [],
+  refs: {},
+  timestamps: {},
+  history: [],
+  historyCount: 0,
+  historyLimit: 10,
+  actions: []
+};
+
+const visualizerDiagnostics: GraphDiagnostics = {
+  generatedAt: "2026-05-27T00:00:00.000Z",
+  summary: { totalNodes: 2, root: "ROOT", counts: { pending: 1, "waiting-for-review": 1 } },
+  nextReady: [],
+  leases: { active: [], expired: [] },
+  blocked: [],
+  failed: [],
+  isolation: { activeWorkers: [], missingOutputRefs: [], unresolvedBufferConflicts: [] },
+  lock: lockDiagnostics,
+  actions: [],
+  remediation: []
+};
+// @ts-expect-error Diagnostics payloads must include the typed remediation summary.
+const invalidVisualizerDiagnostics: GraphDiagnostics = {
+  generatedAt: "2026-05-27T00:00:00.000Z",
+  summary: { totalNodes: 2, root: "ROOT", counts: { pending: 1, "waiting-for-review": 1 } },
+  nextReady: [],
+  leases: { active: [], expired: [] },
+  blocked: [],
+  failed: [],
+  isolation: { activeWorkers: [], missingOutputRefs: [], unresolvedBufferConflicts: [] },
+  actions: []
+};
+
+const visualizerEvent: OperationalEventExportEntry = {
+  at: "2026-05-27T00:00:00.000Z",
+  event: "claimed",
+  nodeId: "A",
+  status: "claimed",
+  session: "codex-A",
+  runId: "run_20260527_000000_A_abc123",
+  timestamps: { at: "2026-05-27T00:00:00.000Z" },
+  details: { status: "claimed", leaseSeconds: 1800, nested: { retained: true } }
+};
+// @ts-expect-error Exported visualizer events must identify the graph node they came from.
+const invalidVisualizerEvent: OperationalEventExportEntry = {
+  at: "2026-05-27T00:00:00.000Z",
+  event: "claimed",
+  timestamps: {},
+  details: {}
+};
+
 const payload: VisualizerPayload = {
   graph: parsed,
   graphSvg: "<svg></svg>",
+  nodes: [visualizerNodeDetail],
+  nodeHistoryLimit: 10,
+  actionPolicy: {
+    leaseProtectedWorkerActions: {
+      whenCredentialsAbsent: "disable-leased-node-actions",
+      requiredCredential: "matching-session-or-runId"
+    },
+    destructiveActions: {
+      danger: "danger",
+      requireConfirmationMetadata: true
+    },
+    serverAuthority: "scheduler-mutation-guards"
+  },
+  attention: {
+    failed: { count: 0, nodeIds: [] },
+    blocked: { count: 0, nodeIds: [] },
+    expired: { count: 0, nodeIds: [], releasable: 0 },
+    workerErrors: { count: 0, workerIds: [] }
+  },
+  diagnostics: visualizerDiagnostics,
+  recentEvents: [visualizerEvent],
   ready: [{ id: "A", title: "Task", kind: "task", status: permissiveStatus }],
   working: [],
   summary: { totalNodes: 2, root: "ROOT", counts: { pending: 1, "waiting-for-review": 1 } },
@@ -247,6 +397,15 @@ void codexPromptOptions;
 void publicWorker;
 void workerProcess;
 void invalidWorkerProcess;
+void visualizerClaimAction;
+void visualizerFailAction;
+void invalidVisualizerAction;
+void visualizerNodeDetail;
+void invalidVisualizerNodeDetail;
+void visualizerDiagnostics;
+void invalidVisualizerDiagnostics;
+void visualizerEvent;
+void invalidVisualizerEvent;
 void graphSummary;
 void readyNodes;
 void workingNodes;

@@ -1,5 +1,5 @@
 import test from "node:test";
-import { assert, assertInvalidFixtureFailure, blockNode, buildPlanarLayout, buildSlackNotificationText, buildVisualizerPayload, claimNode, copyGraphFixtureToTemp, createServer, createVisualizerServer, execFileAsync, existsSync, fixtureGraph, formatWorkerReport, invalidGraphValidatorOutcomes, isLocalVisualizerHost, join, mkdtemp, readFile, readGraph, readdir, renderPlanarSvg, renderVisualizerHtml, rendererDocumentFixture, rendererScriptPath, rm, runVisualizerClientScript, schedulerScriptPath, sendSlackNotification, tmpdir, visualizerHostSecurityWarning, waitFor, withTempGraph, writeFile } from "./helpers/plan-scheduler-harness.mjs";
+import { assert, assertInvalidFixtureFailure, blockNode, buildPlanarLayout, buildSlackNotificationText, buildVisualizerPayload, claimNode, copyGraphFixtureToTemp, createServer, createVisualizerServer, execFileAsync, existsSync, fixtureGraph, formatWorkerReport, invalidGraphValidatorOutcomes, isLocalVisualizerHost, join, mkdir, mkdtemp, readFile, readGraph, readdir, renderPlanarSvg, renderVisualizerHtml, rendererDocumentFixture, rendererScriptPath, rm, runVisualizerClientScript, schedulerScriptPath, sendSlackNotification, tmpdir, utimes, visualizerHostSecurityWarning, waitFor, withTempGraph, writeFile } from "./helpers/plan-scheduler-harness.mjs";
 
 async function openSseJsonStream(baseUrl) {
   const controller = new AbortController();
@@ -959,32 +959,231 @@ test("visualizer builds graph payload and real-time HTML shell", async () => {
     assert.match(html, /EventSource\("\/events"\)/);
     assert.match(html, /Ready Leaf Nodes/);
     assert.match(html, /Active Sessions/);
+    assert.match(html, /Diagnostics/);
+    assert.match(html, /Recent Events/);
     assert.match(html, /Worker Manager/);
     assert.match(html, /\/api\/workers\/start/);
     assert.match(html, /id="graph"/);
 
     await claimNode(graphPath, { session: "codex-A", nodeId: "A" });
     const graph = await readGraph(graphPath);
+    graph.graph.nodes.A.description = "Bootstrap the workspace";
+    graph.graph.nodes.A.deliverables = ["Workspace ready"];
+    graph.graph.nodes.A.acceptanceCriteria = ["Tests can run"];
     graph.graph.nodes.A.baseRef = { name: "refs/remotes/origin/main" };
     graph.graph.nodes.A.workRef = { name: "refs/heads/spg/node/A/run-a" };
     graph.graph.nodes.A.outputRef = { name: "refs/heads/spg/node/A/run-a" };
-    graph.graph.nodes.A.history = [{
-      at: "2026-05-27T00:00:00.000Z",
-      event: "clone-prepared",
+    graph.graph.nodes.A.workspace = {
+      remote: "https://user:secret-token@example.com/org/repo.git",
+      cloneCwd: "/tmp/spg/workspaces/codex-A/A/run-a"
+    };
+    graph.graph.nodes.A.startedAt = "2026-05-27T00:00:01.000Z";
+    graph.graph.nodes.A.history = Array.from({ length: 12 }, (_, index) => ({
+      at: `2026-05-27T00:00:${String(index).padStart(2, "0")}.000Z`,
+      event: index === 11 ? "clone-prepared" : "progress",
       cloneCwd: "/tmp/spg/workspaces/codex-A/A/run-a",
       bareRepo: "/tmp/spg/git/cache/repo.git",
-      baseRef: "refs/remotes/origin/main"
-    }];
+      baseRef: "refs/remotes/origin/main",
+      remote: "https://user:secret-token@example.com/org/repo.git"
+    }));
     await writeFile(graphPath, `${JSON.stringify(graph, null, 2)}\n`, "utf8");
     const payload = await buildVisualizerPayload(graphPath);
     assert.equal(payload.summary.totalNodes, 6);
+    assert.equal(payload.nodeHistoryLimit, 10);
+    assert.equal(payload.nodes.length, 6);
+    const detail = payload.nodes.find((node) => node.id === "A");
+    assert.equal(detail.title, "Bootstrap");
+    assert.equal(detail.kind, "task");
+    assert.equal(detail.status, "claimed");
+    assert.equal(detail.description, "Bootstrap the workspace");
+    assert.deepEqual(detail.children, []);
+    assert.deepEqual(detail.deliverables, ["Workspace ready"]);
+    assert.deepEqual(detail.acceptanceCriteria, ["Tests can run"]);
+    assert.equal(detail.lease.session, "codex-A");
+    assert.equal(detail.refs.baseRef.name, "refs/remotes/origin/main");
+    assert.equal(detail.refs.workRef.name, "refs/heads/spg/node/A/run-a");
+    assert.equal(detail.refs.outputRef.name, "refs/heads/spg/node/A/run-a");
+    assert.equal(detail.workspace.remote, "https://[REDACTED]@example.com/org/repo.git");
+    assert.equal(detail.workspace.cloneCwd, "/tmp/spg/workspaces/codex-A/A/run-a");
+    assert.equal(detail.timestamps.startedAt, "2026-05-27T00:00:01.000Z");
+    assert.equal(detail.historyCount, 12);
+    assert.equal(detail.history.length, 10);
+    assert.equal(detail.history[0].at, "2026-05-27T00:00:02.000Z");
+    assert.equal(detail.history.at(-1).remote, "https://[REDACTED]@example.com/org/repo.git");
     assert.deepEqual(payload.ready.map((node) => node.id), []);
     assert.deepEqual(payload.working.map((node) => node.id), ["A"]);
     assert.equal(payload.working[0].session, "codex-A");
     assert.equal(payload.working[0].isolation.cloneCwd, "/tmp/spg/workspaces/codex-A/A/run-a");
     assert.equal(payload.working[0].isolation.outputRef, "refs/heads/spg/node/A/run-a");
+    assert.deepEqual(payload.attention.expired.nodeIds, []);
+    assert.equal(payload.diagnostics.lock.exists, false);
+    assert.equal(payload.recentEvents.length, 12);
+    assert.equal(payload.recentEvents[0].event, "clone-prepared");
     assert.deepEqual(payload.workerManager.workers, []);
     assert.match(payload.graphSvg, /<svg class="sp-graph"/);
+  });
+});
+
+test("visualizer diagnostics payload exposes attention, events, and read-only lock state", async () => {
+  await withTempGraph(async (graphPath) => {
+    const graph = await readGraph(graphPath);
+    graph.graph.nodes.A.status = "blocked";
+    graph.graph.nodes.A.blockedReason = "needs_scope";
+    graph.graph.nodes.A.history = [{
+      at: "2026-05-27T00:01:00.000Z",
+      event: "blocked",
+      status: "blocked",
+      blockedAt: "2026-05-27T00:01:00.000Z",
+      question: "Proceed?"
+    }];
+    graph.graph.nodes.B.status = "failed";
+    graph.graph.nodes.B.failureReason = "test failure";
+    graph.graph.nodes.B.history = [{
+      at: "2026-05-27T00:02:00.000Z",
+      event: "failed",
+      status: "failed",
+      failedAt: "2026-05-27T00:02:00.000Z",
+      failureReason: "test failure"
+    }];
+    graph.graph.nodes.C.status = "running";
+    graph.graph.nodes.C.lease = {
+      session: "codex-C",
+      runId: "run-C",
+      claimedAt: "2026-05-27T00:00:00.000Z",
+      expiresAt: "2026-05-27T00:00:01.000Z"
+    };
+    graph.graph.nodes.C.history = [{
+      at: "2026-05-27T00:00:00.000Z",
+      event: "running",
+      status: "running",
+      session: "codex-C",
+      runId: "run-C"
+    }];
+    await writeFile(graphPath, `${JSON.stringify(graph, null, 2)}\n`, "utf8");
+
+    const lockPath = `${graphPath}.lock`;
+    await mkdir(lockPath);
+    await writeFile(join(lockPath, "metadata.json"), `${JSON.stringify({
+      lockVersion: 1,
+      ownerId: "owner-1",
+      pid: 24680,
+      host: "test-host",
+      createdAt: "2026-05-27T00:00:00.000Z",
+      graphPath
+    })}\n`, "utf8");
+    const oldTime = new Date(Date.now() - 20 * 60 * 1000);
+    await utimes(lockPath, oldTime, oldTime);
+
+    const workerManager = {
+      status() {
+        return {
+          defaults: {
+            cwd: "/tmp/work",
+            sessionPrefix: "codex",
+            codexCommand: "codex",
+            isolation: "off",
+            workspaceRoot: "runs/workspaces",
+            workspaceRetention: "on-failure"
+          },
+          running: 0,
+          stopping: 0,
+          exited: 0,
+          error: 1,
+          retainedWorkers: 1,
+          totalStarted: 1,
+          workers: [{
+            id: "worker-err",
+            session: "codex-Z",
+            status: "error",
+            startedAt: "2026-05-27T00:00:00.000Z",
+            durationMs: 1,
+            logTail: []
+          }]
+        };
+      }
+    };
+
+    const payload = await buildVisualizerPayload(graphPath, workerManager);
+    assert.deepEqual(payload.attention.blocked.nodeIds, ["A"]);
+    assert.deepEqual(payload.attention.failed.nodeIds, ["B"]);
+    assert.deepEqual(payload.attention.expired.nodeIds, ["C"]);
+    assert.equal(payload.attention.expired.releasable, 1);
+    assert.deepEqual(payload.attention.workerErrors.workerIds, ["worker-err"]);
+    assert.equal(payload.diagnostics.lock.exists, true);
+    assert.equal(payload.diagnostics.lock.stale, true);
+    assert.equal(payload.diagnostics.lock.owner.pid, 24680);
+    assert.ok(payload.recentEvents.some((event) => event.event === "blocked" && event.nodeId === "A"));
+
+    const { context, element } = runVisualizerClientScript();
+    context.render(payload);
+    const diagnosticsHtml = element("diagnostics").innerHTML;
+    assert.match(diagnosticsHtml, /read-only/);
+    assert.match(diagnosticsHtml, /Stale graph lock/);
+    assert.doesNotMatch(diagnosticsHtml, /remove|rm -rf|delete/i);
+  });
+});
+
+test("visualizer event API filters by node and event like the CLI", async () => {
+  await withTempGraph(async (graphPath) => {
+    const graph = await readGraph(graphPath);
+    graph.graph.nodes.A.history = [
+      { at: "2026-05-27T00:00:00.000Z", event: "claimed", status: "claimed" },
+      { at: "2026-05-27T00:01:00.000Z", event: "blocked", status: "blocked", question: "Proceed?" }
+    ];
+    graph.graph.nodes.B.history = [
+      { at: "2026-05-27T00:02:00.000Z", event: "blocked", status: "blocked", question: "Other?" }
+    ];
+    await writeFile(graphPath, `${JSON.stringify(graph, null, 2)}\n`, "utf8");
+
+    const visualizer = await createVisualizerServer({ graphPath, port: 0 });
+    try {
+      const response = await fetch(`${visualizer.url}/api/events?node=A&event=blocked&limit=5`);
+      assert.equal(response.status, 200);
+      const events = await response.json();
+      assert.deepEqual(events.map((event) => `${event.nodeId}:${event.event}`), ["A:blocked"]);
+
+      const badLimit = await fetch(`${visualizer.url}/api/events?limit=NaN`);
+      assert.equal(badLimit.status, 400);
+      assert.match(await badLimit.text(), /Invalid --limit/);
+    } finally {
+      await visualizer.close();
+    }
+  });
+});
+
+test("visualizer payload includes selected-node action availability metadata", async () => {
+  await withTempGraph(async (graphPath) => {
+    let payload = await buildVisualizerPayload(graphPath);
+    let detail = payload.nodes.find((node) => node.id === "A");
+    let claim = actionById(detail, "claim");
+    let reset = actionById(detail, "reset");
+    assert.equal(claim.disabledReason, undefined);
+    assert.equal(reset.danger, "danger");
+    assert.equal(reset.confirmation.required, true);
+
+    await claimNode(graphPath, { session: "codex-A", nodeId: "A" });
+    payload = await buildVisualizerPayload(graphPath);
+    detail = payload.nodes.find((node) => node.id === "A");
+    const start = actionById(detail, "start");
+    const fail = actionById(detail, "fail");
+    assert.match(start.disabledReason, /no worker credentials/);
+    assert.equal(start.requiredFields.includes("session|runId"), true);
+    assert.equal(fail.danger, "danger");
+    assert.equal(fail.confirmation.required, true);
+    for (const action of detail.actions.filter((candidate) => candidate.danger === "danger")) {
+      assert.equal(action.confirmation.required, true, `${action.id} should require confirmation`);
+    }
+
+    await blockNode(graphPath, { nodeId: "A", session: "codex-A", question: "Proceed?" });
+    payload = await buildVisualizerPayload(graphPath);
+    detail = payload.nodes.find((node) => node.id === "A");
+    assert.equal(actionById(detail, "answer").disabledReason, undefined);
+    assert.match(actionById(detail, "done").disabledReason, /no worker credentials/);
+    assert.deepEqual(payload.actionPolicy.leaseProtectedWorkerActions, {
+      whenCredentialsAbsent: "disable-leased-node-actions",
+      requiredCredential: "matching-session-or-runId"
+    });
+    assert.equal(payload.actionPolicy.serverAuthority, "scheduler-mutation-guards");
   });
 });
 
@@ -1377,3 +1576,9 @@ test("renderer rejects invalid graph files before layout traversal", async () =>
     await rm(dir, { recursive: true, force: true });
   }
 });
+
+function actionById(node, id) {
+  const action = node?.actions.find((candidate) => candidate.id === id);
+  assert.ok(action, `missing action ${id}`);
+  return action;
+}
