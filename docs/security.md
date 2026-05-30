@@ -40,6 +40,7 @@ Out of scope:
 ## Trust Assumptions
 
 - Graph files are trusted-local control documents. The scheduler validates their JSON shape and topology before traversal or mutation, but it does not treat graph text as confidential from local operators.
+- The graph JSON file remains the scheduler source of truth. Visualizer payloads, diagnostics, reports, events, static HTML, and worker state displays are derived views or evidence; recovery should mutate the graph only through the documented CLI commands or visualizer write routes.
 - The graph directory is a trusted workspace. Report paths, generated HTML, lock files, Git caches, retained clones, and worker logs should stay under private OS permissions.
 - Worker commands are trusted code at the scheduler boundary. `worker` and the visualizer Worker Manager pass arguments without a shell, but the selected command still receives the operator environment and can read or write anything allowed by OS permissions.
 - Git isolation is operational isolation, not a sandbox. It gives each run a separate clone, branch, and output ref, but fetched repository contents and retained workspaces remain local sensitive files.
@@ -82,13 +83,18 @@ The CLI mutates work through these commands:
 - `reconcile`: marks completed internal subtrees done.
 - `release-expired`: clears expired leases and returns affected work to pending.
 
-The visualizer exposes these write-capable HTTP routes. They are unauthenticated on loopback by default, require `--visualizer-write-token` when bound beyond loopback, or require the explicit `--unsafe-visualizer-write` opt-in to run without a token on non-loopback hosts:
+The visualizer exposes these write-capable HTTP routes. They mutate the same
+graph JSON source of truth as the CLI, run under the same graph lock, regenerate
+derived HTML after state changes, and use the scheduler mutation guards as the
+server authority. They are unauthenticated on loopback by default, require
+`--visualizer-write-token` when bound beyond loopback, or require the explicit
+`--unsafe-visualizer-write` opt-in to run without a token on non-loopback hosts:
 
 - `POST /api/workers/start`: starts one or more scheduler worker child processes. Inputs are bounded and passed to `spawn` without a shell, but the caller controls the command, arguments, working directory, count, lease, idle interval, template path, and target node.
 - `POST /api/workers/stop`: sends `SIGTERM` to one managed worker process.
 - `POST /api/workers/stop-all`: sends `SIGTERM` to every managed worker process.
-- `POST /api/node/claim`, `/start`, `/renew`, `/done`, `/block`, `/answer`, `/fail`, `/reset`, `/reset-subtree`, `/reset-reachable`, and `/decompose`: expose the matching scheduler node mutations through injected runtime handlers. `POST /api/answer` remains a legacy alias for `POST /api/node/answer`.
-- `POST /api/graph/reconcile` and `POST /api/leases/release-expired`: expose graph-level operational recovery commands through injected runtime handlers.
+- `POST /api/node/claim`, `/start`, `/renew`, `/done`, `/block`, `/answer`, `/fail`, `/reset`, `/reset-subtree`, `/reset-reachable`, and `/decompose`: expose the matching scheduler node mutations through injected runtime handlers. Lease-protected worker actions still require matching session or run credentials when the node has a lease. `POST /api/answer` remains a legacy alias for `POST /api/node/answer`.
+- `POST /api/graph/reconcile` and `POST /api/leases/release-expired`: expose graph-level operational recovery commands through injected runtime handlers. `release-expired` only clears expired leases on `claimed` and `running` work; blocked, review, failed, done, and custom-status work require a status-specific explicit operator decision such as reset, renew, or, for blocked work, answer.
 
 Read-only visualizer routes are `GET /`, `GET /index.html`, `GET /api/graph`, `GET /api/summary`, `GET /api/ready`, `GET /api/diagnostics`, `GET /api/events`, `GET /api/prompt`, `GET /api/workers`, and `GET /events`. They can still disclose graph state, rendered prompts, report paths, worker process ids, repository paths, and recent worker output.
 
@@ -100,7 +106,13 @@ Safe exposed visualizer command:
 npm run serve -- --graph ./plan-improve.graph.json --host 0.0.0.0 --port 8787 --visualizer-write-token "$SPG_VISUALIZER_WRITE_TOKEN"
 ```
 
-Write requests must include either `X-SPG-Visualizer-Token: TOKEN` or `Authorization: Bearer TOKEN`. For browser use, open `http://HOST:8787/#write-token=TOKEN` so the UI stores the token locally and sends it on write requests. The fragment is not sent in HTTP requests.
+Write requests must include either `X-SPG-Visualizer-Token: TOKEN` or
+`Authorization: Bearer TOKEN`. Header names are case-insensitive. For browser
+use, open `http://HOST:8787/#write-token=TOKEN` or
+`http://HOST:8787/#writeToken=TOKEN`; the UI stores the token in browser
+`localStorage` and sends it as `X-SPG-Visualizer-Token` on write requests. The
+fragment is not sent in HTTP requests, but the stored token remains available to
+that browser profile until local storage is cleared.
 
 Explicit unsafe exposed command:
 

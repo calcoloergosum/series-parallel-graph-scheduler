@@ -27,6 +27,57 @@ actions. If a command fails and the terse message is not enough, rerun it with
 SPG_DEBUG=1 node scripts/plan-scheduler.mjs diagnostics --graph ./plan-improve.graph.json
 ```
 
+## Visualizer Triage
+
+The graph JSON file remains the source of truth. The visualizer is a live view
+and operator console over that graph; use it to identify the affected node,
+report path, lease owner, worker process, and lock state before choosing a
+mutation. When in doubt, refresh with the read-only CLI `diagnostics` command
+and prefer the narrowest graph mutation that matches the intended recovery.
+
+Start the local GUI on loopback for ordinary triage:
+
+```bash
+npm run serve -- --graph ./plan-improve.graph.json --cwd "$PWD" --port 8787
+```
+
+Use these visualizer controls for first-pass diagnosis:
+
+| Situation | GUI control or panel | Equivalent CLI |
+| --- | --- | --- |
+| Find attention items | Top `failed`, `blocked`, `expired`, and `worker errors` chips; graph `Attention` filter | `node scripts/plan-scheduler.mjs diagnostics --graph ./plan-improve.graph.json` |
+| Inspect ready and active work | Graph `Ready`, `Working`, and `Attention` filters; `Ready Nodes`; `Active Sessions` | `node scripts/plan-scheduler.mjs ready --graph ./plan-improve.graph.json` and `diagnostics --graph ...` |
+| Inspect failed work | `Diagnostics` item `Failed nodes`; `Active Sessions` report field; `Recent Events` | `node scripts/plan-scheduler.mjs events --graph ./plan-improve.graph.json --event failed --limit 20`, then inspect the graph-named report |
+| Inspect blocked or review work | `Diagnostics` item `Blocked or review nodes`; `Active Sessions` question field; `Recent Events` | `node scripts/plan-scheduler.mjs events --graph ./plan-improve.graph.json --event blocked --limit 20` |
+| Answer blocked work | `Answer for NODE` form and `Answer` button in `Active Sessions` for blocked nodes | `node scripts/plan-scheduler.mjs answer --graph ./plan-improve.graph.json --node NODE --answer "..." --responder visualizer` |
+| Inspect expired leases | `Diagnostics` item `Expired leases`, including releasable count; `Active Sessions` session, run, and expires fields | `node scripts/plan-scheduler.mjs diagnostics --graph ./plan-improve.graph.json` |
+| Inspect lock state | `Diagnostics` item `Graph lock clear`, `Graph lock present`, or `Stale graph lock` | `node scripts/plan-scheduler.mjs diagnostics --graph ./plan-improve.graph.json` and `cat ./plan-improve.graph.json.lock/metadata.json` |
+| Stop managed workers | `Worker Manager` `Stop` on one worker, or `Stop All` | Stop the same worker process with OS tooling, or stop all worker commands you launched from the shell |
+| Start retry workers after recovery | `Worker Manager` `Start`, with `Workers`, `Session Prefix`, `Repository`, `Isolation`, `Retention`, `Command`, `Args`, and `Idle Ms` checked | `npm run worker -- --graph ./plan-improve.graph.json --session codex-A --cwd "$PWD"` |
+
+The current GUI renders a direct `Answer` form for blocked nodes and Worker
+Manager `Start`, `Stop`, and `Stop All` controls. Other recovery mutations are
+available through the protected visualizer write API and the CLI; the CLI
+examples below remain the canonical operator commands for resets, release of
+expired leases, reconciliation, and manual lock recovery.
+
+For non-loopback GUI access, protect write requests with a token:
+
+```bash
+npm run serve -- --graph ./plan-improve.graph.json --host 0.0.0.0 --port 8787 --visualizer-write-token "$SPG_VISUALIZER_WRITE_TOKEN"
+```
+
+Open the browser with the token in the fragment so the UI can send it on write
+requests:
+
+```text
+http://HOST:8787/#write-token=TOKEN
+```
+
+The token protects write routes only. On non-loopback binds, graph state,
+diagnostics, prompts, events, Worker Manager state, process ids, paths, and log
+tails remain readable by any reachable client.
+
 ## No Ready Work
 
 Symptoms:
@@ -52,12 +103,18 @@ Recovery:
    ```
 
 2. If diagnostics lists blocked work, answer the operator question or reset the
-   node if the old work should be discarded:
+   node if the old work should be discarded. For review status, inspect the
+   events and report first, then choose a status-appropriate retry or reset:
 
    ```bash
    node scripts/plan-scheduler.mjs answer --graph ./plan-improve.graph.json --node TEN36 --answer "Proceed with option A." --responder jason
    node scripts/plan-scheduler.mjs reset --graph ./plan-improve.graph.json --node TEN36 --reason "retry after operator decision"
    ```
+
+   In the GUI, use the graph `Attention` filter, open `Active Sessions`, and
+   submit the `Answer for TEN36` form when continuing the blocked work is the
+   right recovery. Use CLI `reset` when the old blocked attempt should be
+   discarded.
 
 3. If diagnostics lists failed work, inspect the node report first, then reset
    only the retry scope:
@@ -65,6 +122,10 @@ Recovery:
    ```bash
    node scripts/plan-scheduler.mjs reset --graph ./plan-improve.graph.json --node TEN36 --reason "retry after fixing failed check"
    ```
+
+   In the GUI, use `Diagnostics` -> `Failed nodes`, then the `Active Sessions`
+   report field and `Recent Events` to identify the report and failure context.
+   Reset from the CLI after inspection.
 
 4. If all children of an internal node are done but the parent is not, reconcile
    completed subtrees:
@@ -94,10 +155,17 @@ node scripts/plan-scheduler.mjs release-expired --graph ./plan-improve.graph.jso
 node scripts/plan-scheduler.mjs ready --graph ./plan-improve.graph.json
 ```
 
+In the GUI, use the `Diagnostics` item `Expired leases` to confirm the
+releasable count and use `Active Sessions` to check each lease owner, run id,
+and expiry. Run the CLI `release-expired` command only for expired
+`claimed`/`running` leases that should return to `pending`.
+
 `release-expired` only clears expired leases on `claimed` and `running` nodes
 and returns them to `pending`. It does not clear blocked, review, failed, done,
-or custom-status work. For those statuses, inspect the node and choose
-`answer`, `reset`, or `renew` explicitly.
+or custom-status work. For those statuses, inspect the node and choose a
+status-appropriate explicit action: `answer` for blocked work, `renew` for
+leased blocked/review work that should continue, or `reset` for work that
+should be retried.
 
 ## Stale Graph Temp Files
 
@@ -238,6 +306,13 @@ node scripts/plan-scheduler.mjs ready --graph ./plan-improve.graph.json
 
 `answer` clears the lease and returns the leaf to `pending`. If the question is
 obsolete or the blocked attempt should not continue, use `reset` instead.
+
+In the GUI, the `Active Sessions` panel shows blocked and review nodes with the
+stored question. For blocked nodes, submit the `Answer for TEN36` form. Review
+nodes do not expose that direct answer form and are not accepted by the CLI
+`answer` command; use `events`, inspect the report or review context, then
+choose an explicit `reset`, `renew`, `done`, or `fail` path with the right
+worker credentials.
 
 ## Git-Isolated Worker Clones And Refs
 
