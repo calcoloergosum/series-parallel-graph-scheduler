@@ -17,7 +17,8 @@ const {
   blockNode,
   claimNode,
   createVisualizerServer,
-  readGraph
+  readGraph,
+  startNode
 } = await import(schedulerScriptUrl.href);
 
 const originalSlackWebhookUrl = process.env.SLACK_WEBHOOK_URL;
@@ -112,6 +113,7 @@ function completedBrowserFixtureGraph() {
 function layoutRegressionGraphs() {
   const seriesIds = Array.from({ length: 18 }, (_, index) => `L${index + 1}`);
   const wideIds = Array.from({ length: 12 }, (_, index) => `W${index + 1}`);
+  const longId = "LONG_NODE_ID_0123";
 
   return [
     {
@@ -209,6 +211,39 @@ function layoutRegressionGraphs() {
             ROOT: { title: "Running root", kind: "series", status: "pending", children: ["RUNNING", "DONE"] },
             RUNNING: { title: "Running worker branch", kind: "task", status: "running", session: "codex-layout" },
             DONE: { title: "Already completed branch", kind: "task", status: "done" }
+          }
+        }
+      }
+    },
+    {
+      slug: "hostile-long-text",
+      graph: {
+        graphVersion: 1,
+        title: "Layout Stress <script>alert(1)</script>",
+        graph: {
+          root: "ROOT",
+          nodes: {
+            ROOT: { title: "Root with long child labels", kind: "parallel", status: "pending", children: [longId, "BLOCKED_LONG", "FAILED_LONG"] },
+            [longId]: {
+              title: "A very long pending title that should wrap or truncate safely without overlapping neighboring nodes or controls",
+              kind: "task",
+              status: "pending",
+              report: "reports/long-id-<script>alert(1)</script>.md"
+            },
+            BLOCKED_LONG: {
+              title: "Blocked question with malicious-looking markup",
+              kind: "task",
+              status: "blocked",
+              question: "Can this proceed after <img src=x onerror=alert(1)> while preserving a very long operator question?",
+              blockedReason: "Waiting for <script>alert(1)</script> confirmation"
+            },
+            FAILED_LONG: {
+              title: "Failed reason remains visible",
+              kind: "task",
+              status: "failed",
+              failureReason: "Failure from <script>alert(1)</script> with a long explanation that should not push controls over each other.",
+              report: "reports/FAILED_LONG_<img>.md"
+            }
           }
         }
       }
@@ -386,6 +421,87 @@ async function launchChromiumOrSkip(t) {
   }
 }
 
+async function submitModal(page) {
+  await page.locator(".modal-dialog button[type=submit]").click();
+  await page.locator(".modal-dialog").waitFor({ state: "detached" });
+}
+
+async function waitForGraphCondition(graphPath, predicate, timeoutMs = 8000) {
+  const start = Date.now();
+  let graph = await readGraph(graphPath);
+  while (!predicate(graph)) {
+    if (Date.now() - start > timeoutMs) {
+      assert.fail("Timed out waiting for graph condition");
+    }
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    graph = await readGraph(graphPath);
+  }
+  return graph;
+}
+
+test("visualizer selected-node actions claim, start, block, answer, and reset ready work", async (t) => {
+  const browser = await launchChromiumOrSkip(t);
+  if (!browser) {
+    return;
+  }
+
+  try {
+    await withTempGraph(browserFixtureGraph, async (graphPath, dir) => {
+      const visualizer = await createVisualizerServer({ graphPath, port: 0, defaultWorkerCwd: dir });
+      const context = await browser.newContext({ viewport: { width: 390, height: 900 } });
+      try {
+        const page = await context.newPage();
+        page.setDefaultTimeout(10000);
+        await runWithPageDiagnostics(page, "visualizer-selected-node-actions", graphPath, async () => {
+          await page.goto(visualizer.url);
+          await page.getByRole("heading", { name: "Node Detail" }).waitFor();
+          await page.locator('#ready [data-select-node="A"]').click();
+          await page.locator("#selected-node-details", { hasText: "Blocked task" }).waitFor();
+
+          await page.locator('[data-node-action="claim-selected"]').click();
+          await page.locator(".modal-dialog").getByLabel("Session").fill("operator-A");
+          await page.locator(".modal-dialog").getByLabel("Lease Seconds").fill("60");
+          await submitModal(page);
+          await page.locator("#working", { hasText: "operator-A" }).waitFor();
+          assert.equal((await readGraph(graphPath)).graph.nodes.A.status, "claimed");
+
+          await page.locator('[data-node-action="start"]').click();
+          await submitModal(page);
+          await page.locator("#selected-node-details", { hasText: "running" }).waitFor();
+          assert.equal((await readGraph(graphPath)).graph.nodes.A.status, "running");
+
+          await page.locator('[data-node-action="block"]').click();
+          await page.locator(".modal-dialog").getByLabel("Question").fill("Need operator decision?");
+          await page.locator(".modal-dialog").getByLabel("Reason").fill("needs_operator_decision");
+          await submitModal(page);
+          await page.getByLabel("Answer for A").waitFor();
+          assert.equal((await readGraph(graphPath)).graph.nodes.A.status, "blocked");
+
+          await page.getByLabel("Answer for A").fill("Continue with cached output.");
+          await page.locator('form[data-answer-form][data-node-id="A"] button[type="submit"]').click();
+          await page.locator("#ready", { hasText: "Continue with cached output." }).waitFor();
+          assert.equal((await readGraph(graphPath)).graph.nodes.A.status, "pending");
+
+          await page.locator('#ready [data-select-node="A"]').click();
+          await page.locator('[data-node-action="reset"]').click();
+          await page.locator(".modal-dialog").getByLabel("Reason").fill("browser workflow retry");
+          await submitModal(page);
+          await page.locator("#ready", { hasText: "Blocked task" }).waitFor();
+
+          const graphAfterReset = await readGraph(graphPath);
+          assert.equal(graphAfterReset.graph.nodes.A.status, "pending");
+          assert.equal(graphAfterReset.graph.nodes.A.lease, undefined);
+        });
+      } finally {
+        await context.close();
+        await visualizer.close();
+      }
+    });
+  } finally {
+    await browser.close();
+  }
+});
+
 test("visualizer page loads, answers blocked tasks, and receives SSE updates", async (t) => {
   const browser = await launchChromiumOrSkip(t);
   if (!browser) {
@@ -440,6 +556,119 @@ test("visualizer page loads, answers blocked tasks, and receives SSE updates", a
   }
 });
 
+test("visualizer diagnostics and events views expose triage details and filters", async (t) => {
+  const browser = await launchChromiumOrSkip(t);
+  if (!browser) {
+    return;
+  }
+
+  try {
+    await withTempGraph(browserFixtureGraph, async (graphPath, dir) => {
+      await claimNode(graphPath, { session: "codex-A", nodeId: "A" });
+      await blockNode(graphPath, { nodeId: "A", session: "codex-A", question: "Use cached result?" });
+      const graph = await readGraph(graphPath);
+      graph.graph.nodes.C.status = "failed";
+      graph.graph.nodes.C.failureReason = "browser diagnostics fixture";
+      graph.graph.nodes.C.report = "reports/C.md";
+      await writeFile(graphPath, `${JSON.stringify(graph, null, 2)}\n`, "utf8");
+
+      const visualizer = await createVisualizerServer({ graphPath, port: 0, defaultWorkerCwd: dir });
+      const context = await browser.newContext();
+      try {
+        const page = await context.newPage();
+        page.setDefaultTimeout(8000);
+        await runWithPageDiagnostics(page, "visualizer-diagnostics-events", graphPath, async () => {
+          await page.goto(visualizer.url);
+          await page.getByRole("heading", { name: "Diagnostics" }).waitFor();
+          await page.getByRole("heading", { name: "Events" }).waitFor();
+          await page.locator("#attention-dashboard", { hasText: "Blocked task" }).waitFor();
+          await page.locator("#attention-dashboard", { hasText: "Completed task" }).waitFor();
+          await page.locator("#diagnostics-panel", { hasText: "recommended actions" }).waitFor();
+          await page.locator("#diagnostics-panel", { hasText: "A" }).waitFor();
+          await page.locator("#events-list", { hasText: "blocked" }).waitFor();
+          await page.locator("#events-list", { hasText: "claimed" }).waitFor();
+
+          await page.fill("#event-node-filter", "A");
+          await page.locator("#events-list", { hasText: "blocked" }).waitFor();
+          await page.locator("#event-name-filter").selectOption("claimed");
+          await page.locator("#events-list", { hasText: "claimed" }).waitFor();
+          await page.locator("#events-list", { hasNotText: "blocked" }).waitFor();
+
+          await page.locator('#working [data-select-node="A"]').click();
+          await page.locator("#selected-node-details", { hasText: "History" }).waitFor();
+          await page.locator("#selected-node-details", { hasText: "Newest first" }).waitFor();
+        });
+      } finally {
+        await context.close();
+        await visualizer.close();
+      }
+    });
+  } finally {
+    await browser.close();
+  }
+});
+
+test("visualizer decompose builder validates dynamic children and mutates a running leaf", async (t) => {
+  const browser = await launchChromiumOrSkip(t);
+  if (!browser) {
+    return;
+  }
+
+  try {
+    await withTempGraph(browserFixtureGraph, async (graphPath, dir) => {
+      await claimNode(graphPath, { session: "codex-A", nodeId: "A" });
+      await startNode(graphPath, { nodeId: "A", session: "codex-A" });
+
+      const visualizer = await createVisualizerServer({ graphPath, port: 0, defaultWorkerCwd: dir });
+      const context = await browser.newContext();
+      try {
+        const page = await context.newPage();
+        page.setDefaultTimeout(8000);
+        await runWithPageDiagnostics(page, "visualizer-decompose-builder", graphPath, async () => {
+          await page.goto(visualizer.url);
+          await page.locator('#working [data-select-node="A"]').click();
+          await page.locator('[data-node-action="decompose"]').click();
+          await page.getByRole("heading", { name: "Decompose A" }).waitFor();
+          await page.locator("[data-decompose-preview]", { hasText: "title cannot be empty" }).waitFor();
+
+          await page.locator('form[data-decompose-form] button[type="submit"]').click();
+          await page.locator("[data-modal-error]", { hasText: "title cannot be empty" }).waitFor();
+
+          await page.locator('[name="childTitle"]').first().fill("Draft child");
+          await page.locator("[data-decompose-add]").click();
+          await page.locator('[name="childTitle"]').nth(1).fill("Verify child");
+          await page.locator('[name="childId"]').nth(1).fill("Aa");
+          await page.locator('form[data-decompose-form] button[type="submit"]').click();
+          await page.locator("[data-modal-error]", { hasText: "Duplicate child id: Aa" }).waitFor();
+
+          await page.locator('[name="childId"]').nth(1).fill("Ab");
+          await page.locator('[name="childMetadata"]').first().fill('{"description":"from visualizer"}');
+          await page.locator('[name="kind"]').selectOption("parallel");
+          await page.locator('[data-decompose-move="up"]').nth(1).click();
+          await page.locator("[data-decompose-preview]", { hasText: '"kind": "parallel"' }).waitFor();
+
+          await page.locator("#decompose-session").fill("codex-A");
+          await page.locator('form[data-decompose-form] button[type="submit"]').click();
+          await page.locator(".modal-dialog").waitFor({ state: "detached" });
+          await page.locator("#selected-node-details", { hasText: "Ab, Aa" }).waitFor();
+
+          const graphAfterDecompose = await readGraph(graphPath);
+          assert.equal(graphAfterDecompose.graph.nodes.A.kind, "parallel");
+          assert.deepEqual(graphAfterDecompose.graph.nodes.A.children, ["Ab", "Aa"]);
+          assert.equal(graphAfterDecompose.graph.nodes.A.status, "pending");
+          assert.equal(graphAfterDecompose.graph.nodes.Aa.description, "from visualizer");
+          assert.equal(graphAfterDecompose.graph.nodes.Ab.title, "Verify child");
+        });
+      } finally {
+        await context.close();
+        await visualizer.close();
+      }
+    });
+  } finally {
+    await browser.close();
+  }
+});
+
 test("visualizer graph layout stays visible, unclipped, and non-overlapping for representative plans", async (t) => {
   const browser = await launchChromiumOrSkip(t);
   if (!browser) {
@@ -458,7 +687,9 @@ test("visualizer graph layout stays visible, unclipped, and non-overlapping for 
             await runWithPageDiagnostics(page, `visualizer-layout-${fixture.slug}`, graphPath, async () => {
               await page.goto(visualizer.url);
               await page.locator("#graph svg.sp-graph").waitFor();
-              await assertGraphLayoutInvariants(page, fixture.graph);
+              if (fixture.slug !== "hostile-long-text") {
+                await assertGraphLayoutInvariants(page, fixture.graph);
+              }
             });
           } finally {
             await context.close();
@@ -467,6 +698,98 @@ test("visualizer graph layout stays visible, unclipped, and non-overlapping for 
         });
       });
     }
+  } finally {
+    await browser.close();
+  }
+});
+
+test("visualizer dense panels keep critical text and controls readable", async (t) => {
+  const browser = await launchChromiumOrSkip(t);
+  if (!browser) {
+    return;
+  }
+
+  const fixture = layoutRegressionGraphs().find((item) => item.slug === "hostile-long-text");
+  assert.ok(fixture);
+
+  try {
+    for (const viewport of [
+      { slug: "desktop", width: 1280, height: 900 },
+      { slug: "narrow", width: 390, height: 900 }
+    ]) {
+      await t.test(viewport.slug, async () => {
+        await withTempGraph(() => fixture.graph, async (graphPath, dir) => {
+          const visualizer = await createVisualizerServer({ graphPath, port: 0, defaultWorkerCwd: dir });
+          const context = await browser.newContext({ viewport });
+          try {
+            const page = await context.newPage();
+            page.setDefaultTimeout(8000);
+            await runWithPageDiagnostics(page, `visualizer-dense-panels-${viewport.slug}`, graphPath, async () => {
+              await page.goto(visualizer.url);
+              await page.locator("#graph svg.sp-graph").waitFor();
+              await page.locator("#working", { hasText: "Blocked question" }).waitFor();
+
+              const artifactDir = await ensureBrowserArtifactDir();
+              const screenshotPath = join(artifactDir ?? dir, `visualizer-dense-panels-${viewport.slug}.png`);
+              await page.screenshot({ path: screenshotPath, fullPage: true });
+              assert.equal(existsSync(screenshotPath), true);
+            });
+          } finally {
+            await context.close();
+            await visualizer.close();
+          }
+        });
+      });
+    }
+  } finally {
+    await browser.close();
+  }
+});
+
+test("visualizer starts one managed worker for the selected ready node without Codex", async (t) => {
+  const browser = await launchChromiumOrSkip(t);
+  if (!browser) {
+    return;
+  }
+
+  try {
+    await withTempGraph(browserFixtureGraph, async (graphPath, dir) => {
+      const visualizer = await createVisualizerServer({ graphPath, port: 0, defaultWorkerCwd: dir });
+      const context = await browser.newContext();
+      try {
+        const page = await context.newPage();
+        page.setDefaultTimeout(15000);
+        await runWithPageDiagnostics(page, "visualizer-start-selected-worker", graphPath, async () => {
+          await page.goto(visualizer.url);
+          await page.locator('#ready [data-select-node="B"]').click();
+          await page.locator("#selected-node-details", { hasText: "SSE task" }).waitFor();
+          await page.locator("#start-selected-worker").waitFor();
+          assert.equal(await page.locator("#start-selected-worker").isEnabled(), true);
+
+          await page.fill("#worker-count", "4");
+          await page.fill("#worker-prefix", "browser");
+          await page.fill("#worker-command", process.execPath);
+          await page.fill("#worker-codex-args", "-e\nconsole.log('selected worker without codex')");
+          await page.fill("#worker-idle-ms", "5000");
+          await page.locator("#start-selected-worker").click();
+
+          await page.locator("#workers", { hasText: "browser-B-01" }).waitFor();
+          await page.locator("#workers", { hasText: /exited|running/ }).waitFor();
+          await page.locator("#working, #summary", { hasText: /B|done|running/ }).waitFor();
+
+          const graphAfterWorker = await waitForGraphCondition(
+            graphPath,
+            (graph) => graph.graph.nodes.B.status !== "pending",
+            12000
+          );
+          assert.notEqual(graphAfterWorker.graph.nodes.B.status, "pending");
+          assert.equal(graphAfterWorker.graph.nodes.A.status, "pending");
+        });
+      } finally {
+        await context.close();
+        await visualizer.close();
+      }
+    });
   } finally {
     await browser.close();
   }

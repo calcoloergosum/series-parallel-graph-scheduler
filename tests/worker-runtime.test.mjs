@@ -1575,6 +1575,49 @@ test("one-shot worker claims, runs command, writes report, and completes", async
   });
 });
 
+test("worker marks node failed when done finalization cannot record required output ref", async () => {
+  await withTempGraph(async (graphPath, dir) => {
+    const graph = fixtureGraph();
+    graph.graph.nodes = {
+      ROOT: { title: "Root", kind: "parallel", status: "pending", children: ["A", "B"] },
+      A: { title: "Shared worker", kind: "task", status: "pending" },
+      B: {
+        title: "Isolated sibling",
+        kind: "task",
+        status: "done",
+        outputRef: { name: "refs/heads/spg/node/B/run-b", commit: "b".repeat(40) }
+      }
+    };
+    await writeFile(graphPath, `${JSON.stringify(graph, null, 2)}\n`, "utf8");
+
+    const fakeRunnerPath = join(dir, "fake-shared-runner.mjs");
+    await writeFile(fakeRunnerPath, "console.log('shared worker finished without an output ref');\n", "utf8");
+
+    const result = await runWorker(graphPath, {
+      session: "codex-shared-finalization",
+      once: true,
+      cwd: dir,
+      stream: false,
+      codexCommand: process.execPath,
+      codexArgs: [fakeRunnerPath]
+    });
+
+    assert.equal(result.results[0].nodeId, "A");
+    assert.equal(result.results[0].status, "failed");
+    assert.equal(result.results[0].code, 1);
+
+    const updated = await readGraph(graphPath);
+    const node = updated.graph.nodes.A;
+    assert.equal(node.status, "failed");
+    assert.equal(node.lease, undefined);
+    assert.match(node.failureReason, /Cannot complete isolated\/composed node without outputRef\.name: A/);
+    assert.match(node.report, /^reports\/A-run_/);
+
+    const report = await readFile(join(dir, node.report), "utf8");
+    assert.match(report, /shared worker finished without an output ref/);
+  });
+});
+
 test("git-isolated worker prepares a per-run clone cwd before running Codex", async () => {
   await withLocalBareRemote(async ({ dir, remotePath }) => {
     const graphDir = join(dir, "graph");

@@ -1032,26 +1032,60 @@ export async function finalizeWorkerRun(
     const completionRefMetadata = currentRefMetadata?.outputRef
       ? { outputRef: currentRefMetadata.outputRef }
       : currentRefMetadata;
-    const result = await runtime.completeNode(graphPath, {
-      nodeId: claim.nodeId,
-      session,
-      runId: claim.runId,
-      report: reportPath,
-      refMetadata: completionRefMetadata
-    });
-    return {
-      ...result,
-      runId: claim.runId,
-      code: finalizedRun.code,
-      signal: finalizedRun.signal,
-      report: reportPath,
-      slack: await runtime.sendSlackNotification(graphPath, operationalEvents.done, { nodeId: claim.nodeId, report: reportPath })
-    };
+    try {
+      const result = await runtime.completeNode(graphPath, {
+        nodeId: claim.nodeId,
+        session,
+        runId: claim.runId,
+        report: reportPath,
+        refMetadata: completionRefMetadata
+      });
+      return {
+        ...result,
+        runId: claim.runId,
+        code: finalizedRun.code,
+        signal: finalizedRun.signal,
+        report: reportPath,
+        slack: await runtime.sendSlackNotification(graphPath, operationalEvents.done, { nodeId: claim.nodeId, report: reportPath })
+      };
+    } catch (error) {
+      return failFinalizedWorkerRun(graphPath, {
+        claim,
+        session,
+        run: {
+          ...finalizedRun,
+          code: 1,
+          error: `worker finalization failed: ${errorMessage(error)}`
+        },
+        reportPath,
+        refMetadata: currentRefMetadata
+      }, runtime);
+    }
   }
 
-  const reason = describeWorkerFailure(finalizedRun);
-  const failureRefMetadata = currentRefMetadata?.outputRef
-    ? { outputRef: currentRefMetadata.outputRef }
+  return failFinalizedWorkerRun(graphPath, {
+    claim,
+    session,
+    run: finalizedRun,
+    reportPath,
+    refMetadata: currentRefMetadata
+  }, runtime);
+}
+
+async function failFinalizedWorkerRun(
+  graphPath: string,
+  {
+    claim,
+    session,
+    run,
+    reportPath,
+    refMetadata
+  }: { claim: LeaseClaimResult; session: string; run: CodexRunResult; reportPath: string; refMetadata?: WorkerRunRefMetadata },
+  runtime: WorkerRuntime
+): Promise<WorkerOutcome> {
+  const reason = describeWorkerFailure(run);
+  const failureRefMetadata = refMetadata?.outputRef
+    ? { outputRef: refMetadata.outputRef }
     : undefined;
   const result = await runtime.failNode(graphPath, {
     nodeId: claim.nodeId,
@@ -1064,8 +1098,8 @@ export async function finalizeWorkerRun(
   return {
     ...result,
     runId: claim.runId,
-    code: finalizedRun.code,
-    signal: finalizedRun.signal,
+    code: run.code,
+    signal: run.signal,
     report: reportPath,
     slack: await runtime.sendSlackNotification(graphPath, operationalEvents.failed, {
       nodeId: claim.nodeId,

@@ -410,6 +410,77 @@ export function renderVisualizerHtml(): string {
       margin-top: 10px;
     }
     .answer-form button { justify-self: end; }
+    .node-select-button {
+      display: block;
+      width: 100%;
+      padding: 0;
+      border: 0;
+      background: transparent;
+      color: inherit;
+      text-align: left;
+      font: inherit;
+      cursor: pointer;
+    }
+    .node-select-button[aria-current="true"] {
+      outline: 3px solid #81c9c3;
+      outline-offset: 3px;
+      border-radius: 6px;
+    }
+    .selected-actions {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      margin: 10px 0;
+    }
+    .modal-backdrop {
+      position: fixed;
+      inset: 0;
+      z-index: 20;
+      display: grid;
+      place-items: center;
+      padding: 16px;
+      background: rgba(15, 23, 42, 0.42);
+    }
+    .modal-dialog {
+      width: min(620px, 100%);
+      max-height: min(90vh, 760px);
+      overflow: auto;
+      background: var(--paper);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 16px;
+      box-shadow: 0 24px 70px rgba(20, 30, 42, 0.28);
+    }
+    .modal-form,
+    .decompose-form,
+    .decompose-children {
+      display: grid;
+      gap: 10px;
+    }
+    .decompose-child-row {
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 10px;
+      display: grid;
+      gap: 8px;
+    }
+    .decompose-preview {
+      max-height: 180px;
+      overflow: auto;
+      margin: 0;
+      border-radius: 8px;
+      background: #101820;
+      color: #dbe7f2;
+      padding: 8px;
+      font-size: 11px;
+      white-space: pre-wrap;
+    }
+    [data-modal-error],
+    .action-error {
+      color: var(--failed);
+      font-size: 13px;
+      font-weight: 700;
+    }
     @media (max-width: 900px) {
       header, .layout { display: block; }
       .summary { justify-content: flex-start; margin-top: 12px; }
@@ -523,9 +594,11 @@ export function renderVisualizerHtml(): string {
           </div>
           <div class="button-row">
             <button class="secondary" type="button" id="stop-all-workers">Stop All</button>
+            <button class="secondary" type="button" id="start-selected-worker" disabled>Start Selected</button>
             <button type="submit">Start</button>
           </div>
         </form>
+        <div id="selected-worker-summary" class="meta">No node selected.</div>
         <div class="section-tools">
           <div class="filter-label" id="worker-filter-label">Worker State</div>
           <div class="filter-row" role="group" aria-labelledby="worker-filter-label">
@@ -547,13 +620,42 @@ export function renderVisualizerHtml(): string {
         <p>These are claimable by Codex sessions.</p>
         <div id="ready" class="ready-list" role="list"></div>
       </section>
+      <section class="sidebar-section" aria-labelledby="selected-node-heading">
+        <h2 id="selected-node-heading">Node Detail</h2>
+        <div id="selected-node-details"><p>Select a node to inspect it.</p></div>
+      </section>
+      <section class="sidebar-section" aria-labelledby="attention-heading">
+        <h2 id="attention-heading">Attention</h2>
+        <div id="attention-dashboard"></div>
+      </section>
+      <section class="sidebar-section" aria-labelledby="diagnostics-heading">
+        <h2 id="diagnostics-heading">Diagnostics</h2>
+        <div id="diagnostics-panel"></div>
+      </section>
+      <section class="sidebar-section" aria-labelledby="events-heading">
+        <h2 id="events-heading">Events</h2>
+        <div class="field-row">
+          <div class="field">
+            <label for="event-node-filter">Node</label>
+            <input id="event-node-filter" autocomplete="off">
+          </div>
+          <div class="field">
+            <label for="event-name-filter">Event</label>
+            <select id="event-name-filter"><option value="">Any event</option></select>
+          </div>
+        </div>
+        <div id="events-list"></div>
+      </section>
     </aside>
   </div>
+  <div id="modal-root"></div>
 </main>
 <script>
   let workerDefaultsHydrated = false;
   let latestPayload = undefined;
   let lastAnnouncement = "";
+  let selectedNodeId = "";
+  const eventFilters = { node: "", event: "" };
   const filters = {
     activity: "all",
     worker: "all",
@@ -597,6 +699,8 @@ export function renderVisualizerHtml(): string {
       node.expiresAt,
       node.question,
       node.answer,
+      node.blockedReason,
+      node.failureReason,
       node.report,
       isolation.cloneCwd,
       isolation.baseRef,
@@ -697,6 +801,85 @@ export function renderVisualizerHtml(): string {
     document.getElementById("status-announcer").textContent = message;
   }
 
+  function graphNodeEntries(payload = latestPayload) {
+    return Object.entries(payload?.graph?.graph?.nodes || {}).map(([id, node]) => ({ id, node }));
+  }
+
+  function selectedEntry() {
+    return graphNodeEntries().find((entry) => entry.id === selectedNodeId);
+  }
+
+  function nodeIsReady(nodeId) {
+    return (latestPayload?.ready || []).some((node) => node.id === nodeId);
+  }
+
+  function selectNode(nodeId) {
+    selectedNodeId = String(nodeId || "");
+    if (latestPayload) {
+      render(latestPayload);
+    }
+    announce(selectedNodeId ? "Selected node " + selectedNodeId + "." : "Selection cleared.");
+  }
+
+  function closeModal() {
+    document.getElementById("modal-root").innerHTML = "";
+  }
+
+  async function apiPost(path, body) {
+    const response = await fetch(path, {
+      method: "POST",
+      headers: writeHeaders(true),
+      body: JSON.stringify(body)
+    });
+    if (!response.ok) {
+      throw new Error(await response.text());
+    }
+    const result = await response.json();
+    await load();
+    return result;
+  }
+
+  function modalFieldHtml(field) {
+    const id = "modal-field-" + statusToken(field.name);
+    const value = field.value === undefined || field.value === null ? "" : String(field.value);
+    const required = field.required ? " required" : "";
+    const label = '<label for="' + id + '">' + escapeHtml(field.label) + '</label>';
+    if (field.type === "textarea") {
+      return '<div class="field">' + label + '<textarea id="' + id + '" name="' + escapeHtml(field.name) + '"' + required + '>' + escapeHtml(value) + '</textarea></div>';
+    }
+    return '<div class="field">' + label + '<input id="' + id + '" name="' + escapeHtml(field.name) + '" type="' + escapeHtml(field.type || "text") + '" value="' + escapeHtml(value) + '"' + required + '></div>';
+  }
+
+  function openActionModal({ title, fields, submitLabel, onSubmit }) {
+    const root = document.getElementById("modal-root");
+    root.innerHTML = '<div class="modal-backdrop">' +
+      '<section class="modal-dialog" role="dialog" aria-modal="true" aria-labelledby="action-modal-title">' +
+        '<h2 id="action-modal-title">' + escapeHtml(title) + '</h2>' +
+        '<form class="modal-form" data-action-modal-form>' +
+          fields.map(modalFieldHtml).join("") +
+          '<div data-modal-error></div>' +
+          '<div class="button-row"><button class="secondary" type="button" data-modal-cancel>Cancel</button><button type="submit">' + escapeHtml(submitLabel || "Confirm") + '</button></div>' +
+        '</form>' +
+      '</section>' +
+    '</div>';
+    const form = root.querySelector("[data-action-modal-form]");
+    root.querySelector("[data-modal-cancel]").addEventListener("click", closeModal);
+    form.addEventListener("submit", async (event) => {
+      event.preventDefault();
+      const values = {};
+      form.querySelectorAll("input[name], textarea[name]").forEach((field) => {
+        values[field.name] = field.value.trim();
+      });
+      try {
+        await onSubmit(values);
+        closeModal();
+      } catch (error) {
+        root.querySelector("[data-modal-error]").textContent = error?.message || String(error);
+      }
+    });
+    (form.querySelector("input, textarea") || form.querySelector("button[type=submit]"))?.focus();
+  }
+
   function renderReady(ready) {
     if (!ready.length) {
       return '<p>No ready nodes match the current filters.</p>';
@@ -705,7 +888,9 @@ export function renderVisualizerHtml(): string {
       const question = node.question ? '<div class="meta">question: ' + escapeHtml(node.question) + '</div>' : "";
       const answer = node.answer ? '<div class="meta">answer: ' + escapeHtml(node.answer) + '</div>' : "";
       return '<div class="ready-item" role="listitem">' +
+        '<button class="node-select-button" type="button" data-select-node="' + escapeHtml(node.id) + '" aria-current="' + (selectedNodeId === node.id ? "true" : "false") + '">' +
         '<strong>' + escapeHtml(node.id) + '</strong><br>' + escapeHtml(node.title || node.id) +
+        '</button>' +
         question + answer +
         '</div>';
     }).join("");
@@ -722,6 +907,8 @@ export function renderVisualizerHtml(): string {
       const expiry = metaLine("expires", node.expiresAt);
       const question = metaLine("question", node.question);
       const answer = metaLine("answer", node.answer);
+      const blockedReason = metaLine("blocked reason", node.blockedReason);
+      const failureReason = metaLine("failure reason", node.failureReason);
       const report = metaLine("report", node.report);
       const cloneCwd = metaLine("clone cwd", isolation.cloneCwd);
       const baseRef = metaLine("base ref", isolation.baseRef);
@@ -742,9 +929,11 @@ export function renderVisualizerHtml(): string {
         '</form>' : "";
       const token = statusToken(node.status);
       return '<div class="working-item status-' + token + '" role="listitem">' +
+        '<button class="node-select-button" type="button" data-select-node="' + escapeHtml(node.id) + '" aria-current="' + (selectedNodeId === node.id ? "true" : "false") + '">' +
         '<span class="badge status-' + token + '">' + escapeHtml(node.status) + '</span>' +
         '<div><strong>' + escapeHtml(node.id) + '</strong><br>' + escapeHtml(node.title || node.id) + '</div>' +
-        lease + run + expiry + question + answer + report + cloneCwd + baseRef + workRef + outputRef + integrationRef + mergeRefs + conflictedRefs + answerForm +
+        '</button>' +
+        lease + run + expiry + question + answer + blockedReason + failureReason + report + cloneCwd + baseRef + workRef + outputRef + integrationRef + mergeRefs + conflictedRefs + answerForm +
         '</div>';
     }).join("");
   }
@@ -841,6 +1030,87 @@ export function renderVisualizerHtml(): string {
     announce(message);
   }
 
+  function renderSelectedNode() {
+    const details = document.getElementById("selected-node-details");
+    const summary = document.getElementById("selected-worker-summary");
+    const entry = selectedEntry();
+    if (!entry) {
+      details.innerHTML = '<p>Select a node to inspect it.</p>';
+      summary.textContent = "No node selected.";
+      document.getElementById("start-selected-worker").disabled = true;
+      return;
+    }
+    const { id, node } = entry;
+    const ready = nodeIsReady(id);
+    document.getElementById("start-selected-worker").disabled = !ready;
+    summary.textContent = ready ? "Selected: " + id + " is ready." : "Selected: " + id + " is " + (node.status || "pending") + ".";
+    const children = Array.isArray(node.children) ? node.children.join(", ") : "";
+    const actions = [
+      ["claim-selected", "Claim Selected"],
+      ["start", "Start"],
+      ["block", "Block"],
+      ["reset", "Reset"],
+      ...((node.status === "claimed" || node.status === "running") && !children ? [["decompose", "Decompose"]] : [])
+    ].map(([action, label]) => '<button class="secondary" type="button" data-node-action="' + action + '">' + label + '</button>').join("");
+    const history = (node.history || []).slice().reverse().map((event) => event.event || "event").join(", ");
+    details.innerHTML =
+      '<div><span class="badge status-' + statusToken(node.status || "pending") + '">' + escapeHtml(node.status || "pending") + '</span></div>' +
+      '<p><strong>' + escapeHtml(id) + '</strong><br>' + escapeHtml(node.title || id) + '</p>' +
+      '<div class="selected-actions" aria-label="Selected node actions">' + actions + '</div>' +
+      metaLine("kind", node.kind || "task") +
+      metaLine("children", children) +
+      metaLine("session", node.lease?.session || node.session) +
+      metaLine("run", node.lease?.runId || node.runId) +
+      metaLine("question", node.question) +
+      metaLine("answer", node.answer) +
+      '<section><h3>History</h3><p>' + escapeHtml(history || "No history recorded for this node.") + '</p><p class="meta">Newest first from the events payload.</p></section>';
+  }
+
+  function payloadEvents() {
+    return graphNodeEntries()
+      .flatMap(({ id, node }) => (node.history || []).map((entry, index) => ({ ...entry, nodeId: id, historyIndex: index })))
+      .sort((left, right) => String(right.at || "").localeCompare(String(left.at || "")) || right.nodeId.localeCompare(left.nodeId));
+  }
+
+  function renderDiagnosticsAndEvents(payload) {
+    const working = payload.working || [];
+    const blocked = working.filter((node) => isAttentionStatus(node.status));
+    const failed = graphNodeEntries(payload).filter(({ node }) => node.status === "failed").map(({ id, node }) => ({ id, ...node }));
+    const attentionItems = [...blocked, ...failed];
+    document.getElementById("attention-dashboard").innerHTML = attentionItems.length
+      ? attentionItems.map((node) => '<div class="working-item status-' + statusToken(node.status) + '"><strong>' + escapeHtml(node.id) + '</strong><br>' + escapeHtml(node.title || node.id) + metaLine("detail", node.question || node.failureReason || node.blockedReason || node.report) + '</div>').join("")
+      : '<p>No blocked or failed nodes need attention.</p>';
+
+    document.getElementById("diagnostics-panel").innerHTML =
+      '<div class="detail-grid">' +
+      metaLine("next ready", (payload.ready || []).map((node) => node.id).join(", ") || "none") +
+      metaLine("recommended actions", blocked.length || failed.length ? "Answer blocked work, inspect failed reports, or reset verified retry nodes." : "Claim ready work or wait for active workers.") +
+      '</div>';
+
+    const events = payloadEvents();
+    const names = [...new Set(events.map((event) => event.event).filter(Boolean))].sort();
+    const select = document.getElementById("event-name-filter");
+    const selected = select.value;
+    select.innerHTML = '<option value="">Any event</option>' + names.map((name) => '<option value="' + escapeHtml(name) + '"' + (name === selected ? " selected" : "") + '>' + escapeHtml(name) + '</option>').join("");
+    const visibleEvents = events
+      .filter((event) => !eventFilters.node || event.nodeId.toLowerCase().includes(eventFilters.node))
+      .filter((event) => !eventFilters.event || event.event === eventFilters.event)
+      .slice(0, 30);
+    document.getElementById("events-list").innerHTML = visibleEvents.length
+      ? visibleEvents.map((event) => '<div class="ready-item"><strong>' + escapeHtml(event.nodeId) + '</strong><br>' + escapeHtml(event.event || "event") + metaLine("at", event.at) + '</div>').join("")
+      : '<p>No events match the current filters.</p>';
+  }
+
+  function routeErrorMessage(prefix, error) {
+    return prefix + ": " + boundedText(error?.message || String(error));
+  }
+
+  function showRouteError(prefix, error) {
+    const message = routeErrorMessage(prefix, error);
+    document.getElementById("subtitle").textContent = message;
+    announce(message);
+  }
+
   function render(payload) {
     latestPayload = payload;
     setPressed("[data-filter]", filters.activity, "data-filter");
@@ -856,11 +1126,183 @@ export function renderVisualizerHtml(): string {
     renderAttentionSummary(payload);
     renderFilterSummary(visibleReady, visibleWorking, visibleWorkers);
     renderWorkerManager(payload.workerManager);
+    renderSelectedNode();
+    renderDiagnosticsAndEvents(payload);
   }
 
   async function load() {
     const response = await fetch("/api/graph");
     render(await response.json());
+  }
+
+  function ownerFields(node) {
+    return [
+      { name: "session", label: "Session", value: node.lease?.session || node.session || "" },
+      { name: "runId", label: "Run Id", value: node.lease?.runId || node.runId || "" }
+    ];
+  }
+
+  function runSelectedAction(action) {
+    const entry = selectedEntry();
+    if (!entry) {
+      return;
+    }
+    const { id, node } = entry;
+    if (action === "claim-selected") {
+      openActionModal({
+        title: "Claim " + id,
+        submitLabel: "Claim",
+        fields: [
+          { name: "session", label: "Session", required: true },
+          { name: "leaseSeconds", label: "Lease Seconds", type: "number", value: "1800" }
+        ],
+        onSubmit: (values) => apiPost("/api/claim", { nodeId: id, session: values.session, leaseSeconds: Number(values.leaseSeconds || 1800) })
+      });
+      return;
+    }
+    if (action === "start") {
+      openActionModal({
+        title: "Start " + id,
+        submitLabel: "Start",
+        fields: ownerFields(node),
+        onSubmit: (values) => apiPost("/api/start", { nodeId: id, session: values.session, runId: values.runId })
+      });
+      return;
+    }
+    if (action === "block") {
+      openActionModal({
+        title: "Block " + id,
+        submitLabel: "Block",
+        fields: [
+          { name: "question", label: "Question", type: "textarea", value: node.question || "" },
+          { name: "reason", label: "Reason", type: "textarea", value: node.blockedReason || "" },
+          ...ownerFields(node)
+        ],
+        onSubmit: (values) => apiPost("/api/block", { nodeId: id, question: values.question, reason: values.reason, session: values.session, runId: values.runId })
+      });
+      return;
+    }
+    if (action === "reset") {
+      openActionModal({
+        title: "Reset " + id,
+        submitLabel: "Reset",
+        fields: [{ name: "reason", label: "Reason", type: "textarea", value: "manual_reset", required: true }],
+        onSubmit: (values) => apiPost("/api/reset", { nodeId: id, reason: values.reason })
+      });
+      return;
+    }
+    if (action === "decompose") {
+      openDecomposeModal(entry);
+    }
+  }
+
+  function decomposeRowHtml(child, index) {
+    const idBase = "decompose-child-" + index;
+    return '<div class="decompose-child-row" data-decompose-row>' +
+      '<div class="button-row"><button class="secondary" type="button" data-decompose-move="up">Up</button><button class="danger" type="button" data-decompose-remove>Remove</button></div>' +
+      '<div class="field-row"><div class="field"><label for="' + idBase + '-id">Id</label><input id="' + idBase + '-id" name="childId" value="' + escapeHtml(child.id) + '"></div>' +
+      '<div class="field"><label for="' + idBase + '-title">Title</label><input id="' + idBase + '-title" name="childTitle" value="' + escapeHtml(child.title || "") + '"></div></div>' +
+      '<div class="field"><label for="' + idBase + '-metadata">Metadata JSON</label><textarea id="' + idBase + '-metadata" name="childMetadata">' + escapeHtml(child.metadata || "") + '</textarea></div>' +
+      '</div>';
+  }
+
+  function nextChildId(parentId, form) {
+    const used = new Set(graphNodeEntries().map((entry) => entry.id));
+    form?.querySelectorAll('[name="childId"]').forEach((input) => used.add(input.value.trim()));
+    for (const suffix of "abcdefghijklmnopqrstuvwxyz") {
+      const candidate = parentId + suffix;
+      if (!used.has(candidate)) {
+        return candidate;
+      }
+    }
+    return parentId + "_child";
+  }
+
+  function buildDecomposePayload(form, nodeId) {
+    const seen = new Set();
+    const children = [...form.querySelectorAll("[data-decompose-row]")].map((row, index) => {
+      const id = row.querySelector('[name="childId"]').value.trim();
+      const title = row.querySelector('[name="childTitle"]').value.trim();
+      if (!id) {
+        throw new Error("Child #" + (index + 1) + " id cannot be empty.");
+      }
+      if (!title) {
+        throw new Error("Child #" + (index + 1) + " title cannot be empty.");
+      }
+      if (seen.has(id)) {
+        throw new Error("Duplicate child id: " + id);
+      }
+      seen.add(id);
+      const metadataText = row.querySelector('[name="childMetadata"]').value.trim();
+      const metadata = metadataText ? JSON.parse(metadataText) : {};
+      return { ...metadata, id, title, kind: "task", status: "pending" };
+    });
+    return {
+      nodeId,
+      kind: form.querySelector('[name="kind"]').value || "series",
+      session: form.querySelector('[name="session"]').value.trim(),
+      runId: form.querySelector('[name="runId"]').value.trim(),
+      children
+    };
+  }
+
+  function refreshDecomposePreview(form, nodeId) {
+    try {
+      form.querySelector("[data-decompose-preview]").textContent = JSON.stringify(buildDecomposePayload(form, nodeId), null, 2);
+      form.querySelector("[data-modal-error]").textContent = "";
+    } catch (error) {
+      form.querySelector("[data-decompose-preview]").textContent = error?.message || String(error);
+    }
+  }
+
+  function openDecomposeModal(entry) {
+    const root = document.getElementById("modal-root");
+    const node = entry.node;
+    root.innerHTML = '<div class="modal-backdrop"><section class="modal-dialog" role="dialog" aria-modal="true">' +
+      '<h2>Decompose ' + escapeHtml(entry.id) + '</h2>' +
+      '<form class="decompose-form" data-decompose-form>' +
+        '<div class="field-row"><div class="field"><label for="decompose-kind">Decomposition</label><select id="decompose-kind" name="kind"><option value="series">series</option><option value="parallel">parallel</option></select></div>' +
+        '<div class="field"><label for="decompose-session">Session</label><input id="decompose-session" name="session" value="' + escapeHtml(node.lease?.session || node.session || "") + '"></div></div>' +
+        '<div class="field"><label for="decompose-run">Run Id</label><input id="decompose-run" name="runId" value="' + escapeHtml(node.lease?.runId || node.runId || "") + '"></div>' +
+        '<div class="button-row"><button class="secondary" type="button" data-decompose-add>Add Child</button></div>' +
+        '<div class="decompose-children" data-decompose-children>' + decomposeRowHtml({ id: nextChildId(entry.id), title: "" }, 0) + '</div>' +
+        '<div class="field"><label for="decompose-preview">Payload Preview</label><pre id="decompose-preview" class="decompose-preview" data-decompose-preview></pre></div>' +
+        '<div data-modal-error></div>' +
+        '<div class="button-row"><button class="secondary" type="button" data-modal-cancel>Cancel</button><button type="submit">Decompose</button></div>' +
+      '</form></section></div>';
+    const form = root.querySelector("[data-decompose-form]");
+    const refresh = () => refreshDecomposePreview(form, entry.id);
+    root.querySelector("[data-modal-cancel]").addEventListener("click", closeModal);
+    form.addEventListener("input", refresh);
+    form.addEventListener("change", refresh);
+    form.addEventListener("click", (event) => {
+      if (event.target.closest("[data-decompose-add]")) {
+        const rows = form.querySelectorAll("[data-decompose-row]");
+        form.querySelector("[data-decompose-children]").insertAdjacentHTML("beforeend", decomposeRowHtml({ id: nextChildId(entry.id, form), title: "" }, rows.length));
+        refresh();
+        return;
+      }
+      if (event.target.closest("[data-decompose-remove]") && form.querySelectorAll("[data-decompose-row]").length > 1) {
+        event.target.closest("[data-decompose-row]").remove();
+        refresh();
+        return;
+      }
+      if (event.target.closest('[data-decompose-move="up"]')) {
+        const row = event.target.closest("[data-decompose-row]");
+        row?.parentElement?.insertBefore(row, row.previousElementSibling);
+        refresh();
+      }
+    });
+    form.addEventListener("submit", async (event) => {
+      event.preventDefault();
+      try {
+        await apiPost("/api/decompose", buildDecomposePayload(form, entry.id));
+        closeModal();
+      } catch (error) {
+        form.querySelector("[data-modal-error]").textContent = error?.message || String(error);
+      }
+    });
+    refresh();
   }
 
   document.addEventListener("submit", async (event) => {
@@ -888,7 +1330,7 @@ export function renderVisualizerHtml(): string {
       }
       await load();
     } catch (error) {
-      document.getElementById("subtitle").textContent = "Answer failed: " + (error.message || String(error));
+      showRouteError("Answer failed", error);
       button.disabled = false;
     }
   });
@@ -926,13 +1368,65 @@ export function renderVisualizerHtml(): string {
       }
       await load();
     } catch (error) {
-      document.getElementById("subtitle").textContent = "Worker start failed: " + (error.message || String(error));
+      showRouteError("Worker start failed", error);
     } finally {
       button.disabled = false;
     }
   });
 
+  document.getElementById("start-selected-worker").addEventListener("click", async (event) => {
+    const ready = selectedNodeId && nodeIsReady(selectedNodeId);
+    if (!ready) {
+      return;
+    }
+    const form = document.getElementById("worker-manager-form");
+    const isolation = form.isolation.value || "off";
+    const remote = form.remote.value.trim();
+    const basePrefix = form.sessionPrefix.value.trim() || "codex";
+    const body = {
+      count: 1,
+      sessionPrefix: basePrefix + "-" + selectedNodeId,
+      cwd: isolation === "git" ? undefined : form.cwd.value.trim(),
+      codexCommand: form.codexCommand.value.trim() || "codex",
+      codexArgs: form.codexArgs.value.split(/\\r?\\n/).map((line) => line.trim()).filter(Boolean),
+      idleMs: Number(form.idleMs.value || 5000),
+      quiet: form.quiet.checked,
+      once: form.once.checked,
+      isolation,
+      remote: remote || undefined,
+      workspaceRoot: form.workspaceRoot.value.trim() || undefined,
+      workspaceRetention: form.workspaceRetention.value || "on-failure",
+      nodeId: selectedNodeId
+    };
+    event.currentTarget.disabled = true;
+    try {
+      const response = await fetch("/api/workers/start", {
+        method: "POST",
+        headers: writeHeaders(true),
+        body: JSON.stringify(body)
+      });
+      if (!response.ok) {
+        throw new Error(await response.text());
+      }
+      await load();
+    } catch (error) {
+      showRouteError("Worker start failed", error);
+    } finally {
+      event.currentTarget.disabled = false;
+    }
+  });
+
   document.addEventListener("click", async (event) => {
+    const selectButton = event.target.closest("[data-select-node]");
+    if (selectButton) {
+      selectNode(selectButton.dataset.selectNode);
+      return;
+    }
+    const actionButton = event.target.closest("[data-node-action]");
+    if (actionButton) {
+      runSelectedAction(actionButton.dataset.nodeAction);
+      return;
+    }
     const stopButton = event.target.closest("[data-stop-worker]");
     if (!stopButton) {
       return;
@@ -973,6 +1467,20 @@ export function renderVisualizerHtml(): string {
     filters.query = normalize(event.target.value).trim();
     if (latestPayload) {
       render(latestPayload);
+    }
+  });
+
+  document.getElementById("event-node-filter").addEventListener("input", (event) => {
+    eventFilters.node = normalize(event.target.value).trim();
+    if (latestPayload) {
+      renderDiagnosticsAndEvents(latestPayload);
+    }
+  });
+
+  document.getElementById("event-name-filter").addEventListener("change", (event) => {
+    eventFilters.event = event.target.value;
+    if (latestPayload) {
+      renderDiagnosticsAndEvents(latestPayload);
     }
   });
 

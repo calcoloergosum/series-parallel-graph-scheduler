@@ -1,5 +1,35 @@
 import test from "node:test";
-import { assert, assertInvalidFixtureFailure, blockNode, buildPlanarLayout, buildSlackNotificationText, buildVisualizerPayload, claimNode, copyGraphFixtureToTemp, createServer, createVisualizerServer, execFileAsync, existsSync, fixtureGraph, formatWorkerReport, invalidGraphValidatorOutcomes, isLocalVisualizerHost, join, mkdtemp, readFile, readGraph, readdir, renderPlanarSvg, renderVisualizerHtml, rendererDocumentFixture, rendererScriptPath, rm, runVisualizerClientScript, schedulerScriptPath, sendSlackNotification, tmpdir, visualizerHostSecurityWarning, waitFor, withTempGraph, writeFile } from "./helpers/plan-scheduler-harness.mjs";
+import { assert, assertInvalidFixtureFailure, blockNode, buildPlanarLayout, buildSlackNotificationText, buildVisualizerPayload, claimNode, completeNode, copyGraphFixtureToTemp, createServer, createVisualizerServer, dirname, execFileAsync, existsSync, fixtureGraph, formatWorkerReport, invalidGraphValidatorOutcomes, isLocalVisualizerHost, join, mkdtemp, readFile, readGraph, readdir, renderPlanarSvg, renderVisualizerHtml, rendererDocumentFixture, rendererScriptPath, rm, runVisualizerClientScript, schedulerScriptPath, sendSlackNotification, startNode, tmpdir, visualizerHostSecurityWarning, waitFor, withTempGraph, writeFile } from "./helpers/plan-scheduler-harness.mjs";
+
+async function postJson(baseUrl, pathname, body, headers = {}) {
+  return fetch(`${baseUrl}${pathname}`, {
+    method: "POST",
+    headers: { "content-type": "application/json", ...headers },
+    body: JSON.stringify(body)
+  });
+}
+
+async function postJsonOk(baseUrl, pathname, body, headers) {
+  const response = await postJson(baseUrl, pathname, body, headers);
+  if (response.status !== 200) {
+    assert.fail(await response.text());
+  }
+  return response.json();
+}
+
+function assertSlackSkipped(result) {
+  assert.deepEqual(result.slack, {
+    skipped: true,
+    reason: "SLACK_WEBHOOK_URL is not set"
+  });
+}
+
+function assertNodeHistoryEvent(graph, nodeId, event) {
+  assert.ok(
+    graph.graph.nodes[nodeId].history?.some((entry) => entry.event === event),
+    `${nodeId} should record ${event}`
+  );
+}
 
 test("invalid graph fixtures fail scheduler and renderer paths before writes", async (t) => {
   for (const outcome of invalidGraphValidatorOutcomes()) {
@@ -141,12 +171,20 @@ test("visualizer write token protects mutation routes", async () => {
       assert.equal(forbiddenWorkerStart.status, 403);
       assert.match(await forbiddenWorkerStart.text(), /visualizer write token/);
 
+      const forbiddenClaim = await postJson(url, "/api/claim", { nodeId: "B", session: "api-denied" });
+      assert.equal(forbiddenClaim.status, 403);
+
       const forbiddenAnswer = await fetch(`${url}/api/answer`, {
         method: "POST",
         headers: { "content-type": "application/json", "x-spg-visualizer-token": "wrong-token" },
         body: JSON.stringify({ nodeId: "A", answer: "No" })
       });
       assert.equal(forbiddenAnswer.status, 403);
+
+      const forbiddenDone = await postJson(url, "/api/done", { nodeId: "A", session: "codex-A" }, {
+        "x-spg-visualizer-token": "wrong-token"
+      });
+      assert.equal(forbiddenDone.status, 403);
 
       const answerResponse = await fetch(`${url}/api/answer`, {
         method: "POST",
@@ -163,6 +201,458 @@ test("visualizer write token protects mutation routes", async () => {
       assert.equal(stopAllResponse.status, 200);
     } finally {
       await visualizer.close();
+    }
+  });
+});
+
+test("visualizer reconcile API completes internal parents and refreshes graph payload", async () => {
+  await withTempGraph(async (graphPath) => {
+    const graph = {
+      graphVersion: 1,
+      title: "Visualizer Reconcile Plan",
+      graph: {
+        root: "ROOT",
+        nodes: {
+          ROOT: { title: "Root", kind: "series", status: "pending", children: ["PARENT", "NEXT"] },
+          PARENT: { title: "Parent", kind: "series", status: "pending", children: ["A", "B"] },
+          A: { title: "Done A", kind: "task", status: "done" },
+          B: { title: "Done B", kind: "task", status: "done" },
+          NEXT: { title: "Next task", kind: "task", status: "pending" }
+        }
+      }
+    };
+    await writeFile(graphPath, `${JSON.stringify(graph, null, 2)}\n`, "utf8");
+
+    const visualizer = await createVisualizerServer({ graphPath, port: 0, writeToken: "secret-token" });
+    try {
+      const forbidden = await fetch(`${visualizer.url}/api/graph/reconcile`, { method: "POST" });
+      assert.equal(forbidden.status, 403);
+      assert.equal((await readGraph(graphPath)).graph.nodes.PARENT.status, "pending");
+
+      const response = await fetch(`${visualizer.url}/api/graph/reconcile`, {
+        method: "POST",
+        headers: { "x-spg-visualizer-token": "secret-token" }
+      });
+      assert.equal(response.status, 200);
+
+      const result = await response.json();
+      assert.deepEqual(result.changed, ["PARENT"]);
+      assert.equal(result.summary.graphVersion, 2);
+      assert.deepEqual(result.summary.counts, { pending: 2, done: 3 });
+
+      const updated = await readGraph(graphPath);
+      assert.equal(updated.graph.nodes.PARENT.status, "done");
+      assert.equal(updated.graph.nodes.ROOT.status, "pending");
+
+      const payload = await (await fetch(`${visualizer.url}/api/graph`)).json();
+      assert.deepEqual(payload.ready.map((node) => node.id), ["NEXT"]);
+      assert.deepEqual(payload.summary, result.summary);
+    } finally {
+      await visualizer.close();
+    }
+  });
+});
+
+test("visualizer release-expired API releases expired claimed and running leases only", async () => {
+  await withTempGraph(async (graphPath) => {
+    const expired = "2000-01-01T00:00:00.000Z";
+    const active = "2999-01-01T00:00:00.000Z";
+    const leasedNode = (title, status, session, runId, expiresAt) => ({
+      title,
+      kind: "task",
+      status,
+      ...(status === "running" ? { startedAt: "2026-05-30T00:00:00.000Z" } : {}),
+      lease: {
+        session,
+        runId,
+        claimedAt: "2026-05-30T00:00:00.000Z",
+        expiresAt
+      }
+    });
+    const graph = {
+      graphVersion: 1,
+      title: "Visualizer Lease Recovery Plan",
+      graph: {
+        root: "ROOT",
+        nodes: {
+          ROOT: {
+            title: "Root",
+            kind: "parallel",
+            status: "pending",
+            children: ["CLAIMED_EXPIRED", "RUNNING_EXPIRED", "CLAIMED_ACTIVE", "RUNNING_ACTIVE", "BLOCKED_EXPIRED"]
+          },
+          CLAIMED_EXPIRED: leasedNode("Claimed expired", "claimed", "codex-expired", "run-claimed-expired", expired),
+          RUNNING_EXPIRED: leasedNode("Running expired", "running", "codex-expired", "run-running-expired", expired),
+          CLAIMED_ACTIVE: leasedNode("Claimed active", "claimed", "codex-active", "run-claimed-active", active),
+          RUNNING_ACTIVE: leasedNode("Running active", "running", "codex-active", "run-running-active", active),
+          BLOCKED_EXPIRED: leasedNode("Blocked expired", "blocked", "codex-blocked", "run-blocked-expired", expired)
+        }
+      }
+    };
+    await writeFile(graphPath, `${JSON.stringify(graph, null, 2)}\n`, "utf8");
+
+    const visualizer = await createVisualizerServer({ graphPath, port: 0, writeToken: "secret-token" });
+    try {
+      const forbidden = await fetch(`${visualizer.url}/api/leases/release-expired`, { method: "POST" });
+      assert.equal(forbidden.status, 403);
+      assert.equal((await readGraph(graphPath)).graph.nodes.CLAIMED_EXPIRED.status, "claimed");
+
+      const response = await fetch(`${visualizer.url}/api/leases/release-expired`, {
+        method: "POST",
+        headers: { authorization: "Bearer secret-token" }
+      });
+      assert.equal(response.status, 200);
+
+      const result = await response.json();
+      assert.deepEqual(result.released, ["CLAIMED_EXPIRED", "RUNNING_EXPIRED"]);
+      assert.equal(result.summary.graphVersion, 2);
+      assert.deepEqual(result.summary.counts, { pending: 3, claimed: 1, running: 1, blocked: 1 });
+
+      const updated = await readGraph(graphPath);
+      assert.equal(updated.graph.nodes.CLAIMED_EXPIRED.status, "pending");
+      assert.equal(updated.graph.nodes.RUNNING_EXPIRED.status, "pending");
+      assert.equal(updated.graph.nodes.CLAIMED_ACTIVE.status, "claimed");
+      assert.equal(updated.graph.nodes.RUNNING_ACTIVE.status, "running");
+      assert.equal(updated.graph.nodes.BLOCKED_EXPIRED.status, "blocked");
+      assert.equal(updated.graph.nodes.CLAIMED_ACTIVE.lease.expiresAt, active);
+      assert.equal(updated.graph.nodes.RUNNING_ACTIVE.lease.expiresAt, active);
+      assert.equal(updated.graph.nodes.BLOCKED_EXPIRED.lease.expiresAt, expired);
+
+      const payload = await (await fetch(`${visualizer.url}/api/graph`)).json();
+      assert.deepEqual(payload.working.map((node) => node.id), ["BLOCKED_EXPIRED", "CLAIMED_ACTIVE", "RUNNING_ACTIVE"]);
+      assert.deepEqual(payload.summary, result.summary);
+    } finally {
+      await visualizer.close();
+    }
+  });
+});
+
+test("visualizer node mutation APIs persist graph updates", async (t) => {
+  await t.test("claim", async () => {
+    await withTempGraph(async (graphPath) => {
+      const visualizer = await createVisualizerServer({ graphPath, port: 0 });
+      try {
+        const result = await postJsonOk(visualizer.url, "/api/claim", {
+          nodeId: "A",
+          session: "api-claim",
+          leaseSeconds: 60
+        });
+        assert.equal(result.nodeId, "A");
+        assert.equal(result.lease.session, "api-claim");
+        assert.equal(result.summary.counts.claimed, 1);
+
+        const graph = await readGraph(graphPath);
+        assert.equal(graph.graph.nodes.A.status, "claimed");
+        assert.equal(graph.graph.nodes.A.lease.session, "api-claim");
+        assertNodeHistoryEvent(graph, "A", "claimed");
+      } finally {
+        await visualizer.close();
+      }
+    });
+  });
+
+  await t.test("start", async () => {
+    await withTempGraph(async (graphPath) => {
+      const claim = await claimNode(graphPath, { nodeId: "A", session: "api-start" });
+      const visualizer = await createVisualizerServer({ graphPath, port: 0 });
+      try {
+        const result = await postJsonOk(visualizer.url, "/api/start", {
+          nodeId: "A",
+          session: "api-start",
+          runId: claim.runId
+        });
+        assert.equal(result.status, "running");
+        assert.equal(result.summary.counts.running, 1);
+
+        const graph = await readGraph(graphPath);
+        assert.equal(graph.graph.nodes.A.status, "running");
+        assert.ok(graph.graph.nodes.A.startedAt);
+        assertNodeHistoryEvent(graph, "A", "running");
+      } finally {
+        await visualizer.close();
+      }
+    });
+  });
+
+  await t.test("renew", async () => {
+    await withTempGraph(async (graphPath) => {
+      const claim = await claimNode(graphPath, { nodeId: "A", session: "api-renew" });
+      const visualizer = await createVisualizerServer({ graphPath, port: 0 });
+      try {
+        const result = await postJsonOk(visualizer.url, "/api/renew", {
+          nodeId: "A",
+          session: "api-renew",
+          runId: claim.runId,
+          leaseSeconds: 120
+        });
+        assert.equal(result.nodeId, "A");
+        assert.ok(result.lease.renewedAt);
+
+        const graph = await readGraph(graphPath);
+        assert.equal(graph.graph.nodes.A.lease.renewedAt, result.lease.renewedAt);
+        assertNodeHistoryEvent(graph, "A", "renewed");
+      } finally {
+        await visualizer.close();
+      }
+    });
+  });
+
+  await t.test("done", async () => {
+    await withTempGraph(async (graphPath, dir) => {
+      const claim = await claimNode(graphPath, { nodeId: "A", session: "api-done" });
+      await startNode(graphPath, { nodeId: "A", session: "api-done", runId: claim.runId });
+      const visualizer = await createVisualizerServer({ graphPath, port: 0 });
+      try {
+        const result = await postJsonOk(visualizer.url, "/api/done", {
+          nodeId: "A",
+          session: "api-done",
+          runId: claim.runId,
+          report: "reports/api-done.md",
+          reportBody: "API route done body"
+        });
+        assert.equal(result.status, "done");
+        assertSlackSkipped(result);
+        assert.equal(await readFile(join(dir, "reports", "api-done.md"), "utf8"), "API route done body\n");
+
+        const graph = await readGraph(graphPath);
+        assert.equal(graph.graph.nodes.A.status, "done");
+        assert.equal(graph.graph.nodes.A.report, "reports/api-done.md");
+        assert.equal(graph.graph.nodes.A.lease, undefined);
+        assertNodeHistoryEvent(graph, "A", "done");
+      } finally {
+        await visualizer.close();
+      }
+    });
+  });
+
+  await t.test("block and answer", async () => {
+    await withTempGraph(async (graphPath) => {
+      const claim = await claimNode(graphPath, { nodeId: "A", session: "api-block" });
+      await startNode(graphPath, { nodeId: "A", session: "api-block", runId: claim.runId });
+      const visualizer = await createVisualizerServer({ graphPath, port: 0 });
+      try {
+        const blockResult = await postJsonOk(visualizer.url, "/api/block", {
+          nodeId: "A",
+          session: "api-block",
+          runId: claim.runId,
+          question: "Proceed?",
+          reason: "needs_operator_decision"
+        });
+        assert.equal(blockResult.status, "blocked");
+        assertSlackSkipped(blockResult);
+
+        let graph = await readGraph(graphPath);
+        assert.equal(graph.graph.nodes.A.status, "blocked");
+        assert.equal(graph.graph.nodes.A.question, "Proceed?");
+        assertNodeHistoryEvent(graph, "A", "blocked");
+
+        const answerResult = await postJsonOk(visualizer.url, "/api/answer", {
+          nodeId: "A",
+          answer: "Proceed.",
+          responder: "operator"
+        });
+        assert.equal(answerResult.status, "pending");
+        assertSlackSkipped(answerResult);
+
+        graph = await readGraph(graphPath);
+        assert.equal(graph.graph.nodes.A.status, "pending");
+        assert.equal(graph.graph.nodes.A.answer, "Proceed.");
+        assert.equal(graph.graph.nodes.A.lease, undefined);
+        assertNodeHistoryEvent(graph, "A", "answered");
+      } finally {
+        await visualizer.close();
+      }
+    });
+  });
+
+  await t.test("fail", async () => {
+    await withTempGraph(async (graphPath) => {
+      const claim = await claimNode(graphPath, { nodeId: "A", session: "api-fail" });
+      await startNode(graphPath, { nodeId: "A", session: "api-fail", runId: claim.runId });
+      const visualizer = await createVisualizerServer({ graphPath, port: 0 });
+      try {
+        const result = await postJsonOk(visualizer.url, "/api/fail", {
+          nodeId: "A",
+          session: "api-fail",
+          runId: claim.runId,
+          reason: "tests failed",
+          report: "reports/api-fail.md"
+        });
+        assert.equal(result.status, "failed");
+        assertSlackSkipped(result);
+
+        const graph = await readGraph(graphPath);
+        assert.equal(graph.graph.nodes.A.status, "failed");
+        assert.equal(graph.graph.nodes.A.failureReason, "tests failed");
+        assert.equal(graph.graph.nodes.A.report, "reports/api-fail.md");
+        assertNodeHistoryEvent(graph, "A", "failed");
+      } finally {
+        await visualizer.close();
+      }
+    });
+  });
+
+  await t.test("reset", async () => {
+    await withTempGraph(async (graphPath) => {
+      await claimNode(graphPath, { nodeId: "A", session: "api-reset" });
+      const visualizer = await createVisualizerServer({ graphPath, port: 0 });
+      try {
+        const result = await postJsonOk(visualizer.url, "/api/reset", {
+          nodeId: "A",
+          reason: "retry"
+        });
+        assert.equal(result.status, "pending");
+
+        const graph = await readGraph(graphPath);
+        assert.equal(graph.graph.nodes.A.status, "pending");
+        assert.equal(graph.graph.nodes.A.lease, undefined);
+        assertNodeHistoryEvent(graph, "A", "reset");
+      } finally {
+        await visualizer.close();
+      }
+    });
+  });
+
+  await t.test("reset-subtree", async () => {
+    await withTempGraph(async (graphPath) => {
+      await claimNode(graphPath, { nodeId: "A", session: "api-a" });
+      await completeNode(graphPath, { nodeId: "A", session: "api-a", report: "reports/A.md" });
+      await claimNode(graphPath, { nodeId: "B", session: "api-b" });
+      const visualizer = await createVisualizerServer({ graphPath, port: 0 });
+      try {
+        const result = await postJsonOk(visualizer.url, "/api/reset-subtree", {
+          nodeId: "P",
+          reason: "rerun fanout"
+        });
+        assert.deepEqual(result.resetNodes, ["P", "B", "C"]);
+
+        const graph = await readGraph(graphPath);
+        assert.equal(graph.graph.nodes.P.status, "pending");
+        assert.equal(graph.graph.nodes.B.status, "pending");
+        assert.equal(graph.graph.nodes.B.lease, undefined);
+        assert.equal(graph.graph.nodes.A.status, "done");
+        assertNodeHistoryEvent(graph, "B", "reset");
+      } finally {
+        await visualizer.close();
+      }
+    });
+  });
+
+  await t.test("reset-reachable", async () => {
+    await withTempGraph(async (graphPath) => {
+      for (const nodeId of ["A", "B", "C", "G"]) {
+        await claimNode(graphPath, { nodeId, session: `api-${nodeId}` });
+        await completeNode(graphPath, { nodeId, session: `api-${nodeId}`, report: `reports/${nodeId}.md` });
+      }
+      const visualizer = await createVisualizerServer({ graphPath, port: 0 });
+      try {
+        const result = await postJsonOk(visualizer.url, "/api/reset-reachable", {
+          nodeId: "B",
+          reason: "rerun branch B"
+        });
+        assert.deepEqual(result.resetNodes, ["B", "G"]);
+
+        const graph = await readGraph(graphPath);
+        assert.equal(graph.graph.nodes.B.status, "pending");
+        assert.equal(graph.graph.nodes.B.report, undefined);
+        assert.equal(graph.graph.nodes.C.status, "done");
+        assert.equal(graph.graph.nodes.G.status, "pending");
+        assertNodeHistoryEvent(graph, "G", "reset");
+      } finally {
+        await visualizer.close();
+      }
+    });
+  });
+
+  await t.test("decompose", async () => {
+    await withTempGraph(async (graphPath) => {
+      const claim = await claimNode(graphPath, { nodeId: "A", session: "api-decompose" });
+      const visualizer = await createVisualizerServer({ graphPath, port: 0 });
+      try {
+        const result = await postJsonOk(visualizer.url, "/api/decompose", {
+          nodeId: "A",
+          session: "api-decompose",
+          runId: claim.runId,
+          kind: "series",
+          children: [
+            { id: "A1", title: "First child" },
+            { id: "A2", title: "Second child" }
+          ]
+        });
+        assert.deepEqual(result.children, ["A1", "A2"]);
+        assertSlackSkipped(result);
+
+        const graph = await readGraph(graphPath);
+        assert.equal(graph.graph.nodes.A.status, "pending");
+        assert.equal(graph.graph.nodes.A.kind, "series");
+        assert.deepEqual(graph.graph.nodes.A.children, ["A1", "A2"]);
+        assert.equal(graph.graph.nodes.A.lease, undefined);
+        assert.equal(graph.graph.nodes.A1.title, "First child");
+        assertNodeHistoryEvent(graph, "A", "decomposed");
+      } finally {
+        await visualizer.close();
+      }
+    });
+  });
+});
+
+test("visualizer node mutation APIs report lease mismatches without changing owners", async (t) => {
+  const cases = [
+    { route: "/api/start", status: "claimed" },
+    { route: "/api/renew", status: "claimed" },
+    { route: "/api/done", status: "claimed" },
+    { route: "/api/block", status: "claimed" },
+    { route: "/api/fail", status: "claimed" }
+  ];
+
+  for (const { route, status } of cases) {
+    await t.test(route, async () => {
+      await withTempGraph(async (graphPath) => {
+        const claim = await claimNode(graphPath, { nodeId: "A", session: "lease-owner" });
+        const visualizer = await createVisualizerServer({ graphPath, port: 0 });
+        try {
+          const response = await postJson(visualizer.url, route, {
+            nodeId: "A",
+            session: "wrong-owner",
+            runId: claim.runId
+          });
+          assert.equal(response.status, 500);
+          assert.match(await response.text(), /Lease session mismatch/);
+
+          const graph = await readGraph(graphPath);
+          assert.equal(graph.graph.nodes.A.status, status);
+          assert.equal(graph.graph.nodes.A.lease.session, "lease-owner");
+        } finally {
+          await visualizer.close();
+        }
+      });
+    });
+  }
+});
+
+test("visualizer done API refuses report-body paths outside the graph directory", async () => {
+  await withTempGraph(async (graphPath) => {
+    await claimNode(graphPath, { nodeId: "A", session: "api-containment" });
+    const escapedName = `spg-api-escaped-${Date.now()}.md`;
+    const escapedPath = join(dirname(graphPath), "..", escapedName);
+    const visualizer = await createVisualizerServer({ graphPath, port: 0 });
+    try {
+      const response = await postJson(visualizer.url, "/api/done", {
+        nodeId: "A",
+        session: "api-containment",
+        report: `../${escapedName}`,
+        reportBody: "must not escape"
+      });
+      assert.equal(response.status, 500);
+      assert.match(await response.text(), /Path escapes graph directory/);
+      assert.equal(existsSync(escapedPath), false);
+
+      const graph = await readGraph(graphPath);
+      assert.equal(graph.graph.nodes.A.status, "claimed");
+      assert.equal(graph.graph.nodes.A.report, undefined);
+    } finally {
+      await visualizer.close();
+      await rm(escapedPath, { force: true });
     }
   });
 });
@@ -687,6 +1177,8 @@ test("visualizer browser renderers escape graph text and worker logs", () => {
         expiresAt: "<script>expiry()</script>",
         question: "<script>question()</script>",
         answer: "<script>answer()</script>",
+        blockedReason: '<img src=x onerror="blocked()">',
+        failureReason: '<script>failed()</script><b>reason</b>',
         report: "<script>report()</script>",
         isolation: {
           cloneCwd: "<script>clone()</script>",
@@ -701,6 +1193,7 @@ test("visualizer browser renderers escape graph text and worker logs", () => {
     ],
     workerManager: {
       defaults: { cwd: "", sessionPrefix: "codex", codexCommand: "codex" },
+      recentFailureReason: '<script>manager()</script><img src=x onerror=alert(1)>',
       workers: [
         {
           id: 'worker-1" onclick="alert(1)',
@@ -721,10 +1214,20 @@ test("visualizer browser renderers escape graph text and worker logs", () => {
 
   assert.match(renderedHtml, /&lt;script&gt;alert\(1\)&lt;\/script&gt;/);
   assert.match(renderedHtml, /&lt;img src=x onerror=alert\(1\)&gt;/);
+  assert.match(renderedHtml, /&lt;img src=x onerror=&quot;blocked\(\)&quot;&gt;/);
+  assert.match(renderedHtml, /&lt;script&gt;failed\(\)&lt;\/script&gt;&lt;b&gt;reason&lt;\/b&gt;/);
   assert.match(renderedHtml, /\[truncated from 1027 chars\]/);
   assert.doesNotMatch(renderedHtml, /output\(\)/);
+  assert.doesNotMatch(renderedHtml, /blocked\(\)"/);
   assert.doesNotMatch(renderedHtml, /<script\b/);
   assert.doesNotMatch(renderedHtml, /<img\b/);
+
+  assert.match(element("worker-manager-summary").textContent, /<script>manager\(\)<\/script><img src=x onerror=alert\(1\)>/);
+  assert.equal(element("worker-manager-summary").innerHTML, "");
+
+  context.showRouteError("Worker start failed", new Error('<img src=x onerror=alert(1)><script>route()</script>'));
+  assert.match(element("subtitle").textContent, /Worker start failed: <img src=x onerror=alert\(1\)><script>route\(\)<\/script>/);
+  assert.equal(element("subtitle").innerHTML, "");
 });
 
 test("planar layout places series before parallel branches before final gate", () => {
