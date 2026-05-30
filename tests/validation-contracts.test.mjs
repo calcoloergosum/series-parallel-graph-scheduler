@@ -1,10 +1,82 @@
 import test from "node:test";
-import { assert, assertGeneratedGraphReachableAndAcyclic, assertGeneratedPathSpecificFailure, assertGeneratedTraversalSafe, assertReadableGraphValidationOutput, blockNode, buildPlanGraphJsonSchema, captureSchedulerCli, claimNode, copyGraphFixtureToTemp, createGeneratedMalformedVariant, defaultReportPath, diagnoseGraph, dirname, escapeRegExp, execFileAsync, exportOperationalEvents, fixtureGraph, generateSeededTopologyGraph, generatedWarningVariant, graphFixturePath, graphFixturesDir, graphSchemaPath, graphValidationCases, graphValidatorOutcomes, installGraphIoFaultInjectorForTests, invalidGraphValidatorOutcomes, join, lastHistory, lockArtifacts, mkdir, mkdtemp, operationalEventTaxonomy, operationalEvents, readFile, readGraph, readdir, redactOperationalEventDetails, rendererScriptPath, rm, schedulerScriptPath, sleep, summarizeGraph, symlink, tmpdir, utimes, validGraphValidatorOutcomes, validatePlanGraphFileResult, validateThenTraverseGraph, withGraphLock, withTempGraph, writeFile, writeGraphAtomic, writeReportFile } from "./helpers/plan-scheduler-harness.mjs";
+import { assert, assertGeneratedGraphReachableAndAcyclic, assertGeneratedPathSpecificFailure, assertGeneratedTraversalSafe, assertReadableGraphValidationOutput, blockNode, buildPlanGraphJsonSchema, buildReachableDepthMap, buildReachableParentMap, buildStableRootPathMap, captureSchedulerCli, claimNode, copyGraphFixtureToTemp, createGeneratedMalformedVariant, defaultReportPath, diagnoseGraph, dirname, escapeRegExp, execFileAsync, exportOperationalEvents, fixtureGraph, generateSeededTopologyGraph, generatedWarningVariant, graphFixturePath, graphFixturesDir, graphSchemaPath, graphValidationCases, graphValidatorOutcomes, installGraphIoFaultInjectorForTests, invalidGraphValidatorOutcomes, join, lastHistory, lockArtifacts, mkdir, mkdtemp, operationalEventTaxonomy, operationalEvents, readFile, readGraph, readdir, redactOperationalEventDetails, rendererScriptPath, rm, schedulerScriptPath, sleep, summarizeGraph, symlink, tmpdir, utimes, validGraphValidatorOutcomes, validatePlanGraphFileResult, validateThenTraverseGraph, withGraphLock, withTempGraph, writeFile, writeGraphAtomic, writeReportFile } from "./helpers/plan-scheduler-harness.mjs";
 
 test("graph summary includes plan metadata", () => {
   const summary = summarizeGraph(fixtureGraph());
   assert.equal(summary.title, "Fixture Implementation Plan");
   assert.equal(summary.description, "Coordinate fixture work across a series root, parallel branches, and a final gate.");
+});
+
+test("reachable ancestry helpers derive parents, depths, and stable root paths without mutating the graph", () => {
+  const graph = {
+    graphVersion: 1,
+    title: "Reachability helper plan",
+    graph: {
+      root: "ROOT",
+      nodes: {
+        ROOT: { title: "Root", kind: "parallel", status: "pending", children: ["B", "UNKNOWN", "A"] },
+        A: { title: "A", kind: "series", status: "pending", children: ["DIRECT", "DEEP"] },
+        B: { title: "B", kind: "parallel", status: "pending", children: ["B1", "SHARED", "DIRECT"] },
+        UNKNOWN: { title: "Unknown wrapper", kind: "custom-wrapper", status: "custom", children: ["U1"] },
+        DIRECT: { title: "Direct shared", kind: "task", status: "pending" },
+        DEEP: { title: "Deep wrapper", kind: "series", status: "pending", children: ["SHARED"] },
+        SHARED: { title: "Shared leaf", kind: "gate", status: "pending" },
+        B1: { title: "B child", kind: "task", status: "pending" },
+        U1: { title: "Unknown child", kind: "task", status: "pending" },
+        ORPHAN: { title: "Orphan", kind: "task", status: "pending" }
+      }
+    }
+  };
+  const before = structuredClone(graph);
+
+  assert.deepEqual(buildReachableParentMap(graph), {
+    ROOT: [],
+    A: ["ROOT"],
+    B: ["ROOT"],
+    UNKNOWN: ["ROOT"],
+    DIRECT: ["A", "B"],
+    DEEP: ["A"],
+    SHARED: ["B", "DEEP"],
+    B1: ["B"],
+    U1: ["UNKNOWN"]
+  });
+  assert.deepEqual(buildReachableDepthMap(graph), {
+    ROOT: 0,
+    A: 1,
+    B: 1,
+    UNKNOWN: 1,
+    DIRECT: 2,
+    DEEP: 2,
+    SHARED: 2,
+    B1: 2,
+    U1: 2
+  });
+  assert.deepEqual(buildStableRootPathMap(graph), {
+    ROOT: ["ROOT"],
+    A: ["ROOT", "A"],
+    B: ["ROOT", "B"],
+    UNKNOWN: ["ROOT", "UNKNOWN"],
+    DIRECT: ["ROOT", "A", "DIRECT"],
+    DEEP: ["ROOT", "A", "DEEP"],
+    SHARED: ["ROOT", "B", "SHARED"],
+    B1: ["ROOT", "B", "B1"],
+    U1: ["ROOT", "UNKNOWN", "U1"]
+  });
+  assert.deepEqual(graph, before);
+});
+
+test("reachable ancestry helpers reject cycles defensively", () => {
+  const graph = {
+    graph: {
+      root: "ROOT",
+      nodes: {
+        ROOT: { title: "Root", kind: "series", status: "pending", children: ["A"] },
+        A: { title: "Cycle", kind: "series", status: "pending", children: ["ROOT"] }
+      }
+    }
+  };
+
+  assert.throws(() => buildReachableDepthMap(graph), /Cycle detected in graph: ROOT -> A -> ROOT/);
 });
 
 test("graph diagnostics expose ready, lease, blocked, failed, and lock state", async () => {

@@ -12,13 +12,47 @@ import type {
   NodeIntegrationInputRefMetadata,
   NodeIsolationDetails,
   PlanGraphFile,
+  ReachableDepthMap,
+  ReachableParentMap,
+  ReachablePathMap,
   ReadyNode,
+  ReadyNodePriorityFields,
   WorkingNode
 } from "./contracts.js";
 
 export const terminalStatuses = new Set<string>(["done"]);
 export const busyStatuses = new Set<string>(["claimed", "running", "blocked", "review", "failed"]);
 export const autoReleasableStatuses = new Set<string>(["claimed", "running"]);
+
+export interface ReadyPriorityCandidate extends ReadyNodePriorityFields {
+  id: NodeId;
+}
+
+export interface ReadyPrioritySelection {
+  ready: ReadyNode;
+  priority: ReadyPriorityCandidate;
+}
+
+interface InternalReadyPriorityCandidate extends ReadyPriorityCandidate {
+  parentSet: Set<NodeId>;
+}
+
+export function compareReadyPriorityCandidates(left: ReadyPriorityCandidate, right: ReadyPriorityCandidate): number {
+  return left.depth - right.depth
+    || right.child_count - left.child_count
+    || left.shared_parent_count_with_current_task - right.shared_parent_count_with_current_task
+    || compareRawNodeIds(left.id, right.id);
+}
+
+function compareRawNodeIds(left: NodeId, right: NodeId): number {
+  if (left < right) {
+    return -1;
+  }
+  if (left > right) {
+    return 1;
+  }
+  return 0;
+}
 
 export function getNode(graph: PlanGraphFile, nodeId: NodeId): GraphNode {
   const node = graph.graph?.nodes?.[nodeId];
@@ -57,6 +91,18 @@ export function summarizeGraph(graph: PlanGraphFile): GraphSummary {
     root: graph.graph.root,
     counts
   };
+}
+
+export function buildReachableParentMap(graph: PlanGraphFile, startId: NodeId = graph.graph.root): ReachableParentMap {
+  return collectReachableMetadata(graph, startId).parentMap;
+}
+
+export function buildReachableDepthMap(graph: PlanGraphFile, startId: NodeId = graph.graph.root): ReachableDepthMap {
+  return collectReachableMetadata(graph, startId).depthMap;
+}
+
+export function buildStableRootPathMap(graph: PlanGraphFile, startId: NodeId = graph.graph.root): ReachablePathMap {
+  return collectReachableMetadata(graph, startId).pathMap;
 }
 
 export function listReadyLeafNodes(graph: PlanGraphFile, startId: NodeId = graph.graph.root): ReadyNode[] {
@@ -105,7 +151,103 @@ export function listReadyLeafNodes(graph: PlanGraphFile, startId: NodeId = graph
   }
 
   visit(startId);
-  return ready;
+  return attachReadyPriorityFields(graph, ready);
+}
+
+export function buildReadyPrioritySelections(
+  graph: PlanGraphFile,
+  readyNodes: ReadyNode[],
+  currentTaskId?: NodeId
+): ReadyPrioritySelection[] {
+  const { depthMap, pathMap } = collectReachableMetadata(graph, graph.graph.root);
+
+  return readyNodes.map((ready) => {
+    const candidate = buildInternalReadyPriorityCandidate(graph, ready.id, depthMap, pathMap, currentTaskId);
+
+    return {
+      ready,
+      priority: publicReadyPriorityCandidate(candidate)
+    };
+  });
+}
+
+export function attachReadyPriorityFields(
+  graph: PlanGraphFile,
+  readyNodes: ReadyNode[],
+  currentTaskId?: NodeId
+): ReadyNode[] {
+  return sortedReadyPrioritySelections(graph, readyNodes, currentTaskId)
+    .map(({ ready, priority }) => ({
+      ...ready,
+      depth: priority.depth,
+      child_count: priority.child_count,
+      shared_parent_count_with_current_task: priority.shared_parent_count_with_current_task
+    }));
+}
+
+export function countSharedParentsWithCurrentTask(
+  candidateParentSet: ReadonlySet<NodeId>,
+  pathMap: ReachablePathMap,
+  currentTaskId?: NodeId
+): number {
+  if (!currentTaskId || !pathMap[currentTaskId]) {
+    return 0;
+  }
+
+  const currentParentSet = parentSetFromPath(pathMap[currentTaskId]);
+  return [...candidateParentSet].filter((parentId) => currentParentSet.has(parentId)).length;
+}
+
+export function selectReadyNodeByPriority(
+  graph: PlanGraphFile,
+  readyNodes: ReadyNode[],
+  currentTaskId?: NodeId
+): ReadyNode | undefined {
+  return sortedReadyPrioritySelections(graph, readyNodes, currentTaskId)[0]?.ready;
+}
+
+function sortedReadyPrioritySelections(
+  graph: PlanGraphFile,
+  readyNodes: ReadyNode[],
+  currentTaskId?: NodeId
+): ReadyPrioritySelection[] {
+  return buildReadyPrioritySelections(graph, readyNodes, currentTaskId)
+    .sort((left, right) => compareReadyPriorityCandidates(left.priority, right.priority));
+}
+
+function buildInternalReadyPriorityCandidate(
+  graph: PlanGraphFile,
+  nodeId: NodeId,
+  depthMap: ReachableDepthMap,
+  pathMap: ReachablePathMap,
+  currentTaskId?: NodeId
+): InternalReadyPriorityCandidate {
+  const node = getNode(graph, nodeId);
+  // Shared-child DAGs keep every direct parent in parentMap, but priority
+  // metadata uses one stable shortest root path so shared-parent counts do not
+  // depend on traversal timing or duplicate parent encounters.
+  const parentSet = parentSetFromPath(pathMap[nodeId] ?? []);
+
+  return {
+    id: nodeId,
+    depth: depthMap[nodeId] ?? Number.MAX_SAFE_INTEGER,
+    child_count: Array.isArray(node.children) ? node.children.length : 0,
+    parentSet,
+    shared_parent_count_with_current_task: countSharedParentsWithCurrentTask(parentSet, pathMap, currentTaskId)
+  };
+}
+
+function publicReadyPriorityCandidate(candidate: InternalReadyPriorityCandidate): ReadyPriorityCandidate {
+  return {
+    id: candidate.id,
+    depth: candidate.depth,
+    child_count: candidate.child_count,
+    shared_parent_count_with_current_task: candidate.shared_parent_count_with_current_task
+  };
+}
+
+function parentSetFromPath(path: NodeId[]): Set<NodeId> {
+  return new Set(path.slice(0, -1));
 }
 
 export function resolveNodeBaseRef(graph: PlanGraphFile, nodeId: NodeId): NodeBaseRefMetadata {
@@ -365,6 +507,68 @@ export function findAncestorIds(graph: PlanGraphFile, nodeId: NodeId): NodeId[] 
 
   visit(rootId);
   return ancestors.reverse();
+}
+
+function collectReachableMetadata(
+  graph: PlanGraphFile,
+  startId: NodeId
+): {
+  parentMap: ReachableParentMap;
+  depthMap: ReachableDepthMap;
+  pathMap: ReachablePathMap;
+} {
+  assertReachableSubgraphAcyclic(graph, startId);
+
+  const parentMap: ReachableParentMap = { [startId]: [] };
+  const depthMap: ReachableDepthMap = { [startId]: 0 };
+  const pathMap: ReachablePathMap = { [startId]: [startId] };
+  const queue: NodeId[] = [startId];
+
+  for (let index = 0; index < queue.length; index += 1) {
+    const nodeId = queue[index];
+    const node = getNode(graph, nodeId);
+    const children = Array.isArray(node.children) ? [...node.children].sort(compareRawNodeIds) : [];
+
+    for (const childId of children) {
+      if (!parentMap[childId]) {
+        parentMap[childId] = [];
+        depthMap[childId] = depthMap[nodeId] + 1;
+        pathMap[childId] = [...pathMap[nodeId], childId];
+        queue.push(childId);
+      }
+      if (!parentMap[childId].includes(nodeId)) {
+        parentMap[childId].push(nodeId);
+      }
+    }
+  }
+
+  return { parentMap, depthMap, pathMap };
+}
+
+function assertReachableSubgraphAcyclic(graph: PlanGraphFile, startId: NodeId): void {
+  const visited = new Set<NodeId>();
+  const visiting = new Set<NodeId>();
+
+  function visit(nodeId: NodeId, stack: NodeId[]): void {
+    if (visiting.has(nodeId)) {
+      const cycleStart = stack.indexOf(nodeId);
+      const cycle = [...stack.slice(Math.max(0, cycleStart)), nodeId].join(" -> ");
+      throw new Error(`Cycle detected in graph: ${cycle}`);
+    }
+    if (visited.has(nodeId)) {
+      return;
+    }
+
+    const node = getNode(graph, nodeId);
+    visiting.add(nodeId);
+    for (const childId of Array.isArray(node.children) ? node.children : []) {
+      visit(childId, [...stack, nodeId]);
+    }
+    visiting.delete(nodeId);
+    visited.add(nodeId);
+  }
+
+  visit(startId, []);
 }
 
 function diagnosticNode(id: string, node: GraphNode, now: Date): DiagnosticNode {

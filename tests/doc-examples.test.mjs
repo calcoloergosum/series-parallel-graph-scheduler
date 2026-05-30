@@ -9,18 +9,18 @@ const commandEnv = { ...process.env, SLACK_WEBHOOK_URL: "" };
 
 test("README quickstart read-only examples keep scheduler JSON contracts", async () => {
   const readme = await readFile(readmePath, "utf8");
-  assertDocCommand(readme, "npm run summary -- --graph ./plan-improve.graph.json");
-  assertDocCommand(readme, "npm run ready -- --graph ./plan-improve.graph.json");
-  assertDocCommand(readme, "node scripts/plan-scheduler.mjs diagnostics --graph ./plan-improve.graph.json");
+  assertDocCommand(readme, "npm run summary -- --graph ./plan-scheduler-priority.graph.json");
+  assertDocCommand(readme, "npm run ready -- --graph ./plan-scheduler-priority.graph.json");
+  assertDocCommand(readme, "node scripts/plan-scheduler.mjs diagnostics --graph ./plan-scheduler-priority.graph.json");
 
   const dir = await mkdtemp(join(tmpdir(), "doc-quickstart-"));
-  const graphPath = join(dir, "plan-improve.graph.json");
+  const graphPath = join(dir, "plan-scheduler-priority.graph.json");
   try {
-    await writeFile(graphPath, await readFile(join(rootDir, "plan-improve.graph.json"), "utf8"), "utf8");
+    await writeFile(graphPath, await readFile(join(rootDir, "plan-scheduler-priority.graph.json"), "utf8"), "utf8");
 
     const summary = await runSchedulerJson(["summary", "--graph", graphPath]);
-    assert.equal(summary.title, "Improve Series-Parallel Graph Scheduler To 10/10");
-    assert.equal(summary.root, "TEN_ROOT");
+    assert.equal(summary.title, "Priority-Based Ready Task Selection Plan");
+    assert.equal(summary.root, "ROOT");
     assert.equal(typeof summary.counts, "object");
     assert.equal(typeof summary.totalNodes, "number");
 
@@ -116,14 +116,14 @@ test("README renderer example writes static HTML with the documented flags", asy
 
 test("README visualizer startup example serves the graph API", async () => {
   const readme = await readFile(readmePath, "utf8");
-  assertDocCommand(readme, "npm run serve -- --graph ./plan-improve.graph.json --cwd \"$PWD\" --port 8787");
+  assertDocCommand(readme, "npm run serve -- --graph ./plan-scheduler-priority.graph.json --cwd \"$PWD\" --port 8787");
   assertDocCommand(readme, "http://127.0.0.1:8787");
 
   const dir = await mkdtemp(join(tmpdir(), "doc-visualizer-"));
-  const graphPath = join(dir, "plan-improve.graph.json");
+  const graphPath = join(dir, "plan-scheduler-priority.graph.json");
   let child;
   try {
-    await writeFile(graphPath, await readFile(join(rootDir, "plan-improve.graph.json"), "utf8"), "utf8");
+    await writeFile(graphPath, await readFile(join(rootDir, "plan-scheduler-priority.graph.json"), "utf8"), "utf8");
     child = spawn(process.execPath, [
       schedulerScriptPath,
       "serve",
@@ -143,7 +143,7 @@ test("README visualizer startup example serves the graph API", async () => {
     const response = await fetch(`${url}/api/graph`);
     assert.equal(response.status, 200);
     const payload = await response.json();
-    assert.equal(payload.summary.title, "Improve Series-Parallel Graph Scheduler To 10/10");
+    assert.equal(payload.summary.title, "Priority-Based Ready Task Selection Plan");
     assert.match(payload.graphSvg, /<svg\b/);
   } finally {
     if (child) {

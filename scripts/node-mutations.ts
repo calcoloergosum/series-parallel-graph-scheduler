@@ -32,6 +32,7 @@ import {
   isLeaf,
   listReadyLeafNodes,
   resolveNodeBaseRef,
+  selectReadyNodeByPriority,
   summarizeGraph,
   terminalStatuses
 } from "./graph-traversal.js";
@@ -45,6 +46,7 @@ import { errorMessage, safeFilePart } from "./shared-utils.js";
 export interface ClaimNodeOptions {
   session?: string;
   nodeId?: NodeId;
+  currentTaskId?: NodeId;
   leaseSeconds?: number;
   resolveBaseRef?: boolean;
 }
@@ -272,13 +274,19 @@ const compositionResetClearedFields = ["outputRef", "integrationRef"] as const;
 
 export async function claimNode(
   graphPath: string,
-  { session, nodeId, leaseSeconds, resolveBaseRef }: ClaimNodeOptions = {}
+  { session, nodeId, currentTaskId, leaseSeconds, resolveBaseRef }: ClaimNodeOptions = {}
 ): Promise<LeaseClaimResult> {
   return withGraphLock(graphPath, async () => {
     const graph = await readGraph(graphPath);
     const released = releaseExpiredLeasesInGraph(graph, new Date());
     const ready = listReadyLeafNodes(graph);
-    const target = nodeId ? ready.find((node) => node.id === nodeId) : ready[0];
+    const claimSession = session || "codex";
+    const resolvedCurrentTaskId = nodeId
+      ? undefined
+      : resolveCurrentTaskIdForClaimPriority(graph, { session: claimSession, currentTaskId });
+    const target = nodeId
+      ? ready.find((node) => node.id === nodeId)
+      : selectReadyNodeByPriority(graph, ready, resolvedCurrentTaskId);
 
     if (!target) {
       if (released.length > 0) {
@@ -306,7 +314,7 @@ export async function claimNode(
     }
     node.status = "claimed";
     node.lease = {
-      session: session || "codex",
+      session: claimSession,
       runId,
       claimedAt: now.toISOString(),
       expiresAt: new Date(now.getTime() + leaseDuration * 1000).toISOString()
@@ -325,6 +333,24 @@ export async function claimNode(
     await writeGraphAtomic(graph, graphPath);
     return { nodeId: target.id, title: node.title, runId, lease: node.lease, baseRef: node.baseRef, releasedExpired: released, summary: summarizeGraph(graph) };
   });
+}
+
+function resolveCurrentTaskIdForClaimPriority(
+  graph: PlanGraphFile,
+  { session, currentTaskId }: { session: string; currentTaskId?: NodeId }
+): NodeId | undefined {
+  if (currentTaskId !== undefined) {
+    if (typeof currentTaskId !== "string" || currentTaskId.length === 0) {
+      throw new Error("Invalid explicit current task context: currentTaskId must be a non-empty string.");
+    }
+    return currentTaskId;
+  }
+
+  const activeSameSessionNodes = Object.entries(graph.graph.nodes)
+    .filter(([, node]) => node.lease?.session === session && ["claimed", "running"].includes(node.status || "pending"))
+    .map(([id]) => id);
+
+  return activeSameSessionNodes.length === 1 ? activeSameSessionNodes[0] : undefined;
 }
 
 export async function startNode(graphPath: string, { nodeId, session, runId }: OwnedNodeOptions = {}): Promise<NodeMutationResult> {

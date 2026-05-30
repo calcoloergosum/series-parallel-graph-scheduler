@@ -1,5 +1,5 @@
 import test from "node:test";
-import { assert, assertCliFails, blockNode, buildNodeWorkBranchName, buildWorkerPrompt, claimNode, completeNode, createRawWorkerManager, createRunClone, createSourceBranch, createWorkBranch, decomposeNode, dirname, escapeRegExp, execFileAsync, existsSync, failNode, fixtureGraph, formatWorkerReport, gitShow, join, knownTransitionStatuses, lastHistory, listReadyLeafNodes, mkdir, mkdtemp, normalizeWorkerReport, parallelWorkerIsolationGraph, parseCodexArgs, prepareBareRepository, prepareCompositionBareRepository, publishOutputRef, readFile, readGraph, readyIds, realpath, reconcileGraphStatus, recordWorkerRefMetadata, releaseExpiredLeases, renewNodeLease, resetSubtree, resolveNodeBaseRef, rm, runCodexPrompt, runGitCommand, runWorker, schedulerTransitionTable, setNodeStatus, startLeaseHeartbeat, startNode, tmpdir, waitFor, withLocalBareRemote, withTempGraph, writeCommittingWorkerRunner, writeFile, writeNoopWorkerRunner, writeWorkerIsolationGraph } from "./helpers/plan-scheduler-harness.mjs";
+import { assert, assertCliFails, blockNode, buildNodeWorkBranchName, buildWorkerPrompt, claimNode, completeNode, createRawWorkerManager, createRunClone, createSourceBranch, createWorkBranch, decomposeNode, depthPriorityGraph, dirname, escapeRegExp, execFileAsync, existsSync, failNode, fixtureGraph, formatWorkerReport, gitShow, join, knownTransitionStatuses, lastHistory, listReadyLeafNodes, mkdir, mkdtemp, normalizeWorkerReport, parallelWorkerIsolationGraph, parseCodexArgs, prepareBareRepository, prepareCompositionBareRepository, publishOutputRef, readFile, readGraph, readyIds, realpath, reconcileGraphStatus, recordWorkerRefMetadata, releaseExpiredLeases, renewNodeLease, resetSubtree, resolveNodeBaseRef, rm, runCodexPrompt, runGitCommand, runWorker, schedulerTransitionTable, setNodeStatus, startLeaseHeartbeat, startNode, tmpdir, waitFor, withLocalBareRemote, withTempGraph, writeCommittingWorkerRunner, writeFile, writeNoopWorkerRunner, writeWorkerIsolationGraph } from "./helpers/plan-scheduler-harness.mjs";
 
 test("worker report formatting includes auditable fields and stable volatile normalization", () => {
   const report = normalizeWorkerReport(formatWorkerReport({
@@ -1448,8 +1448,40 @@ test("worker prompt templates render every supported variable and preserve unkno
     assert.match(prompt, /unknown=\{\{missingPromptVariable\}\}/);
     assert.match(prompt, /nodeJson:\n\{\n {2}"title": "Bootstrap",/);
     assert.match(prompt, /readyJson:\n\[\n {2}\{\n {4}"id": "A",/);
+    assert.match(prompt, /"depth": 1/);
+    assert.match(prompt, /"child_count": 0/);
+    assert.match(prompt, /"shared_parent_count_with_current_task": 0/);
     assert.match(prompt, /summaryJson:\n\{\n {2}"graphVersion": 1,/);
     assert.match(prompt, /"totalNodes": 6/);
+  });
+
+  await withTempGraph(async (graphPath, dir) => {
+    await writeFile(graphPath, `${JSON.stringify(depthPriorityGraph(), null, 2)}\n`, "utf8");
+    const templatePath = join(dir, "ready-json-template.md");
+    await writeFile(templatePath, "{{readyJson}}", "utf8");
+
+    const prompt = await buildWorkerPrompt(graphPath, {
+      nodeId: "A_DEEP",
+      session: "codex-A",
+      runId: "run-test",
+      templatePath,
+      cwd: dir
+    });
+    const ready = JSON.parse(prompt);
+
+    assert.deepEqual(ready.map((node) => node.id), ["Z_SHALLOW", "A_DEEP"]);
+    assert.deepEqual(
+      ready.map((node) => ({
+        id: node.id,
+        depth: node.depth,
+        child_count: node.child_count,
+        shared_parent_count_with_current_task: node.shared_parent_count_with_current_task
+      })),
+      [
+        { id: "Z_SHALLOW", depth: 1, child_count: 0, shared_parent_count_with_current_task: 0 },
+        { id: "A_DEEP", depth: 2, child_count: 0, shared_parent_count_with_current_task: 0 }
+      ]
+    );
   });
 });
 

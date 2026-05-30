@@ -55,6 +55,7 @@ export interface WorkerRuntime {
   claimNode(graphPath: string, options: {
     session?: string;
     nodeId?: string;
+    currentTaskId?: string;
     leaseSeconds?: number;
     resolveBaseRef?: boolean;
   }): Promise<LeaseClaimResult>;

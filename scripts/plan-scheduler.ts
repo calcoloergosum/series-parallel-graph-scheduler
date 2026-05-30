@@ -78,6 +78,13 @@ export {
   writeReportFile
 } from "./graph-io.js";
 export {
+  attachReadyPriorityFields,
+  buildReachableDepthMap,
+  buildReachableParentMap,
+  buildStableRootPathMap,
+  buildReadyPrioritySelections,
+  compareReadyPriorityCandidates,
+  countSharedParentsWithCurrentTask,
   getNode,
   buildGraphDiagnostics,
   isLeaf,

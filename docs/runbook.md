@@ -27,6 +27,22 @@ actions. If a command fails and the terse message is not enough, rerun it with
 SPG_DEBUG=1 node scripts/plan-scheduler.mjs diagnostics --graph ./plan-improve.graph.json
 ```
 
+When diagnostics or `ready` shows multiple ready leaves, an automatic `claim`
+does not choose by display order. It first filters to nodes that are already
+ready, then applies the deterministic tuple `depth`, `child_count`,
+`shared_parent_count_with_current_task`: lower `depth`, higher `child_count`,
+lower `shared_parent_count_with_current_task`, then raw node id as the stable
+tie-breaker.
+
+Example: if `FIX_DOCS` is ready under `ROOT -> DOCS -> FIX_DOCS` and
+`FIX_API` is ready under `ROOT -> BUILD -> API -> PATCH -> FIX_API`,
+`FIX_DOCS` has the lower `depth`, so the next automatic claim selects it before
+the deeper `FIX_API`. This priority rule only orders ready candidates; it does
+not make blocked, busy, done, internal, or otherwise non-ready nodes claimable.
+For operator-directed work, use `claim --node FIX_API` to target a specific
+ready leaf. The explicit claim bypasses automatic priority ordering but still
+requires that the named node is ready.
+
 ## No Ready Work
 
 Symptoms:

@@ -11,7 +11,34 @@
         "id": "A",
         "title": "Bootstrap",
         "kind": "task",
-        "status": "pending"
+        "status": "pending",
+        "depth": 1,
+        "child_count": 0,
+        "shared_parent_count_with_current_task": 0
+      }
+    ],
+    "stderr": ""
+  },
+  "readyPriorityMetadata": {
+    "exitCode": 0,
+    "stdout": [
+      {
+        "id": "Z_SHALLOW",
+        "title": "Expected winner: shallower ready task",
+        "kind": "task",
+        "status": "pending",
+        "depth": 1,
+        "child_count": 0,
+        "shared_parent_count_with_current_task": 0
+      },
+      {
+        "id": "A_DEEP",
+        "title": "Deeper ready task",
+        "kind": "task",
+        "status": "pending",
+        "depth": 2,
+        "child_count": 0,
+        "shared_parent_count_with_current_task": 0
       }
     ],
     "stderr": ""
@@ -50,7 +77,10 @@
           "id": "A",
           "title": "Bootstrap",
           "kind": "task",
-          "status": "pending"
+          "status": "pending",
+          "depth": 1,
+          "child_count": 0,
+          "shared_parent_count_with_current_task": 0
         }
       ],
       "leases": {
@@ -81,6 +111,81 @@
           "category": "ready-work",
           "severity": "info",
           "summary": "1 ready leaf node(s) can be claimed.",
+          "commands": [
+            {
+              "command": "node scripts/plan-scheduler.mjs claim --graph <graphPath>",
+              "description": "Claim the next ready leaf using the scheduler's selection policy.",
+              "safeToRun": true
+            }
+          ]
+        }
+      ]
+    },
+    "stderr": ""
+  },
+  "diagnosticsPriorityMetadata": {
+    "exitCode": 0,
+    "stdout": {
+      "generatedAt": "<iso-date>",
+      "graphPath": "<graphPath>",
+      "summary": {
+        "graphVersion": 1,
+        "title": "Depth Priority Fixture",
+        "description": "Traversal reaches A_DEEP first, but depth priority should choose Z_SHALLOW.",
+        "totalNodes": 4,
+        "root": "ROOT",
+        "counts": {
+          "pending": 4
+        }
+      },
+      "nextReady": [
+        {
+          "id": "Z_SHALLOW",
+          "title": "Expected winner: shallower ready task",
+          "kind": "task",
+          "status": "pending",
+          "depth": 1,
+          "child_count": 0,
+          "shared_parent_count_with_current_task": 0
+        },
+        {
+          "id": "A_DEEP",
+          "title": "Deeper ready task",
+          "kind": "task",
+          "status": "pending",
+          "depth": 2,
+          "child_count": 0,
+          "shared_parent_count_with_current_task": 0
+        }
+      ],
+      "leases": {
+        "active": [],
+        "expired": []
+      },
+      "blocked": [],
+      "failed": [],
+      "isolation": {
+        "activeWorkers": [],
+        "missingOutputRefs": [],
+        "unresolvedBufferConflicts": []
+      },
+      "lock": {
+        "path": "<graphPath>.lock",
+        "exists": false,
+        "staleMs": 600000,
+        "stale": false,
+        "nextSteps": [
+          "No graph lock is present."
+        ]
+      },
+      "actions": [
+        "2 ready leaf node(s) can be claimed next."
+      ],
+      "remediation": [
+        {
+          "category": "ready-work",
+          "severity": "info",
+          "summary": "2 ready leaf node(s) can be claimed.",
           "commands": [
             {
               "command": "node scripts/plan-scheduler.mjs claim --graph <graphPath>",
@@ -135,6 +240,33 @@
         "root": "ROOT",
         "counts": {
           "pending": 5,
+          "claimed": 1
+        }
+      }
+    },
+    "stderr": ""
+  },
+  "claimPriority": {
+    "exitCode": 0,
+    "stdout": {
+      "nodeId": "Z_SHALLOW",
+      "title": "Expected winner: shallower ready task",
+      "runId": "<run-id>",
+      "lease": {
+        "session": "golden-claim-priority",
+        "runId": "<run-id>",
+        "claimedAt": "<iso-date>",
+        "expiresAt": "<iso-date>"
+      },
+      "releasedExpired": [],
+      "summary": {
+        "graphVersion": 2,
+        "title": "Depth Priority Fixture",
+        "description": "Traversal reaches A_DEEP first, but depth priority should choose Z_SHALLOW.",
+        "totalNodes": 4,
+        "root": "ROOT",
+        "counts": {
+          "pending": 3,
           "claimed": 1
         }
       }
@@ -526,6 +658,11 @@
       "exitCode": 1,
       "stdout": "",
       "stderr": "--child-json must be a JSON array"
+    },
+    "priorityEligibility": {
+      "exitCode": 1,
+      "stdout": "",
+      "stderr": "Node is not ready to claim: DEEP_WRAP in graph <graphPath>"
     }
   },
   "invalidGraph": {

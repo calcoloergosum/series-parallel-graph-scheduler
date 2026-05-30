@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "graphVersion": 1,
+  "graphVersion": 149,
   "title": "Priority-Based Ready Task Selection Plan",
   "description": "Implementation plan for changing automatic ready-task selection from traversal-order top-most popping to a deterministic priority tuple: depth ascending, child_count descending, shared_parent_count_with_current_task ascending.",
   "statusModel": [
@@ -49,30 +49,61 @@
       "ROOT": {
         "title": "Update scheduler ready-task selection",
         "kind": "series",
-        "status": "pending",
+        "status": "done",
         "children": [
           "DISCOVERY",
           "PARALLEL_IMPLEMENTATION",
           "INTEGRATION",
           "RELEASE"
         ],
-        "description": "First lock down the priority contract and baseline behavior. Then implement metadata, selection, current-task context, tests, and docs in parallel. Finally integrate and verify the scheduler as a whole."
+        "description": "First lock down the priority contract and baseline behavior. Then implement metadata, selection, current-task context, tests, and docs in parallel. Finally integrate and verify the scheduler as a whole.",
+        "completedAt": "2026-05-27T07:02:51.646Z",
+        "history": [
+          {
+            "at": "2026-05-27T07:02:51.646Z",
+            "event": "subtree-done",
+            "previousStatus": "pending",
+            "status": "done",
+            "completedAt": "2026-05-27T07:02:51.646Z",
+            "childIds": [
+              "DISCOVERY",
+              "PARALLEL_IMPLEMENTATION",
+              "INTEGRATION",
+              "RELEASE"
+            ]
+          }
+        ]
       },
       "DISCOVERY": {
         "title": "Define contract and baseline",
         "kind": "series",
-        "status": "pending",
+        "status": "done",
         "children": [
           "PRIO1",
           "PRIO2",
           "PRIO3"
         ],
-        "description": "Make the intended behavior precise before touching scheduler mutation code."
+        "description": "Make the intended behavior precise before touching scheduler mutation code.",
+        "completedAt": "2026-05-27T06:27:43.130Z",
+        "history": [
+          {
+            "at": "2026-05-27T06:27:43.130Z",
+            "event": "subtree-done",
+            "previousStatus": "pending",
+            "status": "done",
+            "completedAt": "2026-05-27T06:27:43.130Z",
+            "childIds": [
+              "PRIO1",
+              "PRIO2",
+              "PRIO3"
+            ]
+          }
+        ]
       },
       "PRIO1": {
         "title": "Map current ready traversal and claim surfaces",
         "kind": "task",
-        "status": "pending",
+        "status": "done",
         "description": "Identify every place that observes, displays, or consumes ready nodes, especially listReadyLeafNodes, claimNode, worker prompt generation, diagnostics, visualizer payloads, and tests.",
         "deliverables": [
           "A short implementation note naming the files and public outputs affected by ready ordering.",
@@ -83,12 +114,68 @@
           "The plan accounts for CLI ready output, automatic claim output, diagnostics nextReady output, worker readyJson, and visualizer ready lists.",
           "The current automatic claim behavior is confirmed to select the first ready candidate from traversal order.",
           "No code behavior is changed in this task."
-        ]
+        ],
+        "history": [
+          {
+            "at": "2026-05-27T06:20:53.473Z",
+            "event": "claimed",
+            "previousStatus": "pending",
+            "status": "claimed",
+            "session": "codex-A",
+            "runId": "run_20260527_062053473_PRIO1_1422f5b7",
+            "leaseExpiresAt": "2026-05-27T06:50:53.473Z"
+          },
+          {
+            "at": "2026-05-27T06:20:53.507Z",
+            "event": "running",
+            "previousStatus": "claimed",
+            "status": "running",
+            "session": "codex-A",
+            "runId": "run_20260527_062053473_PRIO1_1422f5b7",
+            "startedAt": "2026-05-27T06:20:53.507Z"
+          },
+          {
+            "at": "2026-05-27T06:21:53.539Z",
+            "event": "renewed",
+            "status": "running",
+            "session": "codex-A",
+            "runId": "run_20260527_062053473_PRIO1_1422f5b7",
+            "renewedAt": "2026-05-27T06:21:53.539Z",
+            "leaseExpiresAt": "2026-05-27T06:51:53.539Z"
+          },
+          {
+            "at": "2026-05-27T06:22:53.541Z",
+            "event": "renewed",
+            "status": "running",
+            "session": "codex-A",
+            "runId": "run_20260527_062053473_PRIO1_1422f5b7",
+            "renewedAt": "2026-05-27T06:22:53.541Z",
+            "leaseExpiresAt": "2026-05-27T06:52:53.541Z"
+          },
+          {
+            "at": "2026-05-27T06:23:39.869Z",
+            "event": "done",
+            "previousStatus": "running",
+            "status": "done",
+            "session": "codex-A",
+            "runId": "run_20260527_062053473_PRIO1_1422f5b7",
+            "completedAt": "2026-05-27T06:23:39.869Z",
+            "report": "reports/PRIO1-run_20260527_062053473_PRIO1_1422f5b7.md",
+            "clearedFields": [
+              "lease",
+              "blockedReason",
+              "question"
+            ]
+          }
+        ],
+        "startedAt": "2026-05-27T06:20:53.507Z",
+        "completedAt": "2026-05-27T06:23:39.869Z",
+        "report": "reports/PRIO1-run_20260527_062053473_PRIO1_1422f5b7.md"
       },
       "PRIO2": {
         "title": "Specify priority semantics and tie-breakers",
         "kind": "task",
-        "status": "pending",
+        "status": "done",
         "description": "Write the exact scheduler contract for the tuple: depth ascending, child_count descending, shared_parent_count_with_current_task ascending, plus deterministic behavior for exact ties.",
         "deliverables": [
           "A concise contract note in docs/compatibility-boundaries.md or a focused scheduler design note.",
@@ -100,12 +187,68 @@
           "Child count is defined as the ready candidate node's outgoing edge count, with leaf candidates naturally counting as 0.",
           "Shared parent count is based on ancestor or direct-parent semantics explicitly chosen and documented.",
           "The leaf-only claim model is either preserved with clear child_count implications or deliberately updated with compatibility notes."
-        ]
+        ],
+        "history": [
+          {
+            "at": "2026-05-27T06:23:40.271Z",
+            "event": "claimed",
+            "previousStatus": "pending",
+            "status": "claimed",
+            "session": "codex-A",
+            "runId": "run_20260527_062340271_PRIO2_34641709",
+            "leaseExpiresAt": "2026-05-27T06:53:40.271Z"
+          },
+          {
+            "at": "2026-05-27T06:23:40.298Z",
+            "event": "running",
+            "previousStatus": "claimed",
+            "status": "running",
+            "session": "codex-A",
+            "runId": "run_20260527_062340271_PRIO2_34641709",
+            "startedAt": "2026-05-27T06:23:40.298Z"
+          },
+          {
+            "at": "2026-05-27T06:24:40.373Z",
+            "event": "renewed",
+            "status": "running",
+            "session": "codex-A",
+            "runId": "run_20260527_062340271_PRIO2_34641709",
+            "renewedAt": "2026-05-27T06:24:40.373Z",
+            "leaseExpiresAt": "2026-05-27T06:54:40.373Z"
+          },
+          {
+            "at": "2026-05-27T06:25:40.373Z",
+            "event": "renewed",
+            "status": "running",
+            "session": "codex-A",
+            "runId": "run_20260527_062340271_PRIO2_34641709",
+            "renewedAt": "2026-05-27T06:25:40.373Z",
+            "leaseExpiresAt": "2026-05-27T06:55:40.373Z"
+          },
+          {
+            "at": "2026-05-27T06:25:52.811Z",
+            "event": "done",
+            "previousStatus": "running",
+            "status": "done",
+            "session": "codex-A",
+            "runId": "run_20260527_062340271_PRIO2_34641709",
+            "completedAt": "2026-05-27T06:25:52.811Z",
+            "report": "reports/PRIO2-run_20260527_062340271_PRIO2_34641709.md",
+            "clearedFields": [
+              "lease",
+              "blockedReason",
+              "question"
+            ]
+          }
+        ],
+        "startedAt": "2026-05-27T06:23:40.298Z",
+        "completedAt": "2026-05-27T06:25:52.811Z",
+        "report": "reports/PRIO2-run_20260527_062340271_PRIO2_34641709.md"
       },
       "PRIO3": {
         "title": "Record baseline checks and priority fixture needs",
         "kind": "task",
-        "status": "pending",
+        "status": "done",
         "description": "Run the existing authoritative checks and sketch the fixture matrix needed to prove the new selection policy.",
         "deliverables": [
           "Baseline results for npm run format:check, npm run typecheck, npm run build, and npm test.",
@@ -116,12 +259,59 @@
           "Baseline command results include exact pass/fail status and relevant error summaries.",
           "The fixture matrix names expected winning node ids for each priority rule.",
           "The implementation branches have enough context to write tests without re-litigating the contract."
-        ]
+        ],
+        "history": [
+          {
+            "at": "2026-05-27T06:25:53.102Z",
+            "event": "claimed",
+            "previousStatus": "pending",
+            "status": "claimed",
+            "session": "codex-D",
+            "runId": "run_20260527_062553102_PRIO3_1a137566",
+            "leaseExpiresAt": "2026-05-27T06:55:53.102Z"
+          },
+          {
+            "at": "2026-05-27T06:25:53.133Z",
+            "event": "running",
+            "previousStatus": "claimed",
+            "status": "running",
+            "session": "codex-D",
+            "runId": "run_20260527_062553102_PRIO3_1a137566",
+            "startedAt": "2026-05-27T06:25:53.133Z"
+          },
+          {
+            "at": "2026-05-27T06:26:53.168Z",
+            "event": "renewed",
+            "status": "running",
+            "session": "codex-D",
+            "runId": "run_20260527_062553102_PRIO3_1a137566",
+            "renewedAt": "2026-05-27T06:26:53.168Z",
+            "leaseExpiresAt": "2026-05-27T06:56:53.168Z"
+          },
+          {
+            "at": "2026-05-27T06:27:43.129Z",
+            "event": "done",
+            "previousStatus": "running",
+            "status": "done",
+            "session": "codex-D",
+            "runId": "run_20260527_062553102_PRIO3_1a137566",
+            "completedAt": "2026-05-27T06:27:43.129Z",
+            "report": "reports/PRIO3-run_20260527_062553102_PRIO3_1a137566.md",
+            "clearedFields": [
+              "lease",
+              "blockedReason",
+              "question"
+            ]
+          }
+        ],
+        "startedAt": "2026-05-27T06:25:53.133Z",
+        "completedAt": "2026-05-27T06:27:43.129Z",
+        "report": "reports/PRIO3-run_20260527_062553102_PRIO3_1a137566.md"
       },
       "PARALLEL_IMPLEMENTATION": {
         "title": "Implement priority selection branches",
         "kind": "parallel",
-        "status": "pending",
+        "status": "done",
         "children": [
           "GRAPH_METADATA",
           "SELECTION_POLICY",
@@ -129,23 +319,55 @@
           "TEST_COVERAGE",
           "DOCS_COMPAT"
         ],
-        "description": "Parallel work streams for graph-derived priority data, the comparator and claim behavior, current-task context, test coverage, and documentation."
+        "description": "Parallel work streams for graph-derived priority data, the comparator and claim behavior, current-task context, test coverage, and documentation.",
+        "completedAt": "2026-05-27T06:46:54.802Z",
+        "history": [
+          {
+            "at": "2026-05-27T06:46:54.802Z",
+            "event": "subtree-done",
+            "previousStatus": "pending",
+            "status": "done",
+            "completedAt": "2026-05-27T06:46:54.802Z",
+            "childIds": [
+              "GRAPH_METADATA",
+              "SELECTION_POLICY",
+              "CURRENT_CONTEXT",
+              "TEST_COVERAGE",
+              "DOCS_COMPAT"
+            ]
+          }
+        ]
       },
       "GRAPH_METADATA": {
         "title": "Graph metadata branch",
         "kind": "series",
-        "status": "pending",
+        "status": "done",
         "children": [
           "PRIO4",
           "PRIO5",
           "PRIO6"
         ],
-        "description": "Compute priority inputs from the graph in one reusable place."
+        "description": "Compute priority inputs from the graph in one reusable place.",
+        "completedAt": "2026-05-27T06:46:54.801Z",
+        "history": [
+          {
+            "at": "2026-05-27T06:46:54.801Z",
+            "event": "subtree-done",
+            "previousStatus": "pending",
+            "status": "done",
+            "completedAt": "2026-05-27T06:46:54.801Z",
+            "childIds": [
+              "PRIO4",
+              "PRIO5",
+              "PRIO6"
+            ]
+          }
+        ]
       },
       "PRIO4": {
         "title": "Add parent, depth, and path helpers",
         "kind": "task",
-        "status": "pending",
+        "status": "done",
         "description": "Implement helpers that derive parent sets, root depth, and stable root paths for reachable nodes without mutating the graph.",
         "deliverables": [
           "Pure traversal helpers with typed return values.",
@@ -156,12 +378,95 @@
           "Root depth is 0 and each reachable child depth is deterministic.",
           "Nodes with multiple reachable paths receive the documented depth/path behavior.",
           "Helpers are covered by unit tests before they are used by claim mutation code."
-        ]
+        ],
+        "history": [
+          {
+            "at": "2026-05-27T06:27:43.428Z",
+            "event": "claimed",
+            "previousStatus": "pending",
+            "status": "claimed",
+            "session": "codex-A",
+            "runId": "run_20260527_062743428_PRIO4_9d9a4e26",
+            "leaseExpiresAt": "2026-05-27T06:57:43.428Z"
+          },
+          {
+            "at": "2026-05-27T06:27:43.458Z",
+            "event": "running",
+            "previousStatus": "claimed",
+            "status": "running",
+            "session": "codex-A",
+            "runId": "run_20260527_062743428_PRIO4_9d9a4e26",
+            "startedAt": "2026-05-27T06:27:43.458Z"
+          },
+          {
+            "at": "2026-05-27T06:28:43.490Z",
+            "event": "renewed",
+            "status": "running",
+            "session": "codex-A",
+            "runId": "run_20260527_062743428_PRIO4_9d9a4e26",
+            "renewedAt": "2026-05-27T06:28:43.490Z",
+            "leaseExpiresAt": "2026-05-27T06:58:43.490Z"
+          },
+          {
+            "at": "2026-05-27T06:29:43.495Z",
+            "event": "renewed",
+            "status": "running",
+            "session": "codex-A",
+            "runId": "run_20260527_062743428_PRIO4_9d9a4e26",
+            "renewedAt": "2026-05-27T06:29:43.495Z",
+            "leaseExpiresAt": "2026-05-27T06:59:43.495Z"
+          },
+          {
+            "at": "2026-05-27T06:30:43.496Z",
+            "event": "renewed",
+            "status": "running",
+            "session": "codex-A",
+            "runId": "run_20260527_062743428_PRIO4_9d9a4e26",
+            "renewedAt": "2026-05-27T06:30:43.496Z",
+            "leaseExpiresAt": "2026-05-27T07:00:43.496Z"
+          },
+          {
+            "at": "2026-05-27T06:31:43.497Z",
+            "event": "renewed",
+            "status": "running",
+            "session": "codex-A",
+            "runId": "run_20260527_062743428_PRIO4_9d9a4e26",
+            "renewedAt": "2026-05-27T06:31:43.497Z",
+            "leaseExpiresAt": "2026-05-27T07:01:43.497Z"
+          },
+          {
+            "at": "2026-05-27T06:32:43.500Z",
+            "event": "renewed",
+            "status": "running",
+            "session": "codex-A",
+            "runId": "run_20260527_062743428_PRIO4_9d9a4e26",
+            "renewedAt": "2026-05-27T06:32:43.500Z",
+            "leaseExpiresAt": "2026-05-27T07:02:43.500Z"
+          },
+          {
+            "at": "2026-05-27T06:33:06.206Z",
+            "event": "done",
+            "previousStatus": "running",
+            "status": "done",
+            "session": "codex-A",
+            "runId": "run_20260527_062743428_PRIO4_9d9a4e26",
+            "completedAt": "2026-05-27T06:33:06.206Z",
+            "report": "reports/PRIO4-run_20260527_062743428_PRIO4_9d9a4e26.md",
+            "clearedFields": [
+              "lease",
+              "blockedReason",
+              "question"
+            ]
+          }
+        ],
+        "startedAt": "2026-05-27T06:27:43.458Z",
+        "completedAt": "2026-05-27T06:33:06.206Z",
+        "report": "reports/PRIO4-run_20260527_062743428_PRIO4_9d9a4e26.md"
       },
       "PRIO5": {
         "title": "Compute ready candidate priority fields",
         "kind": "task",
-        "status": "pending",
+        "status": "done",
         "description": "Attach or derive depth, child_count, parent set, and shared_parent_count_with_current_task for each ready candidate.",
         "deliverables": [
           "A candidate metadata model that can be reused by CLI, worker prompts, diagnostics, and visualizer payloads if the contract exposes priority data.",
@@ -172,12 +477,131 @@
           "Child count is calculated from the candidate node's children array length, defaulting to 0.",
           "Missing current task context produces equal shared parent counts without throwing.",
           "Existing ReadyNode consumers continue to compile."
-        ]
+        ],
+        "history": [
+          {
+            "at": "2026-05-27T06:33:06.602Z",
+            "event": "claimed",
+            "previousStatus": "pending",
+            "status": "claimed",
+            "session": "codex-A",
+            "runId": "run_20260527_063306602_PRIO5_656d1123",
+            "leaseExpiresAt": "2026-05-27T07:03:06.602Z"
+          },
+          {
+            "at": "2026-05-27T06:33:06.632Z",
+            "event": "running",
+            "previousStatus": "claimed",
+            "status": "running",
+            "session": "codex-A",
+            "runId": "run_20260527_063306602_PRIO5_656d1123",
+            "startedAt": "2026-05-27T06:33:06.632Z"
+          },
+          {
+            "at": "2026-05-27T06:34:06.666Z",
+            "event": "renewed",
+            "status": "running",
+            "session": "codex-A",
+            "runId": "run_20260527_063306602_PRIO5_656d1123",
+            "renewedAt": "2026-05-27T06:34:06.666Z",
+            "leaseExpiresAt": "2026-05-27T07:04:06.666Z"
+          },
+          {
+            "at": "2026-05-27T06:35:06.667Z",
+            "event": "renewed",
+            "status": "running",
+            "session": "codex-A",
+            "runId": "run_20260527_063306602_PRIO5_656d1123",
+            "renewedAt": "2026-05-27T06:35:06.667Z",
+            "leaseExpiresAt": "2026-05-27T07:05:06.667Z"
+          },
+          {
+            "at": "2026-05-27T06:36:06.670Z",
+            "event": "renewed",
+            "status": "running",
+            "session": "codex-A",
+            "runId": "run_20260527_063306602_PRIO5_656d1123",
+            "renewedAt": "2026-05-27T06:36:06.670Z",
+            "leaseExpiresAt": "2026-05-27T07:06:06.670Z"
+          },
+          {
+            "at": "2026-05-27T06:37:06.675Z",
+            "event": "renewed",
+            "status": "running",
+            "session": "codex-A",
+            "runId": "run_20260527_063306602_PRIO5_656d1123",
+            "renewedAt": "2026-05-27T06:37:06.675Z",
+            "leaseExpiresAt": "2026-05-27T07:07:06.675Z"
+          },
+          {
+            "at": "2026-05-27T06:38:06.674Z",
+            "event": "renewed",
+            "status": "running",
+            "session": "codex-A",
+            "runId": "run_20260527_063306602_PRIO5_656d1123",
+            "renewedAt": "2026-05-27T06:38:06.674Z",
+            "leaseExpiresAt": "2026-05-27T07:08:06.674Z"
+          },
+          {
+            "at": "2026-05-27T06:39:06.677Z",
+            "event": "renewed",
+            "status": "running",
+            "session": "codex-A",
+            "runId": "run_20260527_063306602_PRIO5_656d1123",
+            "renewedAt": "2026-05-27T06:39:06.677Z",
+            "leaseExpiresAt": "2026-05-27T07:09:06.677Z"
+          },
+          {
+            "at": "2026-05-27T06:40:06.680Z",
+            "event": "renewed",
+            "status": "running",
+            "session": "codex-A",
+            "runId": "run_20260527_063306602_PRIO5_656d1123",
+            "renewedAt": "2026-05-27T06:40:06.680Z",
+            "leaseExpiresAt": "2026-05-27T07:10:06.680Z"
+          },
+          {
+            "at": "2026-05-27T06:41:06.685Z",
+            "event": "renewed",
+            "status": "running",
+            "session": "codex-A",
+            "runId": "run_20260527_063306602_PRIO5_656d1123",
+            "renewedAt": "2026-05-27T06:41:06.685Z",
+            "leaseExpiresAt": "2026-05-27T07:11:06.685Z"
+          },
+          {
+            "at": "2026-05-27T06:42:06.682Z",
+            "event": "renewed",
+            "status": "running",
+            "session": "codex-A",
+            "runId": "run_20260527_063306602_PRIO5_656d1123",
+            "renewedAt": "2026-05-27T06:42:06.682Z",
+            "leaseExpiresAt": "2026-05-27T07:12:06.682Z"
+          },
+          {
+            "at": "2026-05-27T06:42:39.988Z",
+            "event": "done",
+            "previousStatus": "running",
+            "status": "done",
+            "session": "codex-A",
+            "runId": "run_20260527_063306602_PRIO5_656d1123",
+            "completedAt": "2026-05-27T06:42:39.988Z",
+            "report": "reports/PRIO5-run_20260527_063306602_PRIO5_656d1123.md",
+            "clearedFields": [
+              "lease",
+              "blockedReason",
+              "question"
+            ]
+          }
+        ],
+        "startedAt": "2026-05-27T06:33:06.632Z",
+        "completedAt": "2026-05-27T06:42:39.988Z",
+        "report": "reports/PRIO5-run_20260527_063306602_PRIO5_656d1123.md"
       },
       "PRIO6": {
         "title": "Harden metadata edge cases",
         "kind": "task",
-        "status": "pending",
+        "status": "done",
         "description": "Verify graph metadata helpers behave predictably on mixed series, parallel, gate, unknown-kind, shared-parent, and leaf-only graphs.",
         "deliverables": [
           "Unit tests for metadata helper edge cases.",
@@ -188,23 +612,112 @@
           "Metadata helpers do not change subtree readiness semantics.",
           "Tests cover both shallow and deep ready nodes.",
           "Tests cover a candidate with children if the contract permits non-leaf ready tasks."
-        ]
+        ],
+        "history": [
+          {
+            "at": "2026-05-27T06:42:40.330Z",
+            "event": "claimed",
+            "previousStatus": "pending",
+            "status": "claimed",
+            "session": "codex-A",
+            "runId": "run_20260527_064240330_PRIO6_04cfe446",
+            "leaseExpiresAt": "2026-05-27T07:12:40.330Z"
+          },
+          {
+            "at": "2026-05-27T06:42:40.353Z",
+            "event": "running",
+            "previousStatus": "claimed",
+            "status": "running",
+            "session": "codex-A",
+            "runId": "run_20260527_064240330_PRIO6_04cfe446",
+            "startedAt": "2026-05-27T06:42:40.353Z"
+          },
+          {
+            "at": "2026-05-27T06:43:40.468Z",
+            "event": "renewed",
+            "status": "running",
+            "session": "codex-A",
+            "runId": "run_20260527_064240330_PRIO6_04cfe446",
+            "renewedAt": "2026-05-27T06:43:40.468Z",
+            "leaseExpiresAt": "2026-05-27T07:13:40.468Z"
+          },
+          {
+            "at": "2026-05-27T06:44:40.471Z",
+            "event": "renewed",
+            "status": "running",
+            "session": "codex-A",
+            "runId": "run_20260527_064240330_PRIO6_04cfe446",
+            "renewedAt": "2026-05-27T06:44:40.471Z",
+            "leaseExpiresAt": "2026-05-27T07:14:40.471Z"
+          },
+          {
+            "at": "2026-05-27T06:45:40.466Z",
+            "event": "renewed",
+            "status": "running",
+            "session": "codex-A",
+            "runId": "run_20260527_064240330_PRIO6_04cfe446",
+            "renewedAt": "2026-05-27T06:45:40.466Z",
+            "leaseExpiresAt": "2026-05-27T07:15:40.466Z"
+          },
+          {
+            "at": "2026-05-27T06:46:40.469Z",
+            "event": "renewed",
+            "status": "running",
+            "session": "codex-A",
+            "runId": "run_20260527_064240330_PRIO6_04cfe446",
+            "renewedAt": "2026-05-27T06:46:40.469Z",
+            "leaseExpiresAt": "2026-05-27T07:16:40.469Z"
+          },
+          {
+            "at": "2026-05-27T06:46:54.800Z",
+            "event": "done",
+            "previousStatus": "running",
+            "status": "done",
+            "session": "codex-A",
+            "runId": "run_20260527_064240330_PRIO6_04cfe446",
+            "completedAt": "2026-05-27T06:46:54.800Z",
+            "report": "reports/PRIO6-run_20260527_064240330_PRIO6_04cfe446.md",
+            "clearedFields": [
+              "lease",
+              "blockedReason",
+              "question"
+            ]
+          }
+        ],
+        "startedAt": "2026-05-27T06:42:40.353Z",
+        "completedAt": "2026-05-27T06:46:54.800Z",
+        "report": "reports/PRIO6-run_20260527_064240330_PRIO6_04cfe446.md"
       },
       "SELECTION_POLICY": {
         "title": "Selection policy branch",
         "kind": "series",
-        "status": "pending",
+        "status": "done",
         "children": [
           "PRIO7",
           "PRIO8",
           "PRIO9"
         ],
-        "description": "Implement the deterministic comparator and wire it into automatic claims."
+        "description": "Implement the deterministic comparator and wire it into automatic claims.",
+        "completedAt": "2026-05-27T06:43:07.506Z",
+        "history": [
+          {
+            "at": "2026-05-27T06:43:07.506Z",
+            "event": "subtree-done",
+            "previousStatus": "pending",
+            "status": "done",
+            "completedAt": "2026-05-27T06:43:07.506Z",
+            "childIds": [
+              "PRIO7",
+              "PRIO8",
+              "PRIO9"
+            ]
+          }
+        ]
       },
       "PRIO7": {
         "title": "Implement priority comparator",
         "kind": "task",
-        "status": "pending",
+        "status": "done",
         "description": "Create a pure comparator for ready candidates using depth ascending, child_count descending, shared_parent_count_with_current_task ascending, then the final deterministic tie-breaker.",
         "deliverables": [
           "Comparator tests that isolate each tuple component.",
@@ -216,12 +729,77 @@
           "Higher child_count wins when depth ties.",
           "Lower shared_parent_count_with_current_task wins when depth and child_count tie.",
           "Exact ties always sort in the same order across repeated runs."
-        ]
+        ],
+        "history": [
+          {
+            "at": "2026-05-27T06:27:43.535Z",
+            "event": "claimed",
+            "previousStatus": "pending",
+            "status": "claimed",
+            "session": "codex-D",
+            "runId": "run_20260527_062743534_PRIO7_eefde4d0",
+            "leaseExpiresAt": "2026-05-27T06:57:43.534Z"
+          },
+          {
+            "at": "2026-05-27T06:27:43.566Z",
+            "event": "running",
+            "previousStatus": "claimed",
+            "status": "running",
+            "session": "codex-D",
+            "runId": "run_20260527_062743534_PRIO7_eefde4d0",
+            "startedAt": "2026-05-27T06:27:43.566Z"
+          },
+          {
+            "at": "2026-05-27T06:28:43.751Z",
+            "event": "renewed",
+            "status": "running",
+            "session": "codex-D",
+            "runId": "run_20260527_062743534_PRIO7_eefde4d0",
+            "renewedAt": "2026-05-27T06:28:43.751Z",
+            "leaseExpiresAt": "2026-05-27T06:58:43.751Z"
+          },
+          {
+            "at": "2026-05-27T06:29:43.752Z",
+            "event": "renewed",
+            "status": "running",
+            "session": "codex-D",
+            "runId": "run_20260527_062743534_PRIO7_eefde4d0",
+            "renewedAt": "2026-05-27T06:29:43.752Z",
+            "leaseExpiresAt": "2026-05-27T06:59:43.752Z"
+          },
+          {
+            "at": "2026-05-27T06:30:43.756Z",
+            "event": "renewed",
+            "status": "running",
+            "session": "codex-D",
+            "runId": "run_20260527_062743534_PRIO7_eefde4d0",
+            "renewedAt": "2026-05-27T06:30:43.756Z",
+            "leaseExpiresAt": "2026-05-27T07:00:43.756Z"
+          },
+          {
+            "at": "2026-05-27T06:31:39.086Z",
+            "event": "done",
+            "previousStatus": "running",
+            "status": "done",
+            "session": "codex-D",
+            "runId": "run_20260527_062743534_PRIO7_eefde4d0",
+            "completedAt": "2026-05-27T06:31:39.086Z",
+            "report": "reports/PRIO7-run_20260527_062743534_PRIO7_eefde4d0.md",
+            "clearedFields": [
+              "lease",
+              "blockedReason",
+              "question"
+            ]
+          }
+        ],
+        "startedAt": "2026-05-27T06:27:43.566Z",
+        "completedAt": "2026-05-27T06:31:39.086Z",
+        "report": "reports/PRIO7-run_20260527_062743534_PRIO7_eefde4d0.md"
       },
       "PRIO8": {
         "title": "Use priority ordering for automatic claims",
         "kind": "task",
-        "status": "pending",
+        "status": "done",
         "description": "Replace automatic selection of ready[0] with the best priority-ranked candidate while preserving explicit node claims and lease release behavior.",
         "deliverables": [
           "claimNode automatic selection uses the priority-ranked ready set.",
@@ -232,12 +810,77 @@
           "Automatic claim picks the expected priority winner when multiple nodes are ready.",
           "Explicit claim by node id succeeds only if that node is ready and does not re-rank to another node.",
           "No ready node is double-claimed under concurrent automatic claims."
-        ]
+        ],
+        "history": [
+          {
+            "at": "2026-05-27T06:31:39.421Z",
+            "event": "claimed",
+            "previousStatus": "pending",
+            "status": "claimed",
+            "session": "codex-D",
+            "runId": "run_20260527_063139420_PRIO8_6b10ce9e",
+            "leaseExpiresAt": "2026-05-27T07:01:39.420Z"
+          },
+          {
+            "at": "2026-05-27T06:31:39.519Z",
+            "event": "running",
+            "previousStatus": "claimed",
+            "status": "running",
+            "session": "codex-D",
+            "runId": "run_20260527_063139420_PRIO8_6b10ce9e",
+            "startedAt": "2026-05-27T06:31:39.519Z"
+          },
+          {
+            "at": "2026-05-27T06:32:39.566Z",
+            "event": "renewed",
+            "status": "running",
+            "session": "codex-D",
+            "runId": "run_20260527_063139420_PRIO8_6b10ce9e",
+            "renewedAt": "2026-05-27T06:32:39.566Z",
+            "leaseExpiresAt": "2026-05-27T07:02:39.566Z"
+          },
+          {
+            "at": "2026-05-27T06:33:39.568Z",
+            "event": "renewed",
+            "status": "running",
+            "session": "codex-D",
+            "runId": "run_20260527_063139420_PRIO8_6b10ce9e",
+            "renewedAt": "2026-05-27T06:33:39.568Z",
+            "leaseExpiresAt": "2026-05-27T07:03:39.568Z"
+          },
+          {
+            "at": "2026-05-27T06:34:39.571Z",
+            "event": "renewed",
+            "status": "running",
+            "session": "codex-D",
+            "runId": "run_20260527_063139420_PRIO8_6b10ce9e",
+            "renewedAt": "2026-05-27T06:34:39.571Z",
+            "leaseExpiresAt": "2026-05-27T07:04:39.571Z"
+          },
+          {
+            "at": "2026-05-27T06:35:25.290Z",
+            "event": "done",
+            "previousStatus": "running",
+            "status": "done",
+            "session": "codex-D",
+            "runId": "run_20260527_063139420_PRIO8_6b10ce9e",
+            "completedAt": "2026-05-27T06:35:25.290Z",
+            "report": "reports/PRIO8-run_20260527_063139420_PRIO8_6b10ce9e.md",
+            "clearedFields": [
+              "lease",
+              "blockedReason",
+              "question"
+            ]
+          }
+        ],
+        "startedAt": "2026-05-27T06:31:39.519Z",
+        "completedAt": "2026-05-27T06:35:25.290Z",
+        "report": "reports/PRIO8-run_20260527_063139420_PRIO8_6b10ce9e.md"
       },
       "PRIO9": {
         "title": "Align ready output surfaces",
         "kind": "task",
-        "status": "pending",
+        "status": "done",
         "description": "Decide and implement whether read-only ready surfaces should show priority-sorted order and optional priority metadata.",
         "deliverables": [
           "Consistent ordering for CLI ready, diagnostics nextReady, worker readyJson, and visualizer ready lists if the public contract chooses sorted display.",
@@ -248,23 +891,139 @@
           "Every ready consumer observes either the same priority order or a documented intentionally different order.",
           "Public JSON changes are covered by tests and docs.",
           "Existing consumers that only read id, title, kind, and status remain compatible."
-        ]
+        ],
+        "history": [
+          {
+            "at": "2026-05-27T06:35:25.566Z",
+            "event": "claimed",
+            "previousStatus": "pending",
+            "status": "claimed",
+            "session": "codex-D",
+            "runId": "run_20260527_063525566_PRIO9_015cd1e9",
+            "leaseExpiresAt": "2026-05-27T07:05:25.566Z"
+          },
+          {
+            "at": "2026-05-27T06:35:25.592Z",
+            "event": "running",
+            "previousStatus": "claimed",
+            "status": "running",
+            "session": "codex-D",
+            "runId": "run_20260527_063525566_PRIO9_015cd1e9",
+            "startedAt": "2026-05-27T06:35:25.592Z"
+          },
+          {
+            "at": "2026-05-27T06:36:25.704Z",
+            "event": "renewed",
+            "status": "running",
+            "session": "codex-D",
+            "runId": "run_20260527_063525566_PRIO9_015cd1e9",
+            "renewedAt": "2026-05-27T06:36:25.704Z",
+            "leaseExpiresAt": "2026-05-27T07:06:25.704Z"
+          },
+          {
+            "at": "2026-05-27T06:37:25.709Z",
+            "event": "renewed",
+            "status": "running",
+            "session": "codex-D",
+            "runId": "run_20260527_063525566_PRIO9_015cd1e9",
+            "renewedAt": "2026-05-27T06:37:25.709Z",
+            "leaseExpiresAt": "2026-05-27T07:07:25.709Z"
+          },
+          {
+            "at": "2026-05-27T06:38:25.709Z",
+            "event": "renewed",
+            "status": "running",
+            "session": "codex-D",
+            "runId": "run_20260527_063525566_PRIO9_015cd1e9",
+            "renewedAt": "2026-05-27T06:38:25.709Z",
+            "leaseExpiresAt": "2026-05-27T07:08:25.709Z"
+          },
+          {
+            "at": "2026-05-27T06:39:25.709Z",
+            "event": "renewed",
+            "status": "running",
+            "session": "codex-D",
+            "runId": "run_20260527_063525566_PRIO9_015cd1e9",
+            "renewedAt": "2026-05-27T06:39:25.709Z",
+            "leaseExpiresAt": "2026-05-27T07:09:25.709Z"
+          },
+          {
+            "at": "2026-05-27T06:40:25.712Z",
+            "event": "renewed",
+            "status": "running",
+            "session": "codex-D",
+            "runId": "run_20260527_063525566_PRIO9_015cd1e9",
+            "renewedAt": "2026-05-27T06:40:25.712Z",
+            "leaseExpiresAt": "2026-05-27T07:10:25.712Z"
+          },
+          {
+            "at": "2026-05-27T06:41:25.713Z",
+            "event": "renewed",
+            "status": "running",
+            "session": "codex-D",
+            "runId": "run_20260527_063525566_PRIO9_015cd1e9",
+            "renewedAt": "2026-05-27T06:41:25.713Z",
+            "leaseExpiresAt": "2026-05-27T07:11:25.713Z"
+          },
+          {
+            "at": "2026-05-27T06:42:25.716Z",
+            "event": "renewed",
+            "status": "running",
+            "session": "codex-D",
+            "runId": "run_20260527_063525566_PRIO9_015cd1e9",
+            "renewedAt": "2026-05-27T06:42:25.716Z",
+            "leaseExpiresAt": "2026-05-27T07:12:25.716Z"
+          },
+          {
+            "at": "2026-05-27T06:43:07.504Z",
+            "event": "done",
+            "previousStatus": "running",
+            "status": "done",
+            "session": "codex-D",
+            "runId": "run_20260527_063525566_PRIO9_015cd1e9",
+            "completedAt": "2026-05-27T06:43:07.504Z",
+            "report": "reports/PRIO9-run_20260527_063525566_PRIO9_015cd1e9.md",
+            "clearedFields": [
+              "lease",
+              "blockedReason",
+              "question"
+            ]
+          }
+        ],
+        "startedAt": "2026-05-27T06:35:25.592Z",
+        "completedAt": "2026-05-27T06:43:07.504Z",
+        "report": "reports/PRIO9-run_20260527_063525566_PRIO9_015cd1e9.md"
       },
       "CURRENT_CONTEXT": {
         "title": "Current task context branch",
         "kind": "series",
-        "status": "pending",
+        "status": "done",
         "children": [
           "PRIO10",
           "PRIO11",
           "PRIO12"
         ],
-        "description": "Define and implement how shared_parent_count_with_current_task finds the currently running task."
+        "description": "Define and implement how shared_parent_count_with_current_task finds the currently running task.",
+        "completedAt": "2026-05-27T06:41:57.093Z",
+        "history": [
+          {
+            "at": "2026-05-27T06:41:57.093Z",
+            "event": "subtree-done",
+            "previousStatus": "pending",
+            "status": "done",
+            "completedAt": "2026-05-27T06:41:57.093Z",
+            "childIds": [
+              "PRIO10",
+              "PRIO11",
+              "PRIO12"
+            ]
+          }
+        ]
       },
       "PRIO10": {
         "title": "Resolve current task source",
         "kind": "task",
-        "status": "pending",
+        "status": "done",
         "description": "Choose how automatic claim selection identifies the currently running task for shared-parent ranking.",
         "deliverables": [
           "A documented resolver order, such as explicit currentTaskId option first, then an active claimed/running node for the same session, then no current task.",
@@ -275,12 +1034,59 @@
           "The resolver never makes automatic claim nondeterministic when multiple active tasks exist.",
           "No-current-task behavior matches the scheduler selectionPolicy metadata in this graph.",
           "The worker flow can provide or infer current task context without breaking existing command shapes."
-        ]
+        ],
+        "history": [
+          {
+            "at": "2026-05-27T06:27:44.919Z",
+            "event": "claimed",
+            "previousStatus": "pending",
+            "status": "claimed",
+            "session": "codex-G",
+            "runId": "run_20260527_062744919_PRIO10_0cfab115",
+            "leaseExpiresAt": "2026-05-27T06:57:44.919Z"
+          },
+          {
+            "at": "2026-05-27T06:27:44.946Z",
+            "event": "running",
+            "previousStatus": "claimed",
+            "status": "running",
+            "session": "codex-G",
+            "runId": "run_20260527_062744919_PRIO10_0cfab115",
+            "startedAt": "2026-05-27T06:27:44.945Z"
+          },
+          {
+            "at": "2026-05-27T06:28:44.979Z",
+            "event": "renewed",
+            "status": "running",
+            "session": "codex-G",
+            "runId": "run_20260527_062744919_PRIO10_0cfab115",
+            "renewedAt": "2026-05-27T06:28:44.979Z",
+            "leaseExpiresAt": "2026-05-27T06:58:44.979Z"
+          },
+          {
+            "at": "2026-05-27T06:29:21.205Z",
+            "event": "done",
+            "previousStatus": "running",
+            "status": "done",
+            "session": "codex-G",
+            "runId": "run_20260527_062744919_PRIO10_0cfab115",
+            "completedAt": "2026-05-27T06:29:21.205Z",
+            "report": "reports/PRIO10-run_20260527_062744919_PRIO10_0cfab115.md",
+            "clearedFields": [
+              "lease",
+              "blockedReason",
+              "question"
+            ]
+          }
+        ],
+        "startedAt": "2026-05-27T06:27:44.945Z",
+        "completedAt": "2026-05-27T06:29:21.205Z",
+        "report": "reports/PRIO10-run_20260527_062744919_PRIO10_0cfab115.md"
       },
       "PRIO11": {
         "title": "Wire current context into claim selection",
         "kind": "task",
-        "status": "pending",
+        "status": "done",
         "description": "Pass the resolved current task id into ready candidate scoring during automatic claim selection.",
         "deliverables": [
           "claimNode and any lower-level helper accept the selected current task context.",
@@ -291,12 +1097,95 @@
           "The same ready graph can choose different candidates when current task context changes and the first two tuple fields tie.",
           "Invalid or absent current context falls back safely.",
           "Lease ownership and session attribution remain unchanged."
-        ]
+        ],
+        "history": [
+          {
+            "at": "2026-05-27T06:29:21.762Z",
+            "event": "claimed",
+            "previousStatus": "pending",
+            "status": "claimed",
+            "session": "codex-G",
+            "runId": "run_20260527_062921762_PRIO11_7ccc379f",
+            "leaseExpiresAt": "2026-05-27T06:59:21.762Z"
+          },
+          {
+            "at": "2026-05-27T06:29:21.829Z",
+            "event": "running",
+            "previousStatus": "claimed",
+            "status": "running",
+            "session": "codex-G",
+            "runId": "run_20260527_062921762_PRIO11_7ccc379f",
+            "startedAt": "2026-05-27T06:29:21.829Z"
+          },
+          {
+            "at": "2026-05-27T06:30:21.867Z",
+            "event": "renewed",
+            "status": "running",
+            "session": "codex-G",
+            "runId": "run_20260527_062921762_PRIO11_7ccc379f",
+            "renewedAt": "2026-05-27T06:30:21.867Z",
+            "leaseExpiresAt": "2026-05-27T07:00:21.867Z"
+          },
+          {
+            "at": "2026-05-27T06:31:21.870Z",
+            "event": "renewed",
+            "status": "running",
+            "session": "codex-G",
+            "runId": "run_20260527_062921762_PRIO11_7ccc379f",
+            "renewedAt": "2026-05-27T06:31:21.870Z",
+            "leaseExpiresAt": "2026-05-27T07:01:21.870Z"
+          },
+          {
+            "at": "2026-05-27T06:32:21.871Z",
+            "event": "renewed",
+            "status": "running",
+            "session": "codex-G",
+            "runId": "run_20260527_062921762_PRIO11_7ccc379f",
+            "renewedAt": "2026-05-27T06:32:21.871Z",
+            "leaseExpiresAt": "2026-05-27T07:02:21.871Z"
+          },
+          {
+            "at": "2026-05-27T06:33:21.873Z",
+            "event": "renewed",
+            "status": "running",
+            "session": "codex-G",
+            "runId": "run_20260527_062921762_PRIO11_7ccc379f",
+            "renewedAt": "2026-05-27T06:33:21.873Z",
+            "leaseExpiresAt": "2026-05-27T07:03:21.873Z"
+          },
+          {
+            "at": "2026-05-27T06:34:21.880Z",
+            "event": "renewed",
+            "status": "running",
+            "session": "codex-G",
+            "runId": "run_20260527_062921762_PRIO11_7ccc379f",
+            "renewedAt": "2026-05-27T06:34:21.880Z",
+            "leaseExpiresAt": "2026-05-27T07:04:21.880Z"
+          },
+          {
+            "at": "2026-05-27T06:34:45.520Z",
+            "event": "done",
+            "previousStatus": "running",
+            "status": "done",
+            "session": "codex-G",
+            "runId": "run_20260527_062921762_PRIO11_7ccc379f",
+            "completedAt": "2026-05-27T06:34:45.520Z",
+            "report": "reports/PRIO11-run_20260527_062921762_PRIO11_7ccc379f.md",
+            "clearedFields": [
+              "lease",
+              "blockedReason",
+              "question"
+            ]
+          }
+        ],
+        "startedAt": "2026-05-27T06:29:21.829Z",
+        "completedAt": "2026-05-27T06:34:45.520Z",
+        "report": "reports/PRIO11-run_20260527_062921762_PRIO11_7ccc379f.md"
       },
       "PRIO12": {
         "title": "Exercise shared-parent ranking behavior",
         "kind": "task",
-        "status": "pending",
+        "status": "done",
         "description": "Create tests that prove candidates sharing fewer parents with the current task win after depth and child_count ties.",
         "deliverables": [
           "A graph fixture where at least three ready candidates tie on depth and child_count but differ in shared parent count.",
@@ -307,23 +1196,139 @@
           "The expected winner is asserted by node id for every shared-parent scenario.",
           "The tests fail against traversal-order popping.",
           "The tests pass independent of object key insertion order."
-        ]
+        ],
+        "history": [
+          {
+            "at": "2026-05-27T06:34:45.826Z",
+            "event": "claimed",
+            "previousStatus": "pending",
+            "status": "claimed",
+            "session": "codex-G",
+            "runId": "run_20260527_063445826_PRIO12_3f9f84c3",
+            "leaseExpiresAt": "2026-05-27T07:04:45.826Z"
+          },
+          {
+            "at": "2026-05-27T06:34:45.865Z",
+            "event": "running",
+            "previousStatus": "claimed",
+            "status": "running",
+            "session": "codex-G",
+            "runId": "run_20260527_063445826_PRIO12_3f9f84c3",
+            "startedAt": "2026-05-27T06:34:45.865Z"
+          },
+          {
+            "at": "2026-05-27T06:35:45.900Z",
+            "event": "renewed",
+            "status": "running",
+            "session": "codex-G",
+            "runId": "run_20260527_063445826_PRIO12_3f9f84c3",
+            "renewedAt": "2026-05-27T06:35:45.900Z",
+            "leaseExpiresAt": "2026-05-27T07:05:45.900Z"
+          },
+          {
+            "at": "2026-05-27T06:36:45.900Z",
+            "event": "renewed",
+            "status": "running",
+            "session": "codex-G",
+            "runId": "run_20260527_063445826_PRIO12_3f9f84c3",
+            "renewedAt": "2026-05-27T06:36:45.900Z",
+            "leaseExpiresAt": "2026-05-27T07:06:45.900Z"
+          },
+          {
+            "at": "2026-05-27T06:37:45.905Z",
+            "event": "renewed",
+            "status": "running",
+            "session": "codex-G",
+            "runId": "run_20260527_063445826_PRIO12_3f9f84c3",
+            "renewedAt": "2026-05-27T06:37:45.905Z",
+            "leaseExpiresAt": "2026-05-27T07:07:45.905Z"
+          },
+          {
+            "at": "2026-05-27T06:38:45.905Z",
+            "event": "renewed",
+            "status": "running",
+            "session": "codex-G",
+            "runId": "run_20260527_063445826_PRIO12_3f9f84c3",
+            "renewedAt": "2026-05-27T06:38:45.905Z",
+            "leaseExpiresAt": "2026-05-27T07:08:45.905Z"
+          },
+          {
+            "at": "2026-05-27T06:39:45.910Z",
+            "event": "renewed",
+            "status": "running",
+            "session": "codex-G",
+            "runId": "run_20260527_063445826_PRIO12_3f9f84c3",
+            "renewedAt": "2026-05-27T06:39:45.910Z",
+            "leaseExpiresAt": "2026-05-27T07:09:45.910Z"
+          },
+          {
+            "at": "2026-05-27T06:40:45.910Z",
+            "event": "renewed",
+            "status": "running",
+            "session": "codex-G",
+            "runId": "run_20260527_063445826_PRIO12_3f9f84c3",
+            "renewedAt": "2026-05-27T06:40:45.910Z",
+            "leaseExpiresAt": "2026-05-27T07:10:45.910Z"
+          },
+          {
+            "at": "2026-05-27T06:41:45.914Z",
+            "event": "renewed",
+            "status": "running",
+            "session": "codex-G",
+            "runId": "run_20260527_063445826_PRIO12_3f9f84c3",
+            "renewedAt": "2026-05-27T06:41:45.914Z",
+            "leaseExpiresAt": "2026-05-27T07:11:45.914Z"
+          },
+          {
+            "at": "2026-05-27T06:41:57.091Z",
+            "event": "done",
+            "previousStatus": "running",
+            "status": "done",
+            "session": "codex-G",
+            "runId": "run_20260527_063445826_PRIO12_3f9f84c3",
+            "completedAt": "2026-05-27T06:41:57.091Z",
+            "report": "reports/PRIO12-run_20260527_063445826_PRIO12_3f9f84c3.md",
+            "clearedFields": [
+              "lease",
+              "blockedReason",
+              "question"
+            ]
+          }
+        ],
+        "startedAt": "2026-05-27T06:34:45.865Z",
+        "completedAt": "2026-05-27T06:41:57.091Z",
+        "report": "reports/PRIO12-run_20260527_063445826_PRIO12_3f9f84c3.md"
       },
       "TEST_COVERAGE": {
         "title": "Priority test branch",
         "kind": "series",
-        "status": "pending",
+        "status": "done",
         "children": [
           "PRIO13",
           "PRIO14",
           "PRIO15"
         ],
-        "description": "Add regression coverage across unit, integration, CLI, and concurrency behavior."
+        "description": "Add regression coverage across unit, integration, CLI, and concurrency behavior.",
+        "completedAt": "2026-05-27T06:42:38.082Z",
+        "history": [
+          {
+            "at": "2026-05-27T06:42:38.082Z",
+            "event": "subtree-done",
+            "previousStatus": "pending",
+            "status": "done",
+            "completedAt": "2026-05-27T06:42:38.082Z",
+            "childIds": [
+              "PRIO13",
+              "PRIO14",
+              "PRIO15"
+            ]
+          }
+        ]
       },
       "PRIO13": {
         "title": "Build priority fixture graphs",
         "kind": "task",
-        "status": "pending",
+        "status": "done",
         "description": "Create compact test graphs that isolate each priority tuple field while staying faithful to series-parallel readiness rules.",
         "deliverables": [
           "A depth-priority graph where traversal order would choose a deeper node but priority chooses a shallower node.",
@@ -334,12 +1339,95 @@
           "Each fixture has a readable expected winner.",
           "Fixtures avoid unrelated statuses unless the test is specifically about blocked, failed, or expired leases.",
           "Reusable fixture builders are preferred over checked-in JSON for one-off test cases."
-        ]
+        ],
+        "history": [
+          {
+            "at": "2026-05-27T06:27:45.137Z",
+            "event": "claimed",
+            "previousStatus": "pending",
+            "status": "claimed",
+            "session": "codex-E",
+            "runId": "run_20260527_062745137_PRIO13_03ac4b82",
+            "leaseExpiresAt": "2026-05-27T06:57:45.137Z"
+          },
+          {
+            "at": "2026-05-27T06:27:45.180Z",
+            "event": "running",
+            "previousStatus": "claimed",
+            "status": "running",
+            "session": "codex-E",
+            "runId": "run_20260527_062745137_PRIO13_03ac4b82",
+            "startedAt": "2026-05-27T06:27:45.180Z"
+          },
+          {
+            "at": "2026-05-27T06:28:45.233Z",
+            "event": "renewed",
+            "status": "running",
+            "session": "codex-E",
+            "runId": "run_20260527_062745137_PRIO13_03ac4b82",
+            "renewedAt": "2026-05-27T06:28:45.233Z",
+            "leaseExpiresAt": "2026-05-27T06:58:45.233Z"
+          },
+          {
+            "at": "2026-05-27T06:29:45.237Z",
+            "event": "renewed",
+            "status": "running",
+            "session": "codex-E",
+            "runId": "run_20260527_062745137_PRIO13_03ac4b82",
+            "renewedAt": "2026-05-27T06:29:45.237Z",
+            "leaseExpiresAt": "2026-05-27T06:59:45.237Z"
+          },
+          {
+            "at": "2026-05-27T06:30:45.239Z",
+            "event": "renewed",
+            "status": "running",
+            "session": "codex-E",
+            "runId": "run_20260527_062745137_PRIO13_03ac4b82",
+            "renewedAt": "2026-05-27T06:30:45.238Z",
+            "leaseExpiresAt": "2026-05-27T07:00:45.238Z"
+          },
+          {
+            "at": "2026-05-27T06:31:45.240Z",
+            "event": "renewed",
+            "status": "running",
+            "session": "codex-E",
+            "runId": "run_20260527_062745137_PRIO13_03ac4b82",
+            "renewedAt": "2026-05-27T06:31:45.240Z",
+            "leaseExpiresAt": "2026-05-27T07:01:45.240Z"
+          },
+          {
+            "at": "2026-05-27T06:32:45.242Z",
+            "event": "renewed",
+            "status": "running",
+            "session": "codex-E",
+            "runId": "run_20260527_062745137_PRIO13_03ac4b82",
+            "renewedAt": "2026-05-27T06:32:45.242Z",
+            "leaseExpiresAt": "2026-05-27T07:02:45.242Z"
+          },
+          {
+            "at": "2026-05-27T06:33:19.311Z",
+            "event": "done",
+            "previousStatus": "running",
+            "status": "done",
+            "session": "codex-E",
+            "runId": "run_20260527_062745137_PRIO13_03ac4b82",
+            "completedAt": "2026-05-27T06:33:19.311Z",
+            "report": "reports/PRIO13-run_20260527_062745137_PRIO13_03ac4b82.md",
+            "clearedFields": [
+              "lease",
+              "blockedReason",
+              "question"
+            ]
+          }
+        ],
+        "startedAt": "2026-05-27T06:27:45.180Z",
+        "completedAt": "2026-05-27T06:33:19.311Z",
+        "report": "reports/PRIO13-run_20260527_062745137_PRIO13_03ac4b82.md"
       },
       "PRIO14": {
         "title": "Add scheduler integration tests",
         "kind": "task",
-        "status": "pending",
+        "status": "done",
         "description": "Cover automatic claim selection through the real graph mutation path, including leases, graph version increments, and persisted state.",
         "deliverables": [
           "Integration tests for automatic claim winner selection.",
@@ -350,12 +1438,59 @@
           "Tests assert persisted graph status and lease data after selection.",
           "A traversal-order implementation fails at least one new integration test.",
           "Concurrent automatic claims still never return the same node id."
-        ]
+        ],
+        "history": [
+          {
+            "at": "2026-05-27T06:33:19.655Z",
+            "event": "claimed",
+            "previousStatus": "pending",
+            "status": "claimed",
+            "session": "codex-E",
+            "runId": "run_20260527_063319655_PRIO14_a202c5a9",
+            "leaseExpiresAt": "2026-05-27T07:03:19.655Z"
+          },
+          {
+            "at": "2026-05-27T06:33:19.689Z",
+            "event": "running",
+            "previousStatus": "claimed",
+            "status": "running",
+            "session": "codex-E",
+            "runId": "run_20260527_063319655_PRIO14_a202c5a9",
+            "startedAt": "2026-05-27T06:33:19.689Z"
+          },
+          {
+            "at": "2026-05-27T06:34:19.718Z",
+            "event": "renewed",
+            "status": "running",
+            "session": "codex-E",
+            "runId": "run_20260527_063319655_PRIO14_a202c5a9",
+            "renewedAt": "2026-05-27T06:34:19.718Z",
+            "leaseExpiresAt": "2026-05-27T07:04:19.718Z"
+          },
+          {
+            "at": "2026-05-27T06:35:13.033Z",
+            "event": "done",
+            "previousStatus": "running",
+            "status": "done",
+            "session": "codex-E",
+            "runId": "run_20260527_063319655_PRIO14_a202c5a9",
+            "completedAt": "2026-05-27T06:35:13.033Z",
+            "report": "reports/PRIO14-run_20260527_063319655_PRIO14_a202c5a9.md",
+            "clearedFields": [
+              "lease",
+              "blockedReason",
+              "question"
+            ]
+          }
+        ],
+        "startedAt": "2026-05-27T06:33:19.689Z",
+        "completedAt": "2026-05-27T06:35:13.033Z",
+        "report": "reports/PRIO14-run_20260527_063319655_PRIO14_a202c5a9.md"
       },
       "PRIO15": {
         "title": "Update CLI and golden coverage",
         "kind": "task",
-        "status": "pending",
+        "status": "done",
         "description": "Update command-line, prompt, diagnostics, and golden tests for any ready ordering or public JSON shape changes.",
         "deliverables": [
           "CLI ready output tests for priority order if read-only surfaces are sorted.",
@@ -366,23 +1501,139 @@
           "npm test covers the changed CLI-facing behavior.",
           "Golden updates are limited to intentional priority-related changes.",
           "Failure messages clearly distinguish priority ranking from readiness eligibility."
-        ]
+        ],
+        "history": [
+          {
+            "at": "2026-05-27T06:35:13.188Z",
+            "event": "claimed",
+            "previousStatus": "pending",
+            "status": "claimed",
+            "session": "codex-F",
+            "runId": "run_20260527_063513188_PRIO15_5fe5efe3",
+            "leaseExpiresAt": "2026-05-27T07:05:13.188Z"
+          },
+          {
+            "at": "2026-05-27T06:35:13.215Z",
+            "event": "running",
+            "previousStatus": "claimed",
+            "status": "running",
+            "session": "codex-F",
+            "runId": "run_20260527_063513188_PRIO15_5fe5efe3",
+            "startedAt": "2026-05-27T06:35:13.215Z"
+          },
+          {
+            "at": "2026-05-27T06:36:13.240Z",
+            "event": "renewed",
+            "status": "running",
+            "session": "codex-F",
+            "runId": "run_20260527_063513188_PRIO15_5fe5efe3",
+            "renewedAt": "2026-05-27T06:36:13.240Z",
+            "leaseExpiresAt": "2026-05-27T07:06:13.240Z"
+          },
+          {
+            "at": "2026-05-27T06:37:13.240Z",
+            "event": "renewed",
+            "status": "running",
+            "session": "codex-F",
+            "runId": "run_20260527_063513188_PRIO15_5fe5efe3",
+            "renewedAt": "2026-05-27T06:37:13.240Z",
+            "leaseExpiresAt": "2026-05-27T07:07:13.240Z"
+          },
+          {
+            "at": "2026-05-27T06:38:13.246Z",
+            "event": "renewed",
+            "status": "running",
+            "session": "codex-F",
+            "runId": "run_20260527_063513188_PRIO15_5fe5efe3",
+            "renewedAt": "2026-05-27T06:38:13.246Z",
+            "leaseExpiresAt": "2026-05-27T07:08:13.246Z"
+          },
+          {
+            "at": "2026-05-27T06:39:13.245Z",
+            "event": "renewed",
+            "status": "running",
+            "session": "codex-F",
+            "runId": "run_20260527_063513188_PRIO15_5fe5efe3",
+            "renewedAt": "2026-05-27T06:39:13.245Z",
+            "leaseExpiresAt": "2026-05-27T07:09:13.245Z"
+          },
+          {
+            "at": "2026-05-27T06:40:13.247Z",
+            "event": "renewed",
+            "status": "running",
+            "session": "codex-F",
+            "runId": "run_20260527_063513188_PRIO15_5fe5efe3",
+            "renewedAt": "2026-05-27T06:40:13.247Z",
+            "leaseExpiresAt": "2026-05-27T07:10:13.247Z"
+          },
+          {
+            "at": "2026-05-27T06:41:13.253Z",
+            "event": "renewed",
+            "status": "running",
+            "session": "codex-F",
+            "runId": "run_20260527_063513188_PRIO15_5fe5efe3",
+            "renewedAt": "2026-05-27T06:41:13.253Z",
+            "leaseExpiresAt": "2026-05-27T07:11:13.253Z"
+          },
+          {
+            "at": "2026-05-27T06:42:13.250Z",
+            "event": "renewed",
+            "status": "running",
+            "session": "codex-F",
+            "runId": "run_20260527_063513188_PRIO15_5fe5efe3",
+            "renewedAt": "2026-05-27T06:42:13.250Z",
+            "leaseExpiresAt": "2026-05-27T07:12:13.250Z"
+          },
+          {
+            "at": "2026-05-27T06:42:38.081Z",
+            "event": "done",
+            "previousStatus": "running",
+            "status": "done",
+            "session": "codex-F",
+            "runId": "run_20260527_063513188_PRIO15_5fe5efe3",
+            "completedAt": "2026-05-27T06:42:38.081Z",
+            "report": "reports/PRIO15-run_20260527_063513188_PRIO15_5fe5efe3.md",
+            "clearedFields": [
+              "lease",
+              "blockedReason",
+              "question"
+            ]
+          }
+        ],
+        "startedAt": "2026-05-27T06:35:13.215Z",
+        "completedAt": "2026-05-27T06:42:38.081Z",
+        "report": "reports/PRIO15-run_20260527_063513188_PRIO15_5fe5efe3.md"
       },
       "DOCS_COMPAT": {
         "title": "Documentation and compatibility branch",
         "kind": "series",
-        "status": "pending",
+        "status": "done",
         "children": [
           "PRIO16",
           "PRIO17",
           "PRIO18"
         ],
-        "description": "Document the new deterministic policy for operators and future maintainers."
+        "description": "Document the new deterministic policy for operators and future maintainers.",
+        "completedAt": "2026-05-27T06:32:33.222Z",
+        "history": [
+          {
+            "at": "2026-05-27T06:32:33.222Z",
+            "event": "subtree-done",
+            "previousStatus": "pending",
+            "status": "done",
+            "completedAt": "2026-05-27T06:32:33.222Z",
+            "childIds": [
+              "PRIO16",
+              "PRIO17",
+              "PRIO18"
+            ]
+          }
+        ]
       },
       "PRIO16": {
         "title": "Document operator-visible behavior",
         "kind": "task",
-        "status": "pending",
+        "status": "done",
         "description": "Update README and operator docs to explain how automatic claims choose among multiple ready tasks.",
         "deliverables": [
           "README operating model update for the priority tuple.",
@@ -393,12 +1644,59 @@
           "Docs use the exact tuple names: depth, child_count, shared_parent_count_with_current_task.",
           "The docs mention deterministic tie-breaking.",
           "The docs avoid implying workers can claim non-ready nodes."
-        ]
+        ],
+        "history": [
+          {
+            "at": "2026-05-27T06:27:46.159Z",
+            "event": "claimed",
+            "previousStatus": "pending",
+            "status": "claimed",
+            "session": "codex-C",
+            "runId": "run_20260527_062746159_PRIO16_de910b7a",
+            "leaseExpiresAt": "2026-05-27T06:57:46.159Z"
+          },
+          {
+            "at": "2026-05-27T06:27:46.190Z",
+            "event": "running",
+            "previousStatus": "claimed",
+            "status": "running",
+            "session": "codex-C",
+            "runId": "run_20260527_062746159_PRIO16_de910b7a",
+            "startedAt": "2026-05-27T06:27:46.190Z"
+          },
+          {
+            "at": "2026-05-27T06:28:46.228Z",
+            "event": "renewed",
+            "status": "running",
+            "session": "codex-C",
+            "runId": "run_20260527_062746159_PRIO16_de910b7a",
+            "renewedAt": "2026-05-27T06:28:46.228Z",
+            "leaseExpiresAt": "2026-05-27T06:58:46.228Z"
+          },
+          {
+            "at": "2026-05-27T06:28:57.039Z",
+            "event": "done",
+            "previousStatus": "running",
+            "status": "done",
+            "session": "codex-C",
+            "runId": "run_20260527_062746159_PRIO16_de910b7a",
+            "completedAt": "2026-05-27T06:28:57.039Z",
+            "report": "reports/PRIO16-run_20260527_062746159_PRIO16_de910b7a.md",
+            "clearedFields": [
+              "lease",
+              "blockedReason",
+              "question"
+            ]
+          }
+        ],
+        "startedAt": "2026-05-27T06:27:46.190Z",
+        "completedAt": "2026-05-27T06:28:57.039Z",
+        "report": "reports/PRIO16-run_20260527_062746159_PRIO16_de910b7a.md"
       },
       "PRIO17": {
         "title": "Update compatibility boundaries",
         "kind": "task",
-        "status": "pending",
+        "status": "done",
         "description": "Record the priority policy as part of the public scheduler behavior and note any JSON output additions.",
         "deliverables": [
           "docs/compatibility-boundaries.md names automatic claim ordering as stable behavior.",
@@ -409,12 +1707,68 @@
           "Compatibility docs distinguish eligibility from priority ranking.",
           "Breaking or additive changes are explicitly named.",
           "Docs match the implemented fallback for missing current task context."
-        ]
+        ],
+        "history": [
+          {
+            "at": "2026-05-27T06:28:57.369Z",
+            "event": "claimed",
+            "previousStatus": "pending",
+            "status": "claimed",
+            "session": "codex-C",
+            "runId": "run_20260527_062857369_PRIO17_50f19cba",
+            "leaseExpiresAt": "2026-05-27T06:58:57.369Z"
+          },
+          {
+            "at": "2026-05-27T06:28:57.397Z",
+            "event": "running",
+            "previousStatus": "claimed",
+            "status": "running",
+            "session": "codex-C",
+            "runId": "run_20260527_062857369_PRIO17_50f19cba",
+            "startedAt": "2026-05-27T06:28:57.397Z"
+          },
+          {
+            "at": "2026-05-27T06:29:57.429Z",
+            "event": "renewed",
+            "status": "running",
+            "session": "codex-C",
+            "runId": "run_20260527_062857369_PRIO17_50f19cba",
+            "renewedAt": "2026-05-27T06:29:57.429Z",
+            "leaseExpiresAt": "2026-05-27T06:59:57.429Z"
+          },
+          {
+            "at": "2026-05-27T06:30:57.432Z",
+            "event": "renewed",
+            "status": "running",
+            "session": "codex-C",
+            "runId": "run_20260527_062857369_PRIO17_50f19cba",
+            "renewedAt": "2026-05-27T06:30:57.432Z",
+            "leaseExpiresAt": "2026-05-27T07:00:57.432Z"
+          },
+          {
+            "at": "2026-05-27T06:31:33.222Z",
+            "event": "done",
+            "previousStatus": "running",
+            "status": "done",
+            "session": "codex-C",
+            "runId": "run_20260527_062857369_PRIO17_50f19cba",
+            "completedAt": "2026-05-27T06:31:33.222Z",
+            "report": "reports/PRIO17-run_20260527_062857369_PRIO17_50f19cba.md",
+            "clearedFields": [
+              "lease",
+              "blockedReason",
+              "question"
+            ]
+          }
+        ],
+        "startedAt": "2026-05-27T06:28:57.397Z",
+        "completedAt": "2026-05-27T06:31:33.222Z",
+        "report": "reports/PRIO17-run_20260527_062857369_PRIO17_50f19cba.md"
       },
       "PRIO18": {
         "title": "Add architecture notes for maintainers",
         "kind": "task",
-        "status": "pending",
+        "status": "done",
         "description": "Explain where priority metadata and comparison logic lives so future scheduling changes remain centralized.",
         "deliverables": [
           "docs/architecture.md or a linked design note describing the helper boundaries.",
@@ -425,23 +1779,76 @@
           "A maintainer can find the comparator and tests from the architecture note.",
           "The note references existing traversal and mutation modules accurately.",
           "No stale implementation paths are introduced."
-        ]
+        ],
+        "history": [
+          {
+            "at": "2026-05-27T06:31:33.544Z",
+            "event": "claimed",
+            "previousStatus": "pending",
+            "status": "claimed",
+            "session": "codex-C",
+            "runId": "run_20260527_063133544_PRIO18_966e1334",
+            "leaseExpiresAt": "2026-05-27T07:01:33.544Z"
+          },
+          {
+            "at": "2026-05-27T06:31:33.572Z",
+            "event": "running",
+            "previousStatus": "claimed",
+            "status": "running",
+            "session": "codex-C",
+            "runId": "run_20260527_063133544_PRIO18_966e1334",
+            "startedAt": "2026-05-27T06:31:33.572Z"
+          },
+          {
+            "at": "2026-05-27T06:32:33.220Z",
+            "event": "done",
+            "previousStatus": "running",
+            "status": "done",
+            "session": "codex-C",
+            "runId": "run_20260527_063133544_PRIO18_966e1334",
+            "completedAt": "2026-05-27T06:32:33.220Z",
+            "report": "reports/PRIO18-run_20260527_063133544_PRIO18_966e1334.md",
+            "clearedFields": [
+              "lease",
+              "blockedReason",
+              "question"
+            ]
+          }
+        ],
+        "startedAt": "2026-05-27T06:31:33.572Z",
+        "completedAt": "2026-05-27T06:32:33.220Z",
+        "report": "reports/PRIO18-run_20260527_063133544_PRIO18_966e1334.md"
       },
       "INTEGRATION": {
         "title": "Integrate and verify priority scheduling",
         "kind": "series",
-        "status": "pending",
+        "status": "done",
         "children": [
           "PRIO19",
           "PRIO20",
           "PRIO21"
         ],
-        "description": "Bring the branches together and prove the scheduler is coherent end to end."
+        "description": "Bring the branches together and prove the scheduler is coherent end to end.",
+        "completedAt": "2026-05-27T06:56:56.977Z",
+        "history": [
+          {
+            "at": "2026-05-27T06:56:56.977Z",
+            "event": "subtree-done",
+            "previousStatus": "pending",
+            "status": "done",
+            "completedAt": "2026-05-27T06:56:56.977Z",
+            "childIds": [
+              "PRIO19",
+              "PRIO20",
+              "PRIO21"
+            ]
+          }
+        ]
       },
       "PRIO19": {
         "title": "Reconcile branch changes and public outputs",
         "kind": "task",
-        "status": "pending",
+        "status": "done",
         "description": "Review combined code, tests, docs, and JSON outputs for consistency across traversal, claim, worker, diagnostics, and visualizer surfaces.",
         "deliverables": [
           "One integrated implementation path for computing and sorting ready candidates.",
@@ -452,12 +1859,86 @@
           "All ready surfaces agree with the documented contract.",
           "Explicit node claims and failure paths preserve existing error style.",
           "TypeScript contracts remain narrow and documented."
-        ]
+        ],
+        "history": [
+          {
+            "at": "2026-05-27T06:46:54.829Z",
+            "event": "claimed",
+            "previousStatus": "pending",
+            "status": "claimed",
+            "session": "codex-C",
+            "runId": "run_20260527_064654829_PRIO19_2e8f38bd",
+            "leaseExpiresAt": "2026-05-27T07:16:54.829Z"
+          },
+          {
+            "at": "2026-05-27T06:46:54.851Z",
+            "event": "running",
+            "previousStatus": "claimed",
+            "status": "running",
+            "session": "codex-C",
+            "runId": "run_20260527_064654829_PRIO19_2e8f38bd",
+            "startedAt": "2026-05-27T06:46:54.851Z"
+          },
+          {
+            "at": "2026-05-27T06:47:54.892Z",
+            "event": "renewed",
+            "status": "running",
+            "session": "codex-C",
+            "runId": "run_20260527_064654829_PRIO19_2e8f38bd",
+            "renewedAt": "2026-05-27T06:47:54.892Z",
+            "leaseExpiresAt": "2026-05-27T07:17:54.892Z"
+          },
+          {
+            "at": "2026-05-27T06:48:54.895Z",
+            "event": "renewed",
+            "status": "running",
+            "session": "codex-C",
+            "runId": "run_20260527_064654829_PRIO19_2e8f38bd",
+            "renewedAt": "2026-05-27T06:48:54.895Z",
+            "leaseExpiresAt": "2026-05-27T07:18:54.895Z"
+          },
+          {
+            "at": "2026-05-27T06:49:54.931Z",
+            "event": "renewed",
+            "status": "running",
+            "session": "codex-C",
+            "runId": "run_20260527_064654829_PRIO19_2e8f38bd",
+            "renewedAt": "2026-05-27T06:49:54.931Z",
+            "leaseExpiresAt": "2026-05-27T07:19:54.931Z"
+          },
+          {
+            "at": "2026-05-27T06:50:54.908Z",
+            "event": "renewed",
+            "status": "running",
+            "session": "codex-C",
+            "runId": "run_20260527_064654829_PRIO19_2e8f38bd",
+            "renewedAt": "2026-05-27T06:50:54.908Z",
+            "leaseExpiresAt": "2026-05-27T07:20:54.908Z"
+          },
+          {
+            "at": "2026-05-27T06:51:49.097Z",
+            "event": "done",
+            "previousStatus": "running",
+            "status": "done",
+            "session": "codex-C",
+            "runId": "run_20260527_064654829_PRIO19_2e8f38bd",
+            "completedAt": "2026-05-27T06:51:49.097Z",
+            "report": "reports/PRIO19-run_20260527_064654829_PRIO19_2e8f38bd.md",
+            "clearedFields": [
+              "lease",
+              "blockedReason",
+              "question"
+            ]
+          }
+        ],
+        "startedAt": "2026-05-27T06:46:54.851Z",
+        "completedAt": "2026-05-27T06:51:49.097Z",
+        "report": "reports/PRIO19-run_20260527_064654829_PRIO19_2e8f38bd.md"
       },
       "PRIO20": {
         "title": "Run authoritative checks",
         "kind": "task",
-        "status": "pending",
+        "status": "done",
         "description": "Run the repository's standard quality gates after integration.",
         "deliverables": [
           "Passing npm run format:check.",
@@ -469,12 +1950,77 @@
           "Any failure is either fixed or clearly documented with reproduction details.",
           "No test is skipped solely to make the priority change pass.",
           "Generated artifacts are not committed unless the repository already tracks them for this workflow."
-        ]
+        ],
+        "history": [
+          {
+            "at": "2026-05-27T06:51:49.518Z",
+            "event": "claimed",
+            "previousStatus": "pending",
+            "status": "claimed",
+            "session": "codex-C",
+            "runId": "run_20260527_065149518_PRIO20_0fb541bc",
+            "leaseExpiresAt": "2026-05-27T07:21:49.518Z"
+          },
+          {
+            "at": "2026-05-27T06:51:49.638Z",
+            "event": "running",
+            "previousStatus": "claimed",
+            "status": "running",
+            "session": "codex-C",
+            "runId": "run_20260527_065149518_PRIO20_0fb541bc",
+            "startedAt": "2026-05-27T06:51:49.638Z"
+          },
+          {
+            "at": "2026-05-27T06:52:49.694Z",
+            "event": "renewed",
+            "status": "running",
+            "session": "codex-C",
+            "runId": "run_20260527_065149518_PRIO20_0fb541bc",
+            "renewedAt": "2026-05-27T06:52:49.694Z",
+            "leaseExpiresAt": "2026-05-27T07:22:49.694Z"
+          },
+          {
+            "at": "2026-05-27T06:53:49.696Z",
+            "event": "renewed",
+            "status": "running",
+            "session": "codex-C",
+            "runId": "run_20260527_065149518_PRIO20_0fb541bc",
+            "renewedAt": "2026-05-27T06:53:49.696Z",
+            "leaseExpiresAt": "2026-05-27T07:23:49.696Z"
+          },
+          {
+            "at": "2026-05-27T06:54:49.699Z",
+            "event": "renewed",
+            "status": "running",
+            "session": "codex-C",
+            "runId": "run_20260527_065149518_PRIO20_0fb541bc",
+            "renewedAt": "2026-05-27T06:54:49.698Z",
+            "leaseExpiresAt": "2026-05-27T07:24:49.698Z"
+          },
+          {
+            "at": "2026-05-27T06:54:53.673Z",
+            "event": "done",
+            "previousStatus": "running",
+            "status": "done",
+            "session": "codex-C",
+            "runId": "run_20260527_065149518_PRIO20_0fb541bc",
+            "completedAt": "2026-05-27T06:54:53.673Z",
+            "report": "reports/PRIO20-run_20260527_065149518_PRIO20_0fb541bc.md",
+            "clearedFields": [
+              "lease",
+              "blockedReason",
+              "question"
+            ]
+          }
+        ],
+        "startedAt": "2026-05-27T06:51:49.638Z",
+        "completedAt": "2026-05-27T06:54:53.673Z",
+        "report": "reports/PRIO20-run_20260527_065149518_PRIO20_0fb541bc.md"
       },
       "PRIO21": {
         "title": "Run migration smoke and manual sanity checks",
         "kind": "task",
-        "status": "pending",
+        "status": "done",
         "description": "Verify built entry points and realistic operator flows still work with the priority policy.",
         "deliverables": [
           "Passing npm run smoke:migration or a documented environment-specific reason it cannot run.",
@@ -485,22 +2031,92 @@
           "Built CLI entry points operate on both relative and absolute graph paths.",
           "The smoke or manual claim proves traversal-order popping is no longer the automatic policy.",
           "Visualizer or diagnostics output remains escaped and readable."
-        ]
+        ],
+        "history": [
+          {
+            "at": "2026-05-27T06:54:53.715Z",
+            "event": "claimed",
+            "previousStatus": "pending",
+            "status": "claimed",
+            "session": "codex-G",
+            "runId": "run_20260527_065453714_PRIO21_dd993920",
+            "leaseExpiresAt": "2026-05-27T07:24:53.714Z"
+          },
+          {
+            "at": "2026-05-27T06:54:53.736Z",
+            "event": "running",
+            "previousStatus": "claimed",
+            "status": "running",
+            "session": "codex-G",
+            "runId": "run_20260527_065453714_PRIO21_dd993920",
+            "startedAt": "2026-05-27T06:54:53.736Z"
+          },
+          {
+            "at": "2026-05-27T06:55:53.770Z",
+            "event": "renewed",
+            "status": "running",
+            "session": "codex-G",
+            "runId": "run_20260527_065453714_PRIO21_dd993920",
+            "renewedAt": "2026-05-27T06:55:53.770Z",
+            "leaseExpiresAt": "2026-05-27T07:25:53.770Z"
+          },
+          {
+            "at": "2026-05-27T06:56:53.772Z",
+            "event": "renewed",
+            "status": "running",
+            "session": "codex-G",
+            "runId": "run_20260527_065453714_PRIO21_dd993920",
+            "renewedAt": "2026-05-27T06:56:53.772Z",
+            "leaseExpiresAt": "2026-05-27T07:26:53.772Z"
+          },
+          {
+            "at": "2026-05-27T06:56:56.976Z",
+            "event": "done",
+            "previousStatus": "running",
+            "status": "done",
+            "session": "codex-G",
+            "runId": "run_20260527_065453714_PRIO21_dd993920",
+            "completedAt": "2026-05-27T06:56:56.976Z",
+            "report": "reports/PRIO21-run_20260527_065453714_PRIO21_dd993920.md",
+            "clearedFields": [
+              "lease",
+              "blockedReason",
+              "question"
+            ]
+          }
+        ],
+        "startedAt": "2026-05-27T06:54:53.736Z",
+        "completedAt": "2026-05-27T06:56:56.976Z",
+        "report": "reports/PRIO21-run_20260527_065453714_PRIO21_dd993920.md"
       },
       "RELEASE": {
         "title": "Prepare priority scheduler change for review",
         "kind": "series",
-        "status": "pending",
+        "status": "done",
         "children": [
           "PRIO22",
           "PRIO23"
         ],
-        "description": "Package the completed change with evidence and clear review guidance."
+        "description": "Package the completed change with evidence and clear review guidance.",
+        "completedAt": "2026-05-27T07:02:51.646Z",
+        "history": [
+          {
+            "at": "2026-05-27T07:02:51.646Z",
+            "event": "subtree-done",
+            "previousStatus": "pending",
+            "status": "done",
+            "completedAt": "2026-05-27T07:02:51.646Z",
+            "childIds": [
+              "PRIO22",
+              "PRIO23"
+            ]
+          }
+        ]
       },
       "PRIO22": {
         "title": "Write final implementation summary",
         "kind": "task",
-        "status": "pending",
+        "status": "done",
         "description": "Summarize what changed, why the selection is deterministic, and what tests prove the new tuple behavior.",
         "deliverables": [
           "A concise summary suitable for a pull request or handoff report.",
@@ -511,12 +2127,59 @@
           "The summary names the exact priority tuple.",
           "Residual risks or contract decisions are called out plainly.",
           "The summary does not omit any failed or unrun verification command."
-        ]
+        ],
+        "history": [
+          {
+            "at": "2026-05-27T06:56:57.308Z",
+            "event": "claimed",
+            "previousStatus": "pending",
+            "status": "claimed",
+            "session": "codex-G",
+            "runId": "run_20260527_065657308_PRIO22_2656ec2d",
+            "leaseExpiresAt": "2026-05-27T07:26:57.308Z"
+          },
+          {
+            "at": "2026-05-27T06:56:57.338Z",
+            "event": "running",
+            "previousStatus": "claimed",
+            "status": "running",
+            "session": "codex-G",
+            "runId": "run_20260527_065657308_PRIO22_2656ec2d",
+            "startedAt": "2026-05-27T06:56:57.338Z"
+          },
+          {
+            "at": "2026-05-27T06:57:57.368Z",
+            "event": "renewed",
+            "status": "running",
+            "session": "codex-G",
+            "runId": "run_20260527_065657308_PRIO22_2656ec2d",
+            "renewedAt": "2026-05-27T06:57:57.368Z",
+            "leaseExpiresAt": "2026-05-27T07:27:57.368Z"
+          },
+          {
+            "at": "2026-05-27T06:58:31.300Z",
+            "event": "done",
+            "previousStatus": "running",
+            "status": "done",
+            "session": "codex-G",
+            "runId": "run_20260527_065657308_PRIO22_2656ec2d",
+            "completedAt": "2026-05-27T06:58:31.300Z",
+            "report": "reports/PRIO22-run_20260527_065657308_PRIO22_2656ec2d.md",
+            "clearedFields": [
+              "lease",
+              "blockedReason",
+              "question"
+            ]
+          }
+        ],
+        "startedAt": "2026-05-27T06:56:57.338Z",
+        "completedAt": "2026-05-27T06:58:31.300Z",
+        "report": "reports/PRIO22-run_20260527_065657308_PRIO22_2656ec2d.md"
       },
       "PRIO23": {
         "title": "Review release readiness",
         "kind": "task",
-        "status": "pending",
+        "status": "done",
         "description": "Perform a final review for compatibility, determinism, concurrency, and operator documentation.",
         "deliverables": [
           "A release-readiness checklist result.",
@@ -527,7 +2190,81 @@
           "No known blocker remains for the priority policy.",
           "Any deferred enhancement is explicitly out of scope.",
           "The graph can be reconciled cleanly after all tasks are complete."
-        ]
+        ],
+        "history": [
+          {
+            "at": "2026-05-27T06:58:31.666Z",
+            "event": "claimed",
+            "previousStatus": "pending",
+            "status": "claimed",
+            "session": "codex-G",
+            "runId": "run_20260527_065831666_PRIO23_bd8fca3d",
+            "leaseExpiresAt": "2026-05-27T07:28:31.666Z"
+          },
+          {
+            "at": "2026-05-27T06:58:31.792Z",
+            "event": "running",
+            "previousStatus": "claimed",
+            "status": "running",
+            "session": "codex-G",
+            "runId": "run_20260527_065831666_PRIO23_bd8fca3d",
+            "startedAt": "2026-05-27T06:58:31.792Z"
+          },
+          {
+            "at": "2026-05-27T06:59:31.843Z",
+            "event": "renewed",
+            "status": "running",
+            "session": "codex-G",
+            "runId": "run_20260527_065831666_PRIO23_bd8fca3d",
+            "renewedAt": "2026-05-27T06:59:31.843Z",
+            "leaseExpiresAt": "2026-05-27T07:29:31.843Z"
+          },
+          {
+            "at": "2026-05-27T07:00:31.844Z",
+            "event": "renewed",
+            "status": "running",
+            "session": "codex-G",
+            "runId": "run_20260527_065831666_PRIO23_bd8fca3d",
+            "renewedAt": "2026-05-27T07:00:31.844Z",
+            "leaseExpiresAt": "2026-05-27T07:30:31.844Z"
+          },
+          {
+            "at": "2026-05-27T07:01:31.846Z",
+            "event": "renewed",
+            "status": "running",
+            "session": "codex-G",
+            "runId": "run_20260527_065831666_PRIO23_bd8fca3d",
+            "renewedAt": "2026-05-27T07:01:31.846Z",
+            "leaseExpiresAt": "2026-05-27T07:31:31.846Z"
+          },
+          {
+            "at": "2026-05-27T07:02:31.850Z",
+            "event": "renewed",
+            "status": "running",
+            "session": "codex-G",
+            "runId": "run_20260527_065831666_PRIO23_bd8fca3d",
+            "renewedAt": "2026-05-27T07:02:31.850Z",
+            "leaseExpiresAt": "2026-05-27T07:32:31.850Z"
+          },
+          {
+            "at": "2026-05-27T07:02:51.645Z",
+            "event": "done",
+            "previousStatus": "running",
+            "status": "done",
+            "session": "codex-G",
+            "runId": "run_20260527_065831666_PRIO23_bd8fca3d",
+            "completedAt": "2026-05-27T07:02:51.645Z",
+            "report": "reports/PRIO23-run_20260527_065831666_PRIO23_bd8fca3d.md",
+            "clearedFields": [
+              "lease",
+              "blockedReason",
+              "question"
+            ]
+          }
+        ],
+        "startedAt": "2026-05-27T06:58:31.792Z",
+        "completedAt": "2026-05-27T07:02:51.645Z",
+        "report": "reports/PRIO23-run_20260527_065831666_PRIO23_bd8fca3d.md"
       }
     }
   }

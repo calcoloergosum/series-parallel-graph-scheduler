@@ -103,7 +103,11 @@ Changes that rename commands, remove flags, change flag meanings, remove package
 
 Commands that currently print JSON should continue to print a single JSON value to stdout:
 
-- `ready`: array of ready leaf objects with at least `id`, `kind`, and `status`; `title`, `question`, `answer`, and `answeredAt` are present when known on the node.
+- `ready`: array of ready leaf objects with at least `id`, `kind`, and
+  `status`; `title`, `question`, `answer`, and `answeredAt` are present when
+  known on the node. Priority metadata fields `depth`, `child_count`, and
+  `shared_parent_count_with_current_task` are additive when present and use the
+  meanings defined under "Automatic claim priority" below.
 - `summary`: object with at least `totalNodes`, `root`, and `counts`; `graphVersion`, `title`, and `description` are present when known on the graph.
 - `diagnostics`: object with at least `generatedAt`, `summary`,
   `nextReady`, `leases`, `blocked`, `failed`, `isolation`, and `actions`;
@@ -131,6 +135,16 @@ Commands that currently print JSON should continue to print a single JSON value 
 `slack` is `{ "skipped": true, "reason": string }`, `{ "sent": true }`, or `{ "failed": true, "reason": string }`. Delivery failures are non-disruptive: if the graph mutation succeeded, the command still exits successfully and reports the notification failure in this field.
 
 Slack notifications are an attention channel, not the audit record. Messages include compact operational pointers: event, node id/title, graph version, status counts, and report path when available. Report bodies, worker stdout/stderr, and operator-provided question, answer, and reason text remain in the graph file and reports by default.
+
+ReadyNode objects appear in `ready` stdout, `diagnostics.nextReady`, visualizer
+`ready` payloads, and worker prompt `readyJson`. These read-only surfaces use
+the same default priority order with no current task context, so
+`shared_parent_count_with_current_task` is `0` for every ready candidate unless a
+future surface explicitly accepts current-task context. ReadyNode objects emit
+the numeric priority metadata fields `depth`, `child_count`, and
+`shared_parent_count_with_current_task`. Existing consumers may ignore them.
+Removing, renaming, retyping, or changing the meaning of those fields is
+breaking unless a new compatibility version and migration note say otherwise.
 
 Adding fields to JSON results is compatible. Removing, renaming, retyping, nesting, or changing the meaning of existing successful-output fields is breaking unless covered by the allowed-change list below and tests are updated.
 
@@ -260,6 +274,68 @@ Readiness semantics are public behavior:
   from the parent base ref. Clean merges publish a parent output ref; conflicts
   move the parent to `review`; setup failures or missing child output refs move
   it to `blocked`.
+
+Automatic claim priority is public behavior:
+
+- Eligibility is still determined by the readiness rules above. Priority only
+  orders the ready candidate set; it must not make a blocked, busy, terminal,
+  internal, unreachable, or otherwise non-ready node claimable.
+- Automatic `claim` selects the best ready candidate by this tuple, in order:
+  `depth` ascending, `child_count` descending,
+  `shared_parent_count_with_current_task` ascending, then raw `id` ascending.
+  Explicit `claim --node ID` bypasses priority ordering and succeeds only when
+  `ID` is already ready.
+- `depth` is the graph distance from `graph.root` to the ready candidate along
+  the selected root path. The selected root path is the shortest valid
+  root-to-node path. If more than one shortest path reaches the same node, choose
+  the lexicographically smallest sequence of node ids after `graph.root`,
+  comparing raw string values, so depth and path-dependent metadata do not
+  depend on `graph.nodes` object insertion order or worker timing.
+- `child_count` is the ready candidate node's outgoing edge count: the length of
+  its `children` array when present, otherwise `0`. Because this compatibility
+  version preserves the leaf-only claim model, claimable ready candidates
+  naturally have `child_count: 0`; the field remains part of the comparator so a
+  future, explicitly documented eligibility change has defined ordering.
+- `parent set` uses ancestor semantics, not direct-parent-only semantics. For a
+  node, its parent set is every ancestor id on the selected root path, excluding
+  the node itself and including `graph.root` when the node is below the root.
+- `shared_parent_count_with_current_task` is the size of the intersection
+  between the ready candidate's parent set and the current task's parent set.
+  The current task is the single node id resolved for automatic claim priority;
+  comparator code must not infer it from map iteration, race timing, or
+  completion order.
+- Automatic claim resolves the current task source in this order:
+  1. An explicit `currentTaskId` option supplied to the claim API.
+  2. If no explicit option was supplied, exactly one active `claimed` or
+     `running` node whose lease session matches the claiming `session`.
+  3. No current task context.
+- Same-session active task inference is deterministic: zero active
+  `claimed`/`running` nodes means no current task; one active node means that
+  node is the current task; multiple active nodes also mean no current task
+  unless the caller supplies explicit `currentTaskId`. The resolver must not
+  pick among multiple active same-session tasks by graph order, claim time,
+  lease expiry, or any other incidental ordering.
+- When there is no current task context,
+  `shared_parent_count_with_current_task` is `0` for every ready candidate. This
+  is the default fallback for existing CLI callers because automatic `claim`
+  does not require a current-task option.
+- Current task context affects only automatic `claim` selection. Explicit
+  `claim --node ID` keeps its existing behavior and bypasses priority ordering.
+  The CLI command shape remains compatible: no current-task CLI flag is required
+  or stable in compatibility version `0.1`. If a future optional CLI flag exposes
+  current task context, omitting it must keep the default behavior above:
+  same-session inference when exactly one active same-session task exists,
+  otherwise no current task context and shared parent counts of `0`. The
+  TypeScript claim API may accept optional `currentTaskId` as a
+  backward-compatible option, and the worker flow may either pass that option or
+  rely on same-session inference.
+- Exact ties are resolved by ascending raw node id. This final tie-breaker is
+  stable across repeated runs and independent of object insertion order, ready
+  traversal order, lease timing, and worker timing.
+- Changing the leaf-only claim model, removing the final node-id tie-breaker, or
+  changing any priority field meaning is a compatibility change requiring tests,
+  README/operator-doc updates when user-visible, and a migration note if
+  existing workflows can observe different automatic claims.
 
 Mutation semantics are public behavior:
 

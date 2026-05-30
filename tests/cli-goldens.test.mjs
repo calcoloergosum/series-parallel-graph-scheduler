@@ -1,5 +1,5 @@
 import test from "node:test";
-import { answerNode, assert, assertCliFails, assertCliGolden, assertReadableGraphValidationOutput, blockNode, buildVisualizerPayload, buildWorkerPrompt, captureSchedulerCli, claimNode, completeNode, createServer, diagnoseGraph, dirname, execFileAsync, fixtureGraph, graphValidationCases, join, listReadyLeafNodes, mkdir, mkdtemp, parseArgs, parseChildrenArgs, readGraph, renderCliHelp, renderVisualizerHtml, rendererDocumentFixture, rendererScriptPath, resolveWorkerIsolation, rm, schedulerScriptPath, tmpdir, utimes, withTempGraph, writeFile } from "./helpers/plan-scheduler-harness.mjs";
+import { answerNode, assert, assertCliFails, assertCliGolden, assertReadableGraphValidationOutput, blockNode, buildVisualizerPayload, buildWorkerPrompt, captureSchedulerCli, claimNode, completeNode, createServer, depthPriorityGraph, diagnoseGraph, dirname, execFileAsync, fixtureGraph, graphValidationCases, join, listReadyLeafNodes, mkdir, mkdtemp, parseArgs, parseChildrenArgs, readGraph, renderCliHelp, renderVisualizerHtml, rendererDocumentFixture, rendererScriptPath, resolveWorkerIsolation, rm, schedulerScriptPath, tmpdir, utimes, withTempGraph, writeFile } from "./helpers/plan-scheduler-harness.mjs";
 
 test("answer records operator response and makes a blocked node ready", async () => {
   await withTempGraph(async (graphPath) => {
@@ -140,12 +140,20 @@ test("CLI golden outputs cover public command shapes", async () => {
   await captureWithFreshGraph("ready", (graphPath, replacements) =>
     captureSchedulerCli(["ready", "--graph", graphPath], { replacements })
   );
+  await captureWithFreshGraph("readyPriorityMetadata", async (graphPath, replacements) => {
+    await writeFile(graphPath, `${JSON.stringify(depthPriorityGraph(), null, 2)}\n`, "utf8");
+    return captureSchedulerCli(["ready", "--graph", graphPath], { replacements });
+  });
   await captureWithFreshGraph("summary", (graphPath, replacements) =>
     captureSchedulerCli(["summary", "--graph", graphPath], { replacements })
   );
   await captureWithFreshGraph("diagnostics", (graphPath, replacements) =>
     captureSchedulerCli(["diagnostics", "--graph", graphPath], { replacements })
   );
+  await captureWithFreshGraph("diagnosticsPriorityMetadata", async (graphPath, replacements) => {
+    await writeFile(graphPath, `${JSON.stringify(depthPriorityGraph(), null, 2)}\n`, "utf8");
+    return captureSchedulerCli(["diagnostics", "--graph", graphPath], { replacements });
+  });
   await captureWithFreshGraph("events", async (graphPath, replacements) => {
     await claimNode(graphPath, { nodeId: "A", session: "golden-events" });
     return captureSchedulerCli(["events", "--graph", graphPath, "--limit", "5"], { replacements });
@@ -153,6 +161,10 @@ test("CLI golden outputs cover public command shapes", async () => {
   await captureWithFreshGraph("claim", (graphPath, replacements) =>
     captureSchedulerCli(["claim", "--graph", graphPath, "--node", "A", "--session", "golden-claim", "--lease", "60"], { replacements })
   );
+  await captureWithFreshGraph("claimPriority", async (graphPath, replacements) => {
+    await writeFile(graphPath, `${JSON.stringify(depthPriorityGraph(), null, 2)}\n`, "utf8");
+    return captureSchedulerCli(["claim", "--graph", graphPath, "--session", "golden-claim-priority", "--lease", "60"], { replacements });
+  });
   await captureWithFreshGraph("start", async (graphPath, replacements) => {
     const claim = await claimNode(graphPath, { nodeId: "A", session: "golden-start" });
     return captureSchedulerCli(["start", "--graph", graphPath, "--node", "A", "--session", "golden-start", "--run", claim.runId], { replacements });
@@ -297,7 +309,11 @@ test("CLI golden outputs cover public command shapes", async () => {
   }));
   await captureWithFreshGraph("commandFailures", async (graphPath, replacements) => ({
     invalidTransition: await captureSchedulerCli(["done", "--graph", graphPath, "--node", "A"], { replacements }),
-    invalidChildJson: await captureSchedulerCli(["decompose", "--graph", graphPath, "--node", "A", "--child-json", "{}"], { replacements })
+    invalidChildJson: await captureSchedulerCli(["decompose", "--graph", graphPath, "--node", "A", "--child-json", "{}"], { replacements }),
+    priorityEligibility: await (async () => {
+      await writeFile(graphPath, `${JSON.stringify(depthPriorityGraph(), null, 2)}\n`, "utf8");
+      return captureSchedulerCli(["claim", "--graph", graphPath, "--node", "DEEP_WRAP", "--session", "golden-priority-failure"], { replacements });
+    })()
   }));
   await captureWithFreshGraph("invalidGraph", async (graphPath, replacements) => {
     const graph = fixtureGraph();

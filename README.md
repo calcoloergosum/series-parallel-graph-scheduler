@@ -37,8 +37,8 @@ This repository currently checks in named graph files:
 
 - `plan-example.graph.json`: a completed demo graph with renderer document
   content.
-- `plan-improve.graph.json`: the active improvement-plan graph for this
-  repository.
+- `plan-scheduler-priority.graph.json`: the active priority-selection graph for
+  this repository.
 
 The scheduler and renderer default to `plan.graph.json` when no graph is
 selected. That default filename is part of the compatibility contract, but this
@@ -48,9 +48,9 @@ your operating graph at `plan.graph.json`.
 Read the active graph without mutating it:
 
 ```bash
-npm run summary -- --graph ./plan-improve.graph.json
-npm run ready -- --graph ./plan-improve.graph.json
-node scripts/plan-scheduler.mjs diagnostics --graph ./plan-improve.graph.json
+npm run summary -- --graph ./plan-scheduler-priority.graph.json
+npm run ready -- --graph ./plan-scheduler-priority.graph.json
+node scripts/plan-scheduler.mjs diagnostics --graph ./plan-scheduler-priority.graph.json
 ```
 
 Render the demo graph to an HTML file:
@@ -62,7 +62,7 @@ npm run render -- --graph ./plan-example.graph.json --out /tmp/spg-plan-example.
 Open the local visualizer for the active graph:
 
 ```bash
-npm run serve -- --graph ./plan-improve.graph.json --cwd "$PWD" --port 8787
+npm run serve -- --graph ./plan-scheduler-priority.graph.json --cwd "$PWD" --port 8787
 ```
 
 Then open:
@@ -92,6 +92,28 @@ Claims are leases. `claim` releases expired `claimed` and `running` leases
 before choosing work. Active workers renew their own lease while Codex runs, so
 a long task is not mistaken for a dead worker.
 
+When several ready leaves are available, automatic `claim` chooses among only
+those ready candidates with a deterministic priority tuple:
+`depth`, `child_count`, `shared_parent_count_with_current_task`. The scheduler
+orders by lower `depth`, then higher `child_count`, then lower
+`shared_parent_count_with_current_task`; exact ties use a stable raw node-id
+tie-breaker. For example, if `DOCS_QUICK` is ready at depth 2 and
+`API_DETAIL` is ready at depth 4, an automatic claim selects `DOCS_QUICK` even
+when `API_DETAIL` appears earlier in a traversal or graph file. The deeper node
+can still be claimed later when it remains ready.
+
+Read-only ready surfaces use the same default priority order with no current
+task context: `ready` stdout, `diagnostics.nextReady`, worker prompt
+`readyJson`, and the visualizer ready list all expose the sorted ready list.
+Those ReadyNode objects include `depth`, `child_count`, and
+`shared_parent_count_with_current_task` as additive metadata. Existing
+consumers that only read `id`, `title`, `kind`, and `status` can keep ignoring
+the priority fields.
+
+Explicit node claims remain available for operator-directed work:
+`claim --node API_DETAIL` bypasses automatic priority ordering, but it does not
+bypass readiness. The named node must already be a ready leaf.
+
 Mutating commands write the graph through a filesystem lock and atomic rename,
 then regenerate the configured HTML view when the graph contains document
 content. Slack is only an attention channel: if `SLACK_WEBHOOK_URL` is set,
@@ -108,14 +130,14 @@ The graph file remains the source of truth.
 Use `--graph` for one command:
 
 ```bash
-npm run ready -- --graph ./plan-improve.graph.json
-node scripts/plan-scheduler.mjs summary --graph ./plan-improve.graph.json
+npm run ready -- --graph ./plan-scheduler-priority.graph.json
+node scripts/plan-scheduler.mjs summary --graph ./plan-scheduler-priority.graph.json
 ```
 
 Or set the default for a shell:
 
 ```bash
-export PLAN_GRAPH="$PWD/plan-improve.graph.json"
+export PLAN_GRAPH="$PWD/plan-scheduler-priority.graph.json"
 npm run ready
 npm run summary
 ```
@@ -129,10 +151,10 @@ positional graph path, then `PLAN_GRAPH`, then `plan.graph.json`.
 Prefer npm scripts for ordinary operation during development:
 
 ```bash
-npm run ready -- --graph ./plan-improve.graph.json
-npm run summary -- --graph ./plan-improve.graph.json
+npm run ready -- --graph ./plan-scheduler-priority.graph.json
+npm run summary -- --graph ./plan-scheduler-priority.graph.json
 npm run render -- --graph ./plan-example.graph.json
-npm run serve -- --graph ./plan-improve.graph.json
+npm run serve -- --graph ./plan-scheduler-priority.graph.json
 ```
 
 Those scripts rebuild first and then invoke `dist/scripts/*.js`.
@@ -142,7 +164,7 @@ or when preserving the historical command shape matters:
 
 ```bash
 npm run build
-node scripts/plan-scheduler.mjs claim --graph ./plan-improve.graph.json --session codex-A
+node scripts/plan-scheduler.mjs claim --graph ./plan-scheduler-priority.graph.json --session codex-A
 node scripts/plan-scheduler.mjs prompt --graph ./plan-example.graph.json --node ROOT --session codex-A
 node scripts/render-plan.mjs --graph ./plan-example.graph.json --out /tmp/spg-plan-example.html
 ```
@@ -244,10 +266,10 @@ Use `diagnostics` when a graph looks idle, wedged, or unsafe to mutate. It is
 read-only JSON, so it can be piped to `jq` or captured in incident notes:
 
 ```bash
-node scripts/plan-scheduler.mjs diagnostics --graph ./plan-improve.graph.json
-node scripts/plan-scheduler.mjs diagnostics --graph ./plan-improve.graph.json | jq '.actions'
-node scripts/plan-scheduler.mjs diagnostics --graph ./plan-improve.graph.json | jq '{ready: .nextReady[].id, blocked: [.blocked[].id], failed: [.failed[].id], expired: [.leases.expired[].id]}'
-node scripts/plan-scheduler.mjs events --graph ./plan-improve.graph.json --limit 20
+node scripts/plan-scheduler.mjs diagnostics --graph ./plan-scheduler-priority.graph.json
+node scripts/plan-scheduler.mjs diagnostics --graph ./plan-scheduler-priority.graph.json | jq '.actions'
+node scripts/plan-scheduler.mjs diagnostics --graph ./plan-scheduler-priority.graph.json | jq '{ready: .nextReady[].id, blocked: [.blocked[].id], failed: [.failed[].id], expired: [.leases.expired[].id]}'
+node scripts/plan-scheduler.mjs events --graph ./plan-scheduler-priority.graph.json --limit 20
 ```
 
 The diagnostic payload contains the normal `summary`, `nextReady`, active and
@@ -255,10 +277,10 @@ expired lease lists, blocked/review nodes, failed nodes, graph lock state, and a
 short `actions` array. Common recovery flow:
 
 ```bash
-node scripts/plan-scheduler.mjs diagnostics --graph ./plan-improve.graph.json
-node scripts/plan-scheduler.mjs release-expired --graph ./plan-improve.graph.json
-node scripts/plan-scheduler.mjs answer --graph ./plan-improve.graph.json --node NODE --answer "Proceed." --responder operator
-node scripts/plan-scheduler.mjs reset --graph ./plan-improve.graph.json --node NODE --reason "retry after triage"
+node scripts/plan-scheduler.mjs diagnostics --graph ./plan-scheduler-priority.graph.json
+node scripts/plan-scheduler.mjs release-expired --graph ./plan-scheduler-priority.graph.json
+node scripts/plan-scheduler.mjs answer --graph ./plan-scheduler-priority.graph.json --node NODE --answer "Proceed." --responder operator
+node scripts/plan-scheduler.mjs reset --graph ./plan-scheduler-priority.graph.json --node NODE --reason "retry after triage"
 ```
 
 If `.lock.exists` is true, inspect `.lock.owner` before manual cleanup. A stale
@@ -269,8 +291,8 @@ Use `events` when diagnostics shows a stuck node and you need the recent audit
 trail without parsing each node's `history` array by hand:
 
 ```bash
-node scripts/plan-scheduler.mjs events --graph ./plan-improve.graph.json --node NODE --limit 10
-node scripts/plan-scheduler.mjs events --graph ./plan-improve.graph.json --event blocked | jq '.[] | {at, nodeId, status, session, runId, details}'
+node scripts/plan-scheduler.mjs events --graph ./plan-scheduler-priority.graph.json --node NODE --limit 10
+node scripts/plan-scheduler.mjs events --graph ./plan-scheduler-priority.graph.json --event blocked | jq '.[] | {at, nodeId, status, session, runId, details}'
 ```
 
 Each event record has stable `at`, `event`, `nodeId`, `status`, `session`,
@@ -308,7 +330,7 @@ JSON-style issue path such as `$.graph.root` or
 Before running workers on a hand-edited graph, use a read-only load command:
 
 ```bash
-npm run summary -- --graph ./plan-improve.graph.json
+npm run summary -- --graph ./plan-scheduler-priority.graph.json
 ```
 
 Swap in the path to the graph you edited.
@@ -361,7 +383,7 @@ recent worker output. Its Worker Manager can start and stop local processes.
 Default loopback mode:
 
 ```bash
-npm run serve -- --graph ./plan-improve.graph.json --cwd "$PWD" --port 8787
+npm run serve -- --graph ./plan-scheduler-priority.graph.json --cwd "$PWD" --port 8787
 ```
 
 The default host is `127.0.0.1`. Binding to a non-loopback host refuses to start
@@ -371,7 +393,7 @@ enabled.
 Safe non-loopback mode:
 
 ```bash
-npm run serve -- --graph ./plan-improve.graph.json --host 0.0.0.0 --port 8787 --visualizer-write-token "replace-with-a-token"
+npm run serve -- --graph ./plan-scheduler-priority.graph.json --host 0.0.0.0 --port 8787 --visualizer-write-token "replace-with-a-token"
 ```
 
 For browser controls, put the token in the URL fragment:
@@ -386,7 +408,7 @@ reachable client may start and stop workers. It requires the explicit
 write controls are exposed:
 
 ```bash
-npm run serve -- --graph ./plan-improve.graph.json --host 0.0.0.0 --port 8787 --unsafe-visualizer-write
+npm run serve -- --graph ./plan-scheduler-priority.graph.json --host 0.0.0.0 --port 8787 --unsafe-visualizer-write
 ```
 
 See [`docs/security.md`](docs/security.md) before exposing the visualizer beyond
@@ -402,7 +424,7 @@ Run one real Codex worker and exit. This requires the Codex CLI and a ready
 node:
 
 ```bash
-npm run worker -- --graph ./plan-improve.graph.json --session codex-A --once --cwd "$PWD"
+npm run worker -- --graph ./plan-scheduler-priority.graph.json --session codex-A --once --cwd "$PWD"
 ```
 
 By default the child command is:
@@ -422,9 +444,9 @@ Run several background workers. This also requires the Codex CLI and ready work:
 
 ```bash
 mkdir -p runs/logs
-npm run worker -- --graph ./plan-improve.graph.json --session codex-A --cwd "$PWD" > runs/logs/codex-A.log 2>&1 &
-npm run worker -- --graph ./plan-improve.graph.json --session codex-B --cwd "$PWD" > runs/logs/codex-B.log 2>&1 &
-npm run worker -- --graph ./plan-improve.graph.json --session codex-C --cwd "$PWD" > runs/logs/codex-C.log 2>&1 &
+npm run worker -- --graph ./plan-scheduler-priority.graph.json --session codex-A --cwd "$PWD" > runs/logs/codex-A.log 2>&1 &
+npm run worker -- --graph ./plan-scheduler-priority.graph.json --session codex-B --cwd "$PWD" > runs/logs/codex-B.log 2>&1 &
+npm run worker -- --graph ./plan-scheduler-priority.graph.json --session codex-C --cwd "$PWD" > runs/logs/codex-C.log 2>&1 &
 ```
 
 ### Git-Isolated Workers
@@ -448,8 +470,8 @@ Set `scheduler.remote` in the graph before starting a pool, or pass a temporary
 worker override with `--remote`:
 
 ```bash
-npm run worker -- --graph ./plan-improve.graph.json --session codex-A --once --isolation git
-npm run worker -- --graph ./plan-improve.graph.json --session codex-B --once --isolation git --remote git@github.com:example/repo.git
+npm run worker -- --graph ./plan-scheduler-priority.graph.json --session codex-A --once --isolation git
+npm run worker -- --graph ./plan-scheduler-priority.graph.json --session codex-B --once --isolation git --remote git@github.com:example/repo.git
 ```
 
 In `--isolation git`, the worker validates the remote before claim, initializes
@@ -588,7 +610,7 @@ dry-run package manifest for that checklist.
 
 - `plan-example.graph.json`: completed sample graph with renderer document
   content.
-- `plan-improve.graph.json`: active repository-improvement graph.
+- `plan-scheduler-priority.graph.json`: active priority-selection graph.
 - `prompts/codex-worker-task.md`: default worker prompt template.
 - `scripts/plan-scheduler.ts`: scheduler CLI, exports, and visualizer server
   integration.

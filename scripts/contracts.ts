@@ -238,6 +238,16 @@ export interface GraphSummary {
   counts: Record<string, number>;
 }
 
+export type ReachableParentMap = Record<NodeId, NodeId[]>;
+export type ReachableDepthMap = Record<NodeId, number>;
+export type ReachablePathMap = Record<NodeId, NodeId[]>;
+
+export interface ReadyNodePriorityFields {
+  depth: number;
+  child_count: number;
+  shared_parent_count_with_current_task: number;
+}
+
 export interface GraphLockOwnerMetadata {
   lockVersion?: number;
   ownerId?: string;
@@ -295,6 +305,9 @@ export interface ReadyNode {
   title?: string;
   kind: NodeKind;
   status: NodeStatus;
+  depth?: number;
+  child_count?: number;
+  shared_parent_count_with_current_task?: number;
   question?: string;
   answer?: string;
   answeredAt?: IsoDateString;

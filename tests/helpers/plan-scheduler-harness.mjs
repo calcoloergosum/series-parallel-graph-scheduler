@@ -50,13 +50,20 @@ after(async () => {
 
 export const {
   answerNode,
+  attachReadyPriorityFields,
   blockNode,
   buildSlackNotificationText,
   buildNodeWorkBranchName,
+  buildReachableDepthMap,
+  buildReachableParentMap,
+  buildStableRootPathMap,
+  buildReadyPrioritySelections,
   buildWorkerPrompt,
   buildVisualizerPayload,
   claimNode,
+  compareReadyPriorityCandidates,
   completeNode,
+  countSharedParentsWithCurrentTask,
   createRunClone,
   createWorkBranch,
   createVisualizerServer,
@@ -261,6 +268,94 @@ export function deepReadinessGraph(statuses = {}) {
         CUSTOM_STATUS: node("CUSTOM_STATUS", "task", "waiting-for-signal"),
         FINAL_GATE: node("FINAL_GATE", "gate"),
         AFTER: node("AFTER", "task")
+      }
+    }
+  };
+}
+
+export function depthPriorityGraph() {
+  return {
+    graphVersion: 1,
+    title: "Depth Priority Fixture",
+    description: "Traversal reaches A_DEEP first, but depth priority should choose Z_SHALLOW.",
+    priorityFixture: {
+      rule: "depth",
+      traversalFirst: "A_DEEP",
+      expectedWinner: "Z_SHALLOW"
+    },
+    graph: {
+      root: "ROOT",
+      nodes: {
+        ROOT: { title: "Root", kind: "parallel", status: "pending", children: ["DEEP_WRAP", "Z_SHALLOW"] },
+        DEEP_WRAP: { title: "Deep wrapper", kind: "series", status: "pending", children: ["A_DEEP"] },
+        A_DEEP: { title: "Deeper ready task", kind: "task", status: "pending" },
+        Z_SHALLOW: { title: "Expected winner: shallower ready task", kind: "task", status: "pending" }
+      }
+    }
+  };
+}
+
+export function leafOnlyChildCountPriorityGraph() {
+  return {
+    graphVersion: 1,
+    title: "Leaf-Only Child Count Priority Fixture",
+    description: "Under the leaf-only readiness contract, child_count ties at 0 for claimable candidates.",
+    priorityFixture: {
+      rule: "child_count",
+      contract: "leaf-only",
+      expectedWinner: "A_NO_CHILDREN"
+    },
+    graph: {
+      root: "ROOT",
+      nodes: {
+        ROOT: {
+          title: "Root",
+          kind: "parallel",
+          status: "pending",
+          children: ["WIDE_INTERNAL", "B_EMPTY_CHILDREN", "A_NO_CHILDREN"]
+        },
+        WIDE_INTERNAL: {
+          title: "Internal node with more children is not a claimable leaf",
+          kind: "parallel",
+          status: "pending",
+          children: ["WIDE_DONE_1", "WIDE_DONE_2", "WIDE_DONE_3"]
+        },
+        WIDE_DONE_1: { title: "Wide child one", kind: "task", status: "done" },
+        WIDE_DONE_2: { title: "Wide child two", kind: "task", status: "done" },
+        WIDE_DONE_3: { title: "Wide child three", kind: "task", status: "done" },
+        B_EMPTY_CHILDREN: { title: "Leaf represented by an empty children array", kind: "task", status: "pending", children: [] },
+        A_NO_CHILDREN: { title: "Expected winner: child_count ties resolve by id", kind: "task", status: "pending" }
+      }
+    }
+  };
+}
+
+export function sharedParentPriorityGraph() {
+  return {
+    graphVersion: 1,
+    title: "Shared Parent Priority Fixture",
+    description: "Candidates tie on depth and child_count; Z_FAR shares the fewest parents with CURRENT.",
+    priorityFixture: {
+      rule: "shared_parent_count_with_current_task",
+      currentTaskId: "CURRENT",
+      expectedWinner: "ZZ_FAR_TIE",
+      fallbackWinner: "A_NEAR",
+      tiedSharedParentWinner: "ZZ_FAR_TIE"
+    },
+    graph: {
+      root: "ROOT",
+      nodes: {
+        ROOT: { title: "Root", kind: "parallel", status: "pending", children: ["WORK", "OTHER"] },
+        WORK: { title: "Shared work area", kind: "parallel", status: "pending", children: ["LEFT", "RIGHT"] },
+        LEFT: { title: "Left group", kind: "parallel", status: "pending", children: ["CURRENT", "A_NEAR"] },
+        CURRENT: { title: "Current task context", kind: "task", status: "done" },
+        A_NEAR: { title: "Shares ROOT, WORK, and LEFT with current task", kind: "task", status: "pending" },
+        RIGHT: { title: "Right group", kind: "parallel", status: "pending", children: ["B_MID"] },
+        B_MID: { title: "Shares ROOT and WORK with current task", kind: "task", status: "pending" },
+        OTHER: { title: "Other work area", kind: "parallel", status: "pending", children: ["FAR_GROUP"] },
+        FAR_GROUP: { title: "Far group", kind: "parallel", status: "pending", children: ["ZZ_FAR_TIE", "Z_FAR"] },
+        Z_FAR: { title: "Shares only ROOT with current task", kind: "task", status: "pending" },
+        ZZ_FAR_TIE: { title: "Expected winner: tied far candidate with the lowest raw node id", kind: "task", status: "pending" }
       }
     }
   };

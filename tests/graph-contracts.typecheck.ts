@@ -12,6 +12,10 @@ import {
   type ParsedArgs,
   type PlanGraphFile,
   type PublicWorker,
+  type ReachableDepthMap,
+  type ReachableParentMap,
+  type ReachablePathMap,
+  type ReadyNodePriorityFields,
   type RendererDocument,
   type VisualizerPayload,
   type WorkerManagerProcess
@@ -26,12 +30,20 @@ import {
   type CliCommandHandlers
 } from "../scripts/cli.js";
 import {
+  attachReadyPriorityFields,
+  buildReadyPrioritySelections,
+  compareReadyPriorityCandidates,
+  countSharedParentsWithCurrentTask,
   findAncestorIds,
+  buildReachableDepthMap,
+  buildReachableParentMap,
+  buildStableRootPathMap,
   getNode,
   isLeaf,
   isSubtreeDone,
   listReadyLeafNodes,
   listWorkingNodes,
+  type ReadyPriorityCandidate,
   summarizeGraph
 } from "../scripts/graph-traversal.js";
 import { type GraphLockOptions } from "../scripts/graph-io.js";
@@ -173,6 +185,29 @@ const graphSummary = summarizeGraph(graph);
 const readyNodes = listReadyLeafNodes(graph);
 const workingNodes = listWorkingNodes(graph);
 const ancestorIds = findAncestorIds(graph, "A");
+const reachableParents: ReachableParentMap = buildReachableParentMap(graph);
+const reachableDepths: ReachableDepthMap = buildReachableDepthMap(graph);
+const reachablePaths: ReachablePathMap = buildStableRootPathMap(graph);
+const readyNodePriorityFields: ReadyNodePriorityFields = {
+  depth: 1,
+  child_count: 0,
+  shared_parent_count_with_current_task: 0
+};
+const readyPriorityCandidate: ReadyPriorityCandidate = {
+  id: "A",
+  depth: 1,
+  child_count: 0,
+  shared_parent_count_with_current_task: 0
+};
+const readyPriorityComparison: number = compareReadyPriorityCandidates(readyPriorityCandidate, {
+  id: "B",
+  depth: 2,
+  child_count: 0,
+  shared_parent_count_with_current_task: 0
+});
+const readyPrioritySelections = buildReadyPrioritySelections(graph, readyNodes, "A");
+const enrichedReadyNodes = attachReadyPriorityFields(graph, readyNodes);
+const sharedParentCount: number = countSharedParentsWithCurrentTask(new Set(["ROOT"]), reachablePaths, "A");
 const rootIsLeaf: boolean = isLeaf(graph, "ROOT");
 const rootIsDone: boolean = isSubtreeDone(graph, "ROOT");
 const promptOptions: BuildWorkerPromptOptions = { nodeId: "A", reportPath: "reports/A.md" };
@@ -251,6 +286,14 @@ void graphSummary;
 void readyNodes;
 void workingNodes;
 void ancestorIds;
+void reachableParents;
+void reachableDepths;
+void reachablePaths;
+void readyNodePriorityFields;
+void readyPriorityComparison;
+void readyPrioritySelections;
+void enrichedReadyNodes;
+void sharedParentCount;
 void rootIsLeaf;
 void rootIsDone;
 void commandHandlers;

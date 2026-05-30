@@ -124,6 +124,41 @@ worker manager starts scheduler worker processes instead of importing the worker
 loop directly, which keeps visualizer process control visible and compatible
 with package entry points.
 
+## Ready Priority Ownership
+
+Readiness and priority are intentionally separate helper boundaries:
+
+- `scripts/graph-traversal.ts` owns read-only readiness traversal and priority
+  helpers. `listReadyLeafNodes` decides which leaves are eligible to claim.
+  `buildReadyPrioritySelections`, `compareReadyPriorityCandidates`, and
+  `selectReadyNodeByPriority` build and order the deterministic priority tuple.
+  Read-only ready surfaces consume `listReadyLeafNodes`, so CLI ready output,
+  diagnostics, worker prompt `readyJson`, and visualizer payloads share the
+  same sorted order and priority metadata.
+- `scripts/node-mutations.ts` owns the mutating claim transition. `claimNode`
+  acquires the graph lock, releases expired leases, calls `listReadyLeafNodes`,
+  resolves optional current-task context, then uses `selectReadyNodeByPriority`
+  for context-aware automatic claims. Explicit `claim --node ID` still bypasses
+  priority ordering after readiness has been checked.
+- `tests/scheduler-mutations.test.mjs` contains the focused comparator tests at
+  the start of the file and the integration coverage proving automatic claims
+  still mutate graph state through `claimNode`. Fixture builders used by those
+  tests live in `tests/helpers/plan-scheduler-harness.mjs`.
+
+Keep future priority tuple fields centralized in `graph-traversal.ts`. Add the
+metadata calculation to `buildReadyPrioritySelections`, add the ordering rule to
+`compareReadyPriorityCandidates`, and extend the focused comparator tests before
+changing claim behavior. Do not duplicate tuple comparison in CLI, worker,
+visualizer, or mutation code; those callers should consume the traversal helper
+so display order, diagnostics, and automatic claim behavior cannot drift apart.
+
+The final raw node-id tie-breaker is part of the concurrency contract. Multiple
+workers can observe the same ready set before one wins the graph lock, and object
+insertion order, traversal order, lease timing, or worker timing must not decide
+which equally ranked node is selected. A deterministic final tie-breaker keeps
+automatic claims repeatable across processes and makes concurrency failures
+auditable from graph history.
+
 ## Extension Points
 
 ### Adding A Scheduler Command

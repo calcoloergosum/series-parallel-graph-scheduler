@@ -1,5 +1,308 @@
 import test from "node:test";
+<<<<<<< Updated upstream
 import { addUnknownMetadata, answerNode, assert, assertUnknownMetadata, blockNode, checkSchedulerTransitionReference, claimNode, completeNode, completedDeepReadinessGraph, concurrentMutationGraph, decomposeNode, deepReadinessGraph, diagnoseGraph, dirname, escapeRegExp, execFileAsync, failNode, knownTransitionStatuses, lastHistory, listReadyLeafNodes, listWorkingNodes, lockArtifacts, mutationOwnershipDocsPath, nestedResetReachabilityGraph, readGraph, readyIds, reconcileGraphStatus, releaseExpiredLeases, renewNodeLease, resetNode, resetReachable, resetSubtree, schedulerScriptPath, schedulerTransitionTable, setNodeStatus, startNode, stressScriptPath, withTempGraph, writeFile } from "./helpers/plan-scheduler-harness.mjs";
+=======
+import { addUnknownMetadata, answerNode, assert, assertUnknownMetadata, attachReadyPriorityFields, blockNode, buildReachableParentMap, buildReadyPrioritySelections, buildStableRootPathMap, buildVisualizerPayload, buildWorkerPrompt, checkSchedulerTransitionReference, claimNode, compareReadyPriorityCandidates, completeNode, completedDeepReadinessGraph, concurrentMutationGraph, countSharedParentsWithCurrentTask, decomposeNode, deepReadinessGraph, depthPriorityGraph, diagnoseGraph, dirname, escapeRegExp, execFileAsync, failNode, knownTransitionStatuses, lastHistory, leafOnlyChildCountPriorityGraph, listReadyLeafNodes, listWorkingNodes, lockArtifacts, mutationOwnershipDocsPath, nestedResetReachabilityGraph, readGraph, readyIds, reconcileGraphStatus, releaseExpiredLeases, renewNodeLease, resetNode, resetReachable, resetSubtree, schedulerScriptPath, schedulerTransitionTable, setNodeStatus, sharedParentPriorityGraph, startNode, stressScriptPath, validatePlanGraphFileResult, withTempGraph, writeFile } from "./helpers/plan-scheduler-harness.mjs";
+
+function priorityCandidate(id, depth, childCount, sharedParentCountWithCurrentTask) {
+  return {
+    id,
+    depth,
+    child_count: childCount,
+    shared_parent_count_with_current_task: sharedParentCountWithCurrentTask
+  };
+}
+
+function priorityClaimGraph(activeNodes = []) {
+  const activeNodeSet = new Set(activeNodes);
+  const leasedCurrentNode = (title, session) => ({
+    title,
+    kind: "task",
+    status: "running",
+    lease: {
+      session,
+      runId: `run-${title}`,
+      claimedAt: "2026-05-27T00:00:00.000Z",
+      expiresAt: "2099-05-27T01:00:00.000Z"
+    }
+  });
+
+  return {
+    graphVersion: 1,
+    title: "Priority Claim Context Test Graph",
+    graph: {
+      root: "ROOT",
+      nodes: {
+        ROOT: { title: "Root", kind: "parallel", status: "pending", children: ["P2", "P1"] },
+        P1: { title: "Branch P1", kind: "parallel", status: "pending", children: ["CUR_P1", "A_TARGET"] },
+        P2: { title: "Branch P2", kind: "parallel", status: "pending", children: ["CUR_P2", "B_TARGET"] },
+        CUR_P1: activeNodeSet.has("CUR_P1")
+          ? leasedCurrentNode("Current P1", "codex-A")
+          : { title: "Inactive P1 current", kind: "task", status: "done" },
+        CUR_P2: activeNodeSet.has("CUR_P2")
+          ? leasedCurrentNode("Current P2", "codex-A")
+          : { title: "Inactive P2 current", kind: "task", status: "done" },
+        A_TARGET: { title: "Target A", kind: "task", status: "pending" },
+        B_TARGET: { title: "Target B", kind: "task", status: "pending" }
+      }
+    }
+  };
+}
+
+function activateSharedParentCurrent(graph, session = "codex-A") {
+  graph.graph.nodes.CURRENT.status = "running";
+  graph.graph.nodes.CURRENT.lease = {
+    session,
+    runId: "run-current",
+    claimedAt: "2026-05-27T00:00:00.000Z",
+    expiresAt: "2099-05-27T01:00:00.000Z"
+  };
+  return graph;
+}
+
+function cloneGraph(graph) {
+  return JSON.parse(JSON.stringify(graph));
+}
+
+function reorderGraphNodes(graph, nodeOrder) {
+  const remaining = { ...graph.graph.nodes };
+  graph.graph.nodes = {};
+  for (const nodeId of nodeOrder) {
+    graph.graph.nodes[nodeId] = remaining[nodeId];
+    delete remaining[nodeId];
+  }
+  for (const [nodeId, node] of Object.entries(remaining).reverse()) {
+    graph.graph.nodes[nodeId] = node;
+  }
+  return graph;
+}
+
+test("ready priority comparator gives lower depth precedence over child count and shared parent count", () => {
+  const sorted = [
+    priorityCandidate("DEEPER_BIGGER", 3, 99, 0),
+    priorityCandidate("SHALLOW_SMALLER", 2, 0, 50)
+  ].sort(compareReadyPriorityCandidates);
+
+  assert.deepEqual(sorted.map((candidate) => candidate.id), ["SHALLOW_SMALLER", "DEEPER_BIGGER"]);
+});
+
+test("ready priority comparator gives higher child_count precedence when depth ties", () => {
+  const sorted = [
+    priorityCandidate("LOW_FANOUT", 2, 1, 0),
+    priorityCandidate("HIGH_FANOUT", 2, 4, 99)
+  ].sort(compareReadyPriorityCandidates);
+
+  assert.deepEqual(sorted.map((candidate) => candidate.id), ["HIGH_FANOUT", "LOW_FANOUT"]);
+});
+
+test("ready priority comparator gives lower shared_parent_count_with_current_task precedence when depth and child_count tie", () => {
+  const sorted = [
+    priorityCandidate("MORE_SHARED", 2, 3, 4),
+    priorityCandidate("FEWER_SHARED", 2, 3, 1)
+  ].sort(compareReadyPriorityCandidates);
+
+  assert.deepEqual(sorted.map((candidate) => candidate.id), ["FEWER_SHARED", "MORE_SHARED"]);
+});
+
+test("ready priority comparator uses raw node id as the stable final tie-breaker across repeated runs", () => {
+  const candidates = [
+    priorityCandidate("node-10", 2, 0, 0),
+    priorityCandidate("node-2", 2, 0, 0),
+    priorityCandidate("node-01", 2, 0, 0)
+  ];
+  const orders = Array.from({ length: 20 }, (_, index) => {
+    const rotated = candidates.slice(index % candidates.length).concat(candidates.slice(0, index % candidates.length));
+    return rotated.sort(compareReadyPriorityCandidates).map((candidate) => candidate.id);
+  });
+
+  for (const order of orders) {
+    assert.deepEqual(order, ["node-01", "node-10", "node-2"]);
+  }
+});
+
+test("ready priority metadata exposes public fields while keeping parent sets internal", () => {
+  const graph = sharedParentPriorityGraph();
+  const ready = listReadyLeafNodes(graph);
+  assert.deepEqual(ready.map((node) => ({
+    id: node.id,
+    depth: node.depth,
+    child_count: node.child_count,
+    shared_parent_count_with_current_task: node.shared_parent_count_with_current_task,
+    parentSet: node.parentSet
+  })), [
+    {
+      id: "A_NEAR",
+      depth: 3,
+      child_count: 0,
+      shared_parent_count_with_current_task: 0,
+      parentSet: undefined
+    },
+    {
+      id: "B_MID",
+      depth: 3,
+      child_count: 0,
+      shared_parent_count_with_current_task: 0,
+      parentSet: undefined
+    },
+    {
+      id: "ZZ_FAR_TIE",
+      depth: 3,
+      child_count: 0,
+      shared_parent_count_with_current_task: 0,
+      parentSet: undefined
+    },
+    {
+      id: "Z_FAR",
+      depth: 3,
+      child_count: 0,
+      shared_parent_count_with_current_task: 0,
+      parentSet: undefined
+    }
+  ]);
+
+  const selections = buildReadyPrioritySelections(graph, ready, "CURRENT");
+  assert.deepEqual(Object.fromEntries(selections.map(({ priority }) => [
+    priority.id,
+    priority.shared_parent_count_with_current_task
+  ])), {
+    A_NEAR: 3,
+    B_MID: 2,
+    ZZ_FAR_TIE: 1,
+    Z_FAR: 1
+  });
+  assert.equal(selections.some(({ priority }) => Object.hasOwn(priority, "parentSet")), false);
+});
+
+test("shared parent count helper treats missing current task context as an equal zero count", () => {
+  const graph = sharedParentPriorityGraph();
+  const pathMap = buildStableRootPathMap(graph);
+  const candidateParentSet = new Set(pathMap.A_NEAR.slice(0, -1));
+
+  assert.equal(countSharedParentsWithCurrentTask(candidateParentSet, pathMap), 0);
+  assert.equal(countSharedParentsWithCurrentTask(candidateParentSet, pathMap, "MISSING"), 0);
+  assert.equal(countSharedParentsWithCurrentTask(candidateParentSet, pathMap, "CURRENT"), 3);
+});
+
+test("automatic claim priority uses explicit current task id for shared-parent ranking", async () => {
+  await withTempGraph(async (graphPath) => {
+    const graph = sharedParentPriorityGraph();
+    assert.equal(readyIds(graph)[0], "A_NEAR");
+    await writeFile(graphPath, `${JSON.stringify(graph, null, 2)}\n`, "utf8");
+
+    const claim = await claimNode(graphPath, { session: "codex-A", currentTaskId: graph.priorityFixture.currentTaskId });
+
+    assert.equal(claim.nodeId, graph.priorityFixture.expectedWinner);
+  });
+});
+
+test("automatic claim priority infers same-session current task for shared-parent ranking", async () => {
+  await withTempGraph(async (graphPath) => {
+    const graph = activateSharedParentCurrent(sharedParentPriorityGraph());
+    await writeFile(graphPath, `${JSON.stringify(graph, null, 2)}\n`, "utf8");
+
+    const claim = await claimNode(graphPath, { session: "codex-A" });
+
+    assert.equal(claim.nodeId, graph.priorityFixture.expectedWinner);
+  });
+});
+
+test("automatic claim priority falls back deterministically without current task context", async () => {
+  await withTempGraph(async (graphPath) => {
+    const graph = sharedParentPriorityGraph();
+    await writeFile(graphPath, `${JSON.stringify(graph, null, 2)}\n`, "utf8");
+
+    const claim = await claimNode(graphPath, { session: "codex-A" });
+
+    assert.equal(claim.nodeId, graph.priorityFixture.fallbackWinner);
+  });
+});
+
+test("shared-parent ranking tie-break is deterministic across graph node insertion orders", async () => {
+  const fixture = sharedParentPriorityGraph();
+  const variants = [
+    fixture,
+    reorderGraphNodes(cloneGraph(fixture), ["Z_FAR", "ZZ_FAR_TIE", "B_MID", "A_NEAR", "CURRENT", "FAR_GROUP", "OTHER", "RIGHT", "LEFT", "WORK", "ROOT"])
+  ];
+
+  for (const graph of variants) {
+    await withTempGraph(async (graphPath) => {
+      await writeFile(graphPath, `${JSON.stringify(graph, null, 2)}\n`, "utf8");
+
+      const claim = await claimNode(graphPath, { session: "codex-A", currentTaskId: graph.priorityFixture.currentTaskId });
+
+      assert.equal(claim.nodeId, graph.priorityFixture.tiedSharedParentWinner);
+    });
+  }
+});
+
+test("automatic claim priority uses explicit current task context when depth and child_count tie", async () => {
+  await withTempGraph(async (graphPath) => {
+    await writeFile(graphPath, `${JSON.stringify(priorityClaimGraph(), null, 2)}\n`, "utf8");
+
+    const nearP1Claim = await claimNode(graphPath, { session: "codex-A", currentTaskId: "CUR_P1" });
+    assert.equal(nearP1Claim.nodeId, "B_TARGET");
+  });
+
+  await withTempGraph(async (graphPath) => {
+    await writeFile(graphPath, `${JSON.stringify(priorityClaimGraph(), null, 2)}\n`, "utf8");
+
+    const nearP2Claim = await claimNode(graphPath, { session: "codex-A", currentTaskId: "CUR_P2" });
+    assert.equal(nearP2Claim.nodeId, "A_TARGET");
+  });
+});
+
+test("automatic claim priority infers exactly one active same-session current task", async () => {
+  await withTempGraph(async (graphPath) => {
+    await writeFile(graphPath, `${JSON.stringify(priorityClaimGraph(["CUR_P1"]), null, 2)}\n`, "utf8");
+
+    const claim = await claimNode(graphPath, { session: "codex-A" });
+    assert.equal(claim.nodeId, "B_TARGET");
+
+    const graph = await readGraph(graphPath);
+    assert.equal(graph.graph.nodes.CUR_P1.status, "running");
+    assert.equal(graph.graph.nodes.CUR_P1.lease.session, "codex-A");
+    assert.equal(graph.graph.nodes.B_TARGET.lease.session, "codex-A");
+  });
+});
+
+test("automatic claim priority falls back without valid or unique current context", async () => {
+  await withTempGraph(async (graphPath) => {
+    await writeFile(graphPath, `${JSON.stringify(priorityClaimGraph(["CUR_P1", "CUR_P2"]), null, 2)}\n`, "utf8");
+
+    const ambiguousClaim = await claimNode(graphPath, { session: "codex-A" });
+    assert.equal(ambiguousClaim.nodeId, "A_TARGET");
+  });
+
+  await withTempGraph(async (graphPath) => {
+    await writeFile(graphPath, `${JSON.stringify(priorityClaimGraph(), null, 2)}\n`, "utf8");
+
+    const unknownCurrentTaskClaim = await claimNode(graphPath, { session: "codex-A", currentTaskId: "MISSING" });
+    assert.equal(unknownCurrentTaskClaim.nodeId, "A_TARGET");
+  });
+
+  await withTempGraph(async (graphPath) => {
+    await writeFile(graphPath, `${JSON.stringify(priorityClaimGraph(), null, 2)}\n`, "utf8");
+
+    await assert.rejects(
+      claimNode(graphPath, { session: "codex-A", currentTaskId: "" }),
+      /Invalid explicit current task context: currentTaskId must be a non-empty string/
+    );
+  });
+});
+
+test("explicit node claim bypasses current task priority context", async () => {
+  await withTempGraph(async (graphPath) => {
+    await writeFile(graphPath, `${JSON.stringify(priorityClaimGraph(), null, 2)}\n`, "utf8");
+
+    const claim = await claimNode(graphPath, {
+      session: "codex-A",
+      nodeId: "A_TARGET",
+      currentTaskId: "CUR_P1"
+    });
+    assert.equal(claim.nodeId, "A_TARGET");
+  });
+});
+>>>>>>> Stashed changes
 
 test("series-parallel readiness exposes only legal leaf nodes", async () => {
   await withTempGraph(async (graphPath) => {
@@ -44,12 +347,12 @@ test("readiness table covers deep series, parallel, gate, unknown kind, blocked,
     {
       name: "mixed fanout opens after setup is done",
       statuses: { SETUP: "done", S1: "done", S2: "done" },
-      ready: ["L1", "R1", "R2", "U1", "U2", "GATE_BRANCH", "CUSTOM_STATUS"]
+      ready: ["CUSTOM_STATUS", "GATE_BRANCH", "L1", "R1", "R2", "U1", "U2"]
     },
     {
       name: "nested series branch withholds later leaf until prior leaf is done",
       statuses: { SETUP: "done", S1: "done", S2: "done", L1: "done" },
-      ready: ["L2", "R1", "R2", "U1", "U2", "GATE_BRANCH", "CUSTOM_STATUS"]
+      ready: ["CUSTOM_STATUS", "GATE_BRANCH", "L2", "R1", "R2", "U1", "U2"]
     },
     {
       name: "final gate opens only after all parallel branches are terminal",
@@ -129,12 +432,322 @@ test("downstream series leaves never become ready before every prerequisite subt
   assert.deepEqual(readyIds(deepReadinessGraph(prerequisiteStates[1])), ["S2"]);
 
   const fanoutReady = readyIds(deepReadinessGraph(prerequisiteStates[2]));
-  assert.deepEqual(fanoutReady, ["L1", "R1", "R2", "U1", "U2", "GATE_BRANCH", "CUSTOM_STATUS"]);
+  assert.deepEqual(fanoutReady, ["CUSTOM_STATUS", "GATE_BRANCH", "L1", "R1", "R2", "U1", "U2"]);
   assert.equal(fanoutReady.some((nodeId) => ["FINAL_GATE", "AFTER"].includes(nodeId)), false);
 
   const gateReady = readyIds(deepReadinessGraph(prerequisiteStates[3]));
   assert.deepEqual(gateReady, ["FINAL_GATE"]);
   assert.equal(gateReady.some((nodeId) => downstreamIds.has(nodeId) && nodeId !== "FINAL_GATE"), false);
+});
+
+test("priority metadata covers mixed shallow and deep ready leaves without changing readiness", () => {
+  const graph = deepReadinessGraph({ SETUP: "done", S1: "done", S2: "done" });
+  const ready = listReadyLeafNodes(graph);
+
+  assert.deepEqual(
+    ready.map((node) => ({
+      id: node.id,
+      kind: node.kind,
+      status: node.status,
+      depth: node.depth,
+      child_count: node.child_count,
+      shared_parent_count_with_current_task: node.shared_parent_count_with_current_task
+    })),
+    [
+      { id: "CUSTOM_STATUS", kind: "task", status: "waiting-for-signal", depth: 2, child_count: 0, shared_parent_count_with_current_task: 0 },
+      { id: "GATE_BRANCH", kind: "gate", status: "pending", depth: 2, child_count: 0, shared_parent_count_with_current_task: 0 },
+      { id: "L1", kind: "task", status: "pending", depth: 3, child_count: 0, shared_parent_count_with_current_task: 0 },
+      { id: "R1", kind: "task", status: "pending", depth: 3, child_count: 0, shared_parent_count_with_current_task: 0 },
+      { id: "R2", kind: "task", status: "pending", depth: 3, child_count: 0, shared_parent_count_with_current_task: 0 },
+      { id: "U1", kind: "task", status: "pending", depth: 3, child_count: 0, shared_parent_count_with_current_task: 0 },
+      { id: "U2", kind: "task", status: "pending", depth: 3, child_count: 0, shared_parent_count_with_current_task: 0 }
+    ]
+  );
+  assert.equal(ready.some((node) => ["FANOUT", "LEFT", "RIGHT", "UNKNOWN_GROUP"].includes(node.id)), false);
+});
+
+test("priority metadata scores supplied internal candidates without making internal nodes ready", () => {
+  const graph = leafOnlyChildCountPriorityGraph();
+  const ready = listReadyLeafNodes(graph);
+
+  assert.deepEqual(ready.map((node) => node.id), ["A_NO_CHILDREN", "B_EMPTY_CHILDREN"]);
+  assert.equal(ready.some((node) => node.id === "WIDE_INTERNAL"), false);
+
+  const scored = attachReadyPriorityFields(graph, [
+    ...ready,
+    {
+      id: "WIDE_INTERNAL",
+      title: graph.graph.nodes.WIDE_INTERNAL.title,
+      kind: "parallel",
+      status: "pending"
+    }
+  ]);
+  const internal = scored.find((node) => node.id === "WIDE_INTERNAL");
+
+  assert.deepEqual(
+    {
+      id: internal.id,
+      depth: internal.depth,
+      child_count: internal.child_count,
+      shared_parent_count_with_current_task: internal.shared_parent_count_with_current_task
+    },
+    {
+      id: "WIDE_INTERNAL",
+      depth: 1,
+      child_count: 3,
+      shared_parent_count_with_current_task: 0
+    }
+  );
+  assert.deepEqual(listReadyLeafNodes(graph).map((node) => node.id), ["A_NO_CHILDREN", "B_EMPTY_CHILDREN"]);
+});
+
+test("priority metadata uses one stable root path for shared-parent DAG candidates", () => {
+  const graph = {
+    graphVersion: 1,
+    title: "Shared Parent Metadata Edge Case",
+    graph: {
+      root: "ROOT",
+      nodes: {
+        ROOT: { title: "Root", kind: "parallel", status: "pending", children: ["B_SIDE", "A_SIDE"] },
+        A_SIDE: { title: "Lexically first parent", kind: "parallel", status: "pending", children: ["SHARED_READY"] },
+        B_SIDE: { title: "Current task parent", kind: "parallel", status: "pending", children: ["CURRENT", "SHARED_READY"] },
+        CURRENT: { title: "Current task", kind: "task", status: "running" },
+        SHARED_READY: { title: "Shared ready task", kind: "task", status: "pending" }
+      }
+    }
+  };
+
+  assert.deepEqual(buildReachableParentMap(graph).SHARED_READY, ["A_SIDE", "B_SIDE"]);
+  assert.deepEqual(buildStableRootPathMap(graph).SHARED_READY, ["ROOT", "A_SIDE", "SHARED_READY"]);
+
+  const [{ priority }] = buildReadyPrioritySelections(
+    graph,
+    [{ id: "SHARED_READY", title: "Shared ready task", kind: "task", status: "pending" }],
+    "CURRENT"
+  );
+
+  assert.deepEqual(priority, {
+    id: "SHARED_READY",
+    depth: 2,
+    child_count: 0,
+    shared_parent_count_with_current_task: 1
+  });
+});
+
+test("ready command rejects invalid graphs before priority metadata traversal", async () => {
+  await withTempGraph(async (graphPath) => {
+    const graph = {
+      graphVersion: 1,
+      title: "Invalid Priority Metadata Fixture",
+      graph: {
+        root: "ROOT",
+        nodes: {
+          ROOT: { title: "Root", kind: "series", status: "pending", children: ["A"] },
+          A: { title: "Cycle", kind: "series", status: "pending", children: ["ROOT"] }
+        }
+      }
+    };
+
+    const validation = validatePlanGraphFileResult(graph);
+    assert.match(validation.errors.map((issue) => issue.message).join("\n"), /Cycle detected: ROOT -> A -> ROOT/);
+    await writeFile(graphPath, `${JSON.stringify(graph, null, 2)}\n`, "utf8");
+
+    await assert.rejects(
+      execFileAsync(process.execPath, [schedulerScriptPath, "ready", "--graph", graphPath]),
+      (error) => {
+        assert.match(error.stderr, /Invalid graph file/);
+        assert.match(error.stderr, /Cycle detected: ROOT -> A -> ROOT/);
+        assert.doesNotMatch(error.stderr, /Cycle detected in graph/);
+        assert.equal(error.stdout, "");
+        return true;
+      }
+    );
+  });
+});
+
+test("priority fixture builders isolate depth, child-count, and shared-parent cases", () => {
+  const depth = depthPriorityGraph();
+  assert.deepEqual(readyIds(depth), ["Z_SHALLOW", "A_DEEP"]);
+  assert.equal(depth.priorityFixture.traversalFirst, "A_DEEP");
+  assert.equal(depth.priorityFixture.expectedWinner, "Z_SHALLOW");
+
+  const childCount = leafOnlyChildCountPriorityGraph();
+  assert.deepEqual(readyIds(childCount), ["A_NO_CHILDREN", "B_EMPTY_CHILDREN"]);
+  assert.equal(childCount.priorityFixture.contract, "leaf-only");
+  assert.equal(childCount.priorityFixture.expectedWinner, "A_NO_CHILDREN");
+  assert.equal(childCount.graph.nodes.WIDE_INTERNAL.children.length, 3);
+
+  const sharedParent = sharedParentPriorityGraph();
+  assert.deepEqual(readyIds(sharedParent), ["A_NEAR", "B_MID", "ZZ_FAR_TIE", "Z_FAR"]);
+  assert.equal(sharedParent.priorityFixture.currentTaskId, "CURRENT");
+  assert.equal(sharedParent.priorityFixture.expectedWinner, "ZZ_FAR_TIE");
+  assert.equal(sharedParent.priorityFixture.fallbackWinner, "A_NEAR");
+  assert.equal(sharedParent.priorityFixture.tiedSharedParentWinner, "ZZ_FAR_TIE");
+});
+
+test("read-only ready surfaces expose priority order and metadata consistently", async () => {
+  await withTempGraph(async (graphPath, dir) => {
+    const graph = depthPriorityGraph();
+    await writeFile(graphPath, `${JSON.stringify(graph, null, 2)}\n`, "utf8");
+
+    const assertPriorityReady = (ready) => {
+      assert.deepEqual(ready.map((node) => node.id), ["Z_SHALLOW", "A_DEEP"]);
+      assert.deepEqual(
+        ready.map((node) => ({
+          id: node.id,
+          depth: node.depth,
+          child_count: node.child_count,
+          shared_parent_count_with_current_task: node.shared_parent_count_with_current_task
+        })),
+        [
+          { id: "Z_SHALLOW", depth: 1, child_count: 0, shared_parent_count_with_current_task: 0 },
+          { id: "A_DEEP", depth: 2, child_count: 0, shared_parent_count_with_current_task: 0 }
+        ]
+      );
+    };
+
+    const cliReady = await execFileAsync(process.execPath, [schedulerScriptPath, "ready", "--graph", graphPath]);
+    assertPriorityReady(JSON.parse(cliReady.stdout));
+
+    const diagnostics = await diagnoseGraph(graphPath);
+    assertPriorityReady(diagnostics.nextReady);
+
+    const visualizerPayload = await buildVisualizerPayload(graphPath);
+    assertPriorityReady(visualizerPayload.ready);
+
+    const templatePath = `${dir}/ready-template.md`;
+    await writeFile(templatePath, "{{readyJson}}", "utf8");
+    const promptReady = JSON.parse(await buildWorkerPrompt(graphPath, {
+      nodeId: "A_DEEP",
+      session: "codex-A",
+      runId: "run-test",
+      templatePath
+    }));
+    assertPriorityReady(promptReady);
+  });
+});
+
+test("automatic claim uses priority ordering instead of traversal order", async () => {
+  await withTempGraph(async (graphPath) => {
+    const graph = depthPriorityGraph();
+    await writeFile(graphPath, `${JSON.stringify(graph, null, 2)}\n`, "utf8");
+
+    const claim = await claimNode(graphPath, { session: "priority-auto" });
+
+    assert.equal(claim.nodeId, graph.priorityFixture.expectedWinner);
+    assert.equal(claim.title, graph.graph.nodes.Z_SHALLOW.title);
+    assert.equal(claim.lease.session, "priority-auto");
+    assert.equal(claim.releasedExpired.length, 0);
+    assert.equal(claim.summary.counts.claimed, 1);
+
+    const updated = await readGraph(graphPath);
+    assert.equal(updated.graphVersion, 2);
+    assert.equal(updated.graph.nodes.Z_SHALLOW.status, "claimed");
+    assert.deepEqual(updated.graph.nodes.Z_SHALLOW.lease, claim.lease);
+    assert.equal(updated.graph.nodes.Z_SHALLOW.history.at(-1).event, "claimed");
+    assert.equal(updated.graph.nodes.Z_SHALLOW.history.at(-1).runId, claim.runId);
+    assert.equal(updated.graph.nodes.Z_SHALLOW.history.at(-1).leaseExpiresAt, claim.lease.expiresAt);
+    assert.equal(updated.graph.nodes.A_DEEP.status, "pending");
+    assert.equal(updated.graph.nodes.A_DEEP.lease, undefined);
+  });
+});
+
+test("explicit claim by node id does not rerank to a higher-priority ready node", async () => {
+  await withTempGraph(async (graphPath) => {
+    const graph = depthPriorityGraph();
+    await writeFile(graphPath, `${JSON.stringify(graph, null, 2)}\n`, "utf8");
+
+    const claim = await claimNode(graphPath, { session: "priority-explicit", nodeId: graph.priorityFixture.traversalFirst });
+
+    assert.equal(claim.nodeId, graph.priorityFixture.traversalFirst);
+    assert.equal(claim.lease.session, "priority-explicit");
+    const updated = await readGraph(graphPath);
+    assert.equal(updated.graphVersion, 2);
+    assert.equal(updated.graph.nodes.A_DEEP.status, "claimed");
+    assert.deepEqual(updated.graph.nodes.A_DEEP.lease, claim.lease);
+    assert.equal(updated.graph.nodes.A_DEEP.history.at(-1).runId, claim.runId);
+    assert.equal(updated.graph.nodes.Z_SHALLOW.status, "pending");
+    assert.equal(updated.graph.nodes.Z_SHALLOW.lease, undefined);
+  });
+});
+
+test("claim releases expired leases before priority selection", async () => {
+  await withTempGraph(async (graphPath) => {
+    const graph = {
+      graphVersion: 1,
+      title: "Expired Lease Priority Fixture",
+      graph: {
+        root: "ROOT",
+        nodes: {
+          ROOT: { title: "Root", kind: "parallel", status: "pending", children: ["Z_READY", "A_EXPIRED"] },
+          Z_READY: { title: "Traversal-first ready task", kind: "task", status: "pending" },
+          A_EXPIRED: {
+            title: "Expired task should re-enter ready set",
+            kind: "task",
+            status: "running",
+            startedAt: "2026-05-27T00:00:00.000Z",
+            lease: {
+              session: "stale-worker",
+              runId: "run-stale",
+              claimedAt: "2026-05-27T00:00:00.000Z",
+              expiresAt: "2026-05-27T00:00:01.000Z"
+            }
+          }
+        }
+      }
+    };
+    await writeFile(graphPath, `${JSON.stringify(graph, null, 2)}\n`, "utf8");
+
+    const claim = await claimNode(graphPath, { session: "priority-expired" });
+
+    assert.equal(claim.nodeId, "A_EXPIRED");
+    assert.deepEqual(claim.releasedExpired, ["A_EXPIRED"]);
+    assert.equal(claim.lease.session, "priority-expired");
+    assert.equal(claim.summary.counts.claimed, 1);
+    assert.equal(claim.summary.counts.pending, 2);
+
+    const updated = await readGraph(graphPath);
+    assert.equal(updated.graphVersion, 2);
+    assert.equal(updated.graph.nodes.A_EXPIRED.status, "claimed");
+    assert.equal(updated.graph.nodes.A_EXPIRED.startedAt, undefined);
+    assert.deepEqual(updated.graph.nodes.A_EXPIRED.lease, claim.lease);
+    assert.deepEqual(updated.graph.nodes.A_EXPIRED.history.map((entry) => entry.event), ["expired", "claimed"]);
+    assert.equal(updated.graph.nodes.A_EXPIRED.history[0].session, "stale-worker");
+    assert.equal(updated.graph.nodes.A_EXPIRED.history[0].runId, "run-stale");
+    assert.equal(updated.graph.nodes.A_EXPIRED.history[0].leaseExpiresAt, "2026-05-27T00:00:01.000Z");
+    assert.equal(updated.graph.nodes.A_EXPIRED.history[1].runId, claim.runId);
+    assert.equal(updated.graph.nodes.A_EXPIRED.history[1].leaseExpiresAt, claim.lease.expiresAt);
+    assert.equal(updated.graph.nodes.Z_READY.status, "pending");
+    assert.equal(updated.graph.nodes.Z_READY.lease, undefined);
+  });
+});
+
+test("concurrent priority automatic claims never return the same node id", async () => {
+  await withTempGraph(async (graphPath) => {
+    await writeFile(graphPath, `${JSON.stringify(depthPriorityGraph(), null, 2)}\n`, "utf8");
+
+    const attempts = Array.from({ length: 8 }, (_, index) =>
+      claimNode(graphPath, { session: `priority-parallel-${index}` })
+    );
+    const results = await Promise.allSettled(attempts);
+    const claimed = results
+      .filter((result) => result.status === "fulfilled")
+      .map((result) => result.value.nodeId);
+    const rejected = results.filter((result) => result.status === "rejected");
+
+    assert.deepEqual([...claimed].sort(), ["A_DEEP", "Z_SHALLOW"]);
+    assert.equal(new Set(claimed).size, claimed.length, `Duplicate priority claim detected for ${graphPath}`);
+    assert.equal(rejected.length, 6);
+    for (const result of rejected) {
+      assert.match(result.reason.message, /No ready nodes to claim/);
+    }
+
+    const updated = await readGraph(graphPath);
+    assert.equal(updated.graphVersion, 3);
+    assert.equal(updated.graph.nodes.A_DEEP.status, "claimed");
+    assert.equal(updated.graph.nodes.Z_SHALLOW.status, "claimed");
+    assert.notEqual(updated.graph.nodes.A_DEEP.lease.runId, updated.graph.nodes.Z_SHALLOW.lease.runId);
+  });
 });
 
 test("reconcile marks a completed deep mixed graph while preserving exact readiness before completion", async () => {
