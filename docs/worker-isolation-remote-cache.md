@@ -99,6 +99,9 @@ initializing, or refreshing the cache repository.
 The cache path is shared by isolated workers for the same graph. Cache creation
 and fetch must be protected by the graph lock or by a dedicated Git-cache lock
 under `runs/git/cache` so concurrent workers cannot corrupt `repo.git`.
+The dedicated Git-cache lock waits up to `SPG_GIT_CACHE_LOCK_TIMEOUT_MS`
+milliseconds, defaulting to `60000`, before reporting the owner metadata from
+`runs/git/cache/.repo.git.lock/owner.json`.
 
 Per-run workspaces are not shared. A worker that successfully claims a node
 creates its clone under:

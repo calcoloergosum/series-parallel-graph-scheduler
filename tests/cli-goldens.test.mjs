@@ -709,7 +709,8 @@ test("CLI help lists commands, flag kinds, defaults, environment variables, and 
   assert.match(help, /SLACK_WEBHOOK_URL\s+Enables notifications for done, block, answer, fail, and decompose\./);
   assert.match(help, /SPG_SLACK_TIMEOUT_MS\s+Slack notification timeout in milliseconds\. Default: 5000\./);
   assert.match(help, /SPG_DEBUG=1\s+Include stack traces in CLI errors\./);
-  assert.match(help, /SPG_GRAPH_LOCK_TIMEOUT_MS\s+Lock wait timeout in milliseconds\. Default: 5000\./);
+  assert.match(help, /SPG_GRAPH_LOCK_TIMEOUT_MS\s+Graph lock wait timeout in milliseconds\. Default: 5000\./);
+  assert.match(help, /SPG_GIT_CACHE_LOCK_TIMEOUT_MS\s+Git cache lock wait timeout in milliseconds\. Default: 60000\./);
   assert.match(help, /Required: --node ID, --answer TEXT/);
   assert.match(help, /--child ID=Title repeated, or --child-json JSON/);
   assert.match(help, /--session NAME \(default: codex-worker\)/);

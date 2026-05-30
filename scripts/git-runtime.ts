@@ -1,7 +1,7 @@
 import { execFile } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
 import { existsSync } from "node:fs";
-import { mkdir, rename, rm, stat, utimes, writeFile } from "node:fs/promises";
+import { mkdir, readFile, rename, rm, stat, utimes, writeFile } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import { promisify } from "node:util";
 
@@ -9,6 +9,8 @@ import { redactOperationalEventDetails } from "./operational-events.js";
 
 const execFileAsync = promisify(execFile);
 const defaultBareRepositoryRelativePath = "runs/git/cache/repo.git";
+const defaultGitCacheLockTimeoutMs = 60 * 1000;
+const defaultGitCacheLockStaleMs = 10 * 60 * 1000;
 const gitOutputLimit = 1200;
 
 export interface GitCommand {
@@ -515,8 +517,8 @@ async function withGitCacheLock<T>(
   lockPath: string,
   fn: () => Promise<T>,
   {
-    timeoutMs = 5000,
-    staleMs = 10 * 60 * 1000,
+    timeoutMs = envInteger("SPG_GIT_CACHE_LOCK_TIMEOUT_MS") ?? defaultGitCacheLockTimeoutMs,
+    staleMs = defaultGitCacheLockStaleMs,
     retryMs = 100
   }: { timeoutMs?: number; staleMs?: number; retryMs?: number } = {}
 ): Promise<T> {
@@ -524,6 +526,7 @@ async function withGitCacheLock<T>(
   await mkdir(dirname(lockPath), { recursive: true });
 
   while (true) {
+    let lockOwner: GitCacheLockOwner | undefined;
     try {
       await mkdir(lockPath);
       await writeFile(join(lockPath, "owner.json"), `${JSON.stringify({
@@ -537,6 +540,7 @@ async function withGitCacheLock<T>(
         throw error;
       }
       try {
+        lockOwner = await readGitCacheLockOwner(lockPath);
         const lockStat = await stat(lockPath);
         if (Date.now() - lockStat.mtimeMs > staleMs) {
           await rm(lockPath, { recursive: true, force: true });
@@ -548,7 +552,11 @@ async function withGitCacheLock<T>(
         }
       }
       if (Date.now() - startedAt > timeoutMs) {
-        throw new GitRuntimeError(`Timed out waiting for Git cache lock: ${lockPath}`);
+        throw new GitRuntimeError(
+          `Timed out waiting for Git cache lock: ${lockPath}${formatGitCacheLockOwner(lockOwner)} ` +
+          `(timeoutMs=${timeoutMs}, staleMs=${staleMs}). ` +
+          `Next steps: wait for the owner process to finish or inspect ${join(lockPath, "owner.json")} before removing a stale lock directory.`
+        );
       }
       await delay(retryMs);
     }
@@ -578,4 +586,48 @@ function nodeErrorCode(error: unknown): string | undefined {
   return typeof error === "object" && error !== null && "code" in error
     ? String((error as { code?: unknown }).code)
     : undefined;
+}
+
+interface GitCacheLockOwner {
+  pid?: number;
+  createdAt?: string;
+  lockPath?: string;
+}
+
+async function readGitCacheLockOwner(lockPath: string): Promise<GitCacheLockOwner | undefined> {
+  try {
+    const parsed: unknown = JSON.parse(await readFile(join(lockPath, "owner.json"), "utf8"));
+    if (typeof parsed !== "object" || parsed === null) {
+      return undefined;
+    }
+    const owner = parsed as Record<string, unknown>;
+    return {
+      ...(typeof owner.pid === "number" && Number.isFinite(owner.pid) ? { pid: owner.pid } : {}),
+      ...(typeof owner.createdAt === "string" ? { createdAt: owner.createdAt } : {}),
+      ...(typeof owner.lockPath === "string" ? { lockPath: owner.lockPath } : {})
+    };
+  } catch {
+    return undefined;
+  }
+}
+
+function formatGitCacheLockOwner(owner: GitCacheLockOwner | undefined): string {
+  if (!owner) {
+    return "";
+  }
+  const fields = [
+    owner.pid !== undefined ? `pid=${owner.pid}` : undefined,
+    owner.createdAt ? `createdAt=${owner.createdAt}` : undefined,
+    owner.lockPath ? `lockPath=${owner.lockPath}` : undefined
+  ].filter(Boolean);
+  return fields.length > 0 ? ` (owner ${fields.join(", ")})` : "";
+}
+
+function envInteger(name: string): number | undefined {
+  const value = process.env[name];
+  if (!value) {
+    return undefined;
+  }
+  const parsed = Number.parseInt(value, 10);
+  return Number.isInteger(parsed) && parsed >= 0 ? parsed : undefined;
 }

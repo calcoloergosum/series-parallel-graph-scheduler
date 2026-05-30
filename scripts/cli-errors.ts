@@ -54,6 +54,7 @@ const expectedCliErrorPatterns = [
   /^Worker isolation /,
   /^Failed to parse graph file /,
   /^Timed out waiting for graph lock:/,
+  /^Timed out waiting for Git cache lock:/,
   /^Failed to remove stale graph lock:/,
   /^Path escapes graph directory:/,
   /^Refusing to bind visualizer write endpoints /,

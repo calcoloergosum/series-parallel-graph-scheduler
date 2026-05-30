@@ -711,6 +711,14 @@ is alive and the graph is readable, inspect `<graph>.lock/metadata.json` before
 removing stale lock directories. Otherwise wait for the active scheduler,
 renderer, or worker process to finish.
 
+`Timed out waiting for Git cache lock`
+
+Another `--isolation git` worker is preparing `runs/git/cache/repo.git`.
+Inspect `runs/git/cache/.repo.git.lock/owner.json` relative to the graph
+directory and wait for the owner process if it is still alive. For slow remote
+clones or fetches under heavy worker startup contention, raise
+`SPG_GIT_CACHE_LOCK_TIMEOUT_MS` from its default `60000`.
+
 `spawn codex ENOENT`
 
 Install the Codex CLI or pass `--codex-command` with a command available in the

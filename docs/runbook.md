@@ -289,6 +289,7 @@ worker must use a Git remote, local bare cache, and per-run clone. Use
 Symptoms:
 
 - `Worker isolation requires scheduler.remote ...`
+- `Timed out waiting for Git cache lock: <graph-dir>/runs/git/cache/.repo.git.lock ...`
 - `Worker isolation remote fetch failed for <redacted-remote>: ...`
 - `Worker isolation clone failed for <clone-path> from <bare-repo-path>: ...`
 - A worker exits before claiming a node when `--isolation git` is enabled.
@@ -310,6 +311,7 @@ console.log(JSON.stringify({
 
 git --git-dir "$GRAPH_DIR/runs/git/cache/repo.git" rev-parse --is-bare-repository
 git --git-dir "$GRAPH_DIR/runs/git/cache/repo.git" remote -v
+cat "$GRAPH_DIR/runs/git/cache/.repo.git.lock/owner.json"
 ```
 
 Recovery:
@@ -340,7 +342,19 @@ Recovery:
    git --git-dir "$GRAPH_DIR/runs/git/cache/repo.git" fetch --prune origin
    ```
 
-3. If the cache path exists but is not a bare repository, stop isolated workers,
+3. If the Git cache lock times out, first check whether the `owner.json` pid is
+   still running on the same host:
+
+   ```bash
+   ps -p <pid> -o pid=,comm=,etime=
+   ```
+
+   A live owner is usually cloning or fetching the shared bare cache; wait or
+   raise `SPG_GIT_CACHE_LOCK_TIMEOUT_MS` for slow remotes. Remove
+   `runs/git/cache/.repo.git.lock` only after confirming the owner process is
+   gone and the lock directory is stale.
+
+4. If the cache path exists but is not a bare repository, stop isolated workers,
    quarantine only that cache path, and retry so the worker can recreate it:
 
    ```bash
@@ -349,7 +363,7 @@ Recovery:
    npm run worker -- --graph "$GRAPH" --session codex-A --once --isolation git
    ```
 
-4. If clone fails after claim because the per-run workspace already exists,
+5. If clone fails after claim because the per-run workspace already exists,
    inspect that exact path from the error or report, then quarantine only that
    final workspace directory. Do not remove the workspace root or bare cache.
 

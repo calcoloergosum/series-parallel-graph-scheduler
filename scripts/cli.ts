@@ -419,7 +419,8 @@ Environment:
   SLACK_WEBHOOK_URL         Enables notifications for done, block, answer, fail, and decompose.
   SPG_SLACK_TIMEOUT_MS      Slack notification timeout in milliseconds. Default: 5000.
   SPG_DEBUG=1               Include stack traces in CLI errors.
-  SPG_GRAPH_LOCK_TIMEOUT_MS Lock wait timeout in milliseconds. Default: 5000.`;
+  SPG_GRAPH_LOCK_TIMEOUT_MS Graph lock wait timeout in milliseconds. Default: 5000.
+  SPG_GIT_CACHE_LOCK_TIMEOUT_MS Git cache lock wait timeout in milliseconds. Default: 60000.`;
 }
 
 export async function dispatchCliCommand(options: CliDispatchOptions): Promise<void> {

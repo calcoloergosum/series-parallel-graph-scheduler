@@ -1050,6 +1050,42 @@ test("git runtime reports missing remote before running Git", async () => {
   assert.deepEqual(commands, []);
 });
 
+test("git runtime cache lock timeout includes owner diagnostics", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "git-runtime-lock-"));
+  try {
+    const bareRepoPath = join(dir, "cache", "repo.git");
+    const lockPath = join(dir, "cache", ".repo.git.lock");
+    await mkdir(lockPath, { recursive: true });
+    await writeFile(join(lockPath, "owner.json"), `${JSON.stringify({
+      pid: 12345,
+      createdAt: "2026-05-30T00:00:00.000Z",
+      lockPath
+    }, null, 2)}\n`, "utf8");
+
+    await assert.rejects(
+      prepareBareRepository({
+        remote: "https://example.com/org/repo.git",
+        bareRepoPath,
+        lockTimeoutMs: 5,
+        lockStaleMs: 60_000,
+        git: async () => {
+          throw new Error("git should not run before lock acquisition");
+        }
+      }),
+      (error) => {
+        assert.match(error.message, /Timed out waiting for Git cache lock:/);
+        assert.match(error.message, /pid=12345/);
+        assert.match(error.message, /createdAt=2026-05-30T00:00:00\.000Z/);
+        assert.match(error.message, /owner\.json/);
+        assert.match(error.message, /timeoutMs=5/);
+        return true;
+      }
+    );
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
 test("git runtime captures fetch failures with redacted bounded output", async () => {
   const secretDir = await mkdtemp(join(tmpdir(), "git-runtime-token=super-secret-"));
   try {
