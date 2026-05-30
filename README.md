@@ -59,7 +59,7 @@ Render the demo graph to an HTML file:
 npm run render -- --graph ./plan-example.graph.json --out /tmp/spg-plan-example.html
 ```
 
-Open the local visualizer for the active graph:
+Open the local visualizer operator console for the active graph:
 
 ```bash
 npm run serve -- --graph ./plan-improve.graph.json --cwd "$PWD" --port 8787
@@ -152,6 +152,12 @@ changing TypeScript source. Package binaries `spg-scheduler` and
 `spg-render-plan` point at the same built files after package installation.
 The mutating `claim` example above is a command shape for an operating graph;
 use the disposable demo below for a copy/paste mutation flow.
+
+Use the CLI when you need scriptable JSON output, shell pipelines, CI checks, or
+copy/pasteable incident commands. Use the visualizer when you need a live local
+operator console for graph shape, ready/active work, diagnostics, recent events,
+worker logs, and guarded write controls. Both paths call the same scheduler
+mutation code and preserve the graph file as the source of truth.
 
 ## Disposable Demo
 
@@ -352,11 +358,14 @@ npm run summary -- --graph tests/fixtures/graphs/invalid-missing-root.graph.json
 
 The second command is expected to fail; it is useful when checking diagnostics.
 
-## Visualizer Safety
+## Visualizer Usage And Safety
 
-The visualizer is a trusted local operator tool. It can show graph state, active
-sessions, ready leaves, blocked questions, report paths, worker process ids, and
-recent worker output. Its Worker Manager can start and stop local processes.
+The visualizer is a trusted local operator tool. It can show the rendered graph,
+summary counts, ready leaves, active and attention-needed nodes, blocked
+questions, report paths, diagnostics, recent operational events, worker process
+ids, Git isolation refs, and recent worker output. Its Worker Manager can start
+and stop local scheduler worker processes, and its write routes expose the same
+node and recovery mutations as the CLI.
 
 Default loopback mode:
 
@@ -368,17 +377,62 @@ The default host is `127.0.0.1`. Binding to a non-loopback host refuses to start
 unless write routes are protected with a token or unsafe mode is explicitly
 enabled.
 
-Safe non-loopback mode:
+Common local workflow:
+
+1. Start the console with `npm run serve -- --graph ./plan-improve.graph.json --cwd "$PWD" --port 8787`.
+2. Open `http://127.0.0.1:8787`.
+3. Use the graph filters and search box to narrow by ready work, active work,
+   attention items, ids, titles, statuses, sessions, paths, or log text.
+4. Check Diagnostics and Recent Events before recovery actions.
+5. Answer blocked nodes from the Active Sessions answer form, or start/stop
+   workers from Worker Manager when the graph is ready for automated work.
+
+Token-protected non-loopback mode, for cases where another trusted machine must
+reach the console:
 
 ```bash
 npm run serve -- --graph ./plan-improve.graph.json --host 0.0.0.0 --port 8787 --visualizer-write-token "replace-with-a-token"
 ```
 
-For browser controls, put the token in the URL fragment:
+Read-only graph and worker state are still visible to clients that can reach the
+server. The token gates write routes only; it is not a login system. For browser
+write controls, put the token in the URL fragment:
 
 ```text
 http://HOST:8787/#write-token=TOKEN
 ```
+
+The browser stores that fragment token locally and sends it as
+`X-SPG-Visualizer-Token` on write requests. The fragment itself is not sent in
+HTTP requests.
+
+Node action examples through the visualizer API:
+
+```bash
+curl -sS -X POST http://127.0.0.1:8787/api/node/claim \
+  -H "content-type: application/json" \
+  -d '{"nodeId":"NODE","session":"operator"}'
+
+curl -sS -X POST http://127.0.0.1:8787/api/node/reset \
+  -H "content-type: application/json" \
+  -d '{"nodeId":"NODE","reason":"retry after review"}'
+```
+
+When the server was started with `--visualizer-write-token`, include the token
+header on write requests:
+
+```bash
+curl -sS -X POST http://HOST:8787/api/node/answer \
+  -H "content-type: application/json" \
+  -H "X-SPG-Visualizer-Token: TOKEN" \
+  -d '{"nodeId":"NODE","answer":"Proceed.","responder":"operator"}'
+```
+
+The node routes are `claim`, `start`, `renew`, `done`, `block`, `answer`,
+`fail`, `reset`, `reset-subtree`, `reset-reachable`, and `decompose`. Leased
+worker-style actions still require the matching `session` or `runId`, just like
+the CLI. Graph-level recovery routes are `/api/graph/reconcile` and
+`/api/leases/release-expired`.
 
 Explicit unsafe mode is only for a trusted network boundary where every
 reachable client may start and stop workers, mutate graph nodes, and run graph
