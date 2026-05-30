@@ -319,6 +319,12 @@ Changes to readiness, status transitions, lease ownership, reset scope, or decom
 
 ## Visualizer Contract
 
+The current visualizer parity work is additive. It does not remove scheduler
+commands, change CLI flags, alter successful CLI JSON stdout shapes, or change
+the graph mutation semantics documented above. GUI and HTTP write paths invoke
+the same scheduler mutation handlers and graph lock as the CLI; the graph file
+remains the source of truth.
+
 The local visualizer started by `serve` should keep these routes:
 
 - `GET /` and `GET /index.html`: HTML application.
@@ -342,6 +348,11 @@ The local visualizer started by `serve` should keep these routes:
 The `/api/graph` and `/events` payload should keep at least `graph`,
 `graphSvg`, `nodes`, `nodeHistoryLimit`, `actionPolicy`, `ready`, `working`,
 `summary`, and `workerManager`.
+
+`actionPolicy` and each node's `actions` array are additive visualizer metadata.
+Older visualizer clients may ignore them. They describe UI availability and
+confirmation hints only; server-side scheduler mutation guards remain
+authoritative.
 
 `nodes` is a normalized array for browser detail rendering without reparsing
 the SVG. Each entry keeps at least `id`, `title`, `kind`, `status`,

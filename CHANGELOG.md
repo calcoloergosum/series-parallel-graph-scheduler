@@ -3,6 +3,33 @@
 All user-visible CLI, graph, renderer, visualizer, worker, package, and
 operator documentation changes must be recorded here before a release is tagged.
 
+## Unreleased
+
+### Added
+
+- Added GUI operator-console parity through the local visualizer: read-only
+  endpoints now mirror `summary`, `ready`, `diagnostics`, `events`, and
+  `prompt`; protected write endpoints expose node mutations, graph recovery,
+  lease release, and Worker Manager start/stop controls.
+- Added visualizer payload metadata for operator actions, including per-node
+  `actions`, `actionPolicy`, confirmation hints for destructive actions, and
+  disabled reasons when a worker-style action needs matching lease credentials.
+
+### Compatibility And Migration Notes
+
+- Existing CLI commands, flags, graph mutation semantics, and successful JSON
+  stdout shapes are unchanged. The GUI additions call the same scheduler
+  mutation handlers and preserve the graph file as the source of truth.
+- The new visualizer routes and payload fields are additive. Existing clients
+  that only consume `/api/graph`, `/api/workers`, or `/events` can ignore the
+  new action metadata.
+- When `serve` is started with `--visualizer-write-token`, every visualizer
+  `POST` route returns HTTP 403 unless the request includes
+  `X-SPG-Visualizer-Token: TOKEN` or `Authorization: Bearer TOKEN`. Read-only
+  visualizer routes remain unauthenticated, including on non-loopback binds.
+- No known breaking behavior is introduced by the GUI operator-console parity
+  work.
+
 ## 0.1.0 - 2026-05-27
 
 ### Added
