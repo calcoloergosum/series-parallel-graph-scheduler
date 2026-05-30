@@ -53,6 +53,58 @@ async function assertJsonResponse(response, route) {
   return response.json();
 }
 
+async function postJson(url, body, headers = {}) {
+  return fetch(url, {
+    method: "POST",
+    headers: { "content-type": "application/json", ...headers },
+    body: JSON.stringify(body)
+  });
+}
+
+async function postNodeOrFail(baseUrl, route, body, headers) {
+  const response = await postJson(`${baseUrl}/api/node/${route}`, body, headers);
+  if (response.status !== 200) {
+    assert.fail(`${route}: ${await response.text()}`);
+  }
+  return response.json();
+}
+
+function expectedSummary(graph) {
+  const counts = {};
+  for (const node of Object.values(graph.graph.nodes)) {
+    const status = node.status || "pending";
+    counts[status] = (counts[status] || 0) + 1;
+  }
+  return {
+    graphVersion: graph.graphVersion,
+    title: graph.title,
+    description: graph.description,
+    totalNodes: Object.keys(graph.graph.nodes).length,
+    root: graph.graph.root,
+    counts
+  };
+}
+
+async function assertSummaryMatchesGraph(baseUrl, summary, graphPath) {
+  const graph = await readGraph(graphPath);
+  assert.deepEqual(summary, expectedSummary(graph));
+  const summaryResponse = await fetch(`${baseUrl}/api/summary`);
+  assert.equal(summaryResponse.status, 200);
+  assert.deepEqual(await summaryResponse.json(), summary);
+  return graph;
+}
+
+function latestHistory(node) {
+  assert.ok(Array.isArray(node.history) && node.history.length > 0, "expected node history");
+  return node.history.at(-1);
+}
+
+function assertSkippedSlack(slack) {
+  assert.deepEqual(Object.keys(slack).sort(), ["reason", "skipped"]);
+  assert.equal(slack.skipped, true);
+  assert.match(slack.reason, /SLACK_WEBHOOK_URL/);
+}
+
 test("invalid graph fixtures fail scheduler and renderer paths before writes", async (t) => {
   for (const outcome of invalidGraphValidatorOutcomes()) {
     await t.test(outcome.fixture, async () => {
@@ -129,28 +181,30 @@ test("visualizer node mutation routes use scheduler transitions", async () => {
   await withTempGraph(async (graphPath, dir) => {
     const visualizer = await createVisualizerServer({ graphPath, port: 0 });
     try {
-      const postNode = async (route, body) => {
-        const response = await fetch(`${visualizer.url}/api/node/${route}`, {
-          method: "POST",
-          headers: { "content-type": "application/json" },
-          body: JSON.stringify(body)
-        });
-        if (response.status !== 200) {
-          assert.fail(`${route}: ${await response.text()}`);
-        }
-        return response.json();
-      };
+      const postNode = (route, body) => postNodeOrFail(visualizer.url, route, body);
 
       const claim = await postNode("claim", { nodeId: "A", session: "codex-api", leaseSeconds: 60 });
       assert.equal(claim.nodeId, "A");
       assert.equal(claim.lease.session, "codex-api");
+      let graph = await assertSummaryMatchesGraph(visualizer.url, claim.summary, graphPath);
+      assert.equal(graph.graph.nodes.A.status, "claimed");
+      assert.equal(graph.graph.nodes.A.lease.runId, claim.runId);
+      assert.equal(latestHistory(graph.graph.nodes.A).event, "claimed");
+      assert.deepEqual(claim.summary.counts, { claimed: 1, pending: 5 });
 
       const start = await postNode("start", { nodeId: "A", session: "codex-api", runId: claim.runId });
       assert.equal(start.status, "running");
+      graph = await assertSummaryMatchesGraph(visualizer.url, start.summary, graphPath);
+      assert.equal(graph.graph.nodes.A.status, "running");
+      assert.equal(graph.graph.nodes.A.startedAt, latestHistory(graph.graph.nodes.A).startedAt);
+      assert.equal(latestHistory(graph.graph.nodes.A).event, "running");
 
       const renew = await postNode("renew", { nodeId: "A", session: "codex-api", runId: claim.runId, leaseSeconds: 120 });
       assert.equal(renew.nodeId, "A");
       assert.equal(renew.lease.session, "codex-api");
+      graph = await assertSummaryMatchesGraph(visualizer.url, renew.summary, graphPath);
+      assert.equal(graph.graph.nodes.A.lease.renewedAt, renew.lease.renewedAt);
+      assert.equal(latestHistory(graph.graph.nodes.A).event, "renewed");
 
       const done = await postNode("done", {
         nodeId: "A",
@@ -160,11 +214,21 @@ test("visualizer node mutation routes use scheduler transitions", async () => {
         reportBody: "completed via API"
       });
       assert.equal(done.status, "done");
-      assert.equal(done.slack.skipped, true);
+      assertSkippedSlack(done.slack);
       assert.equal(await readFile(join(dir, "reports", "A.md"), "utf8"), "completed via API\n");
+      graph = await assertSummaryMatchesGraph(visualizer.url, done.summary, graphPath);
+      assert.equal(graph.graph.nodes.A.status, "done");
+      assert.equal(graph.graph.nodes.A.report, "reports/A.md");
+      assert.equal(graph.graph.nodes.A.lease, undefined);
+      assert.equal(latestHistory(graph.graph.nodes.A).event, "done");
 
       const reset = await postNode("reset", { nodeId: "A", reason: "exercise API reset" });
       assert.equal(reset.status, "pending");
+      graph = await assertSummaryMatchesGraph(visualizer.url, reset.summary, graphPath);
+      assert.equal(graph.graph.nodes.A.status, "pending");
+      assert.equal(graph.graph.nodes.A.report, undefined);
+      assert.equal(latestHistory(graph.graph.nodes.A).event, "reset");
+      assert.deepEqual(reset.resetAncestors, []);
 
       const blockClaim = await postNode("claim", { nodeId: "A", session: "codex-api" });
       const block = await postNode("block", {
@@ -175,12 +239,23 @@ test("visualizer node mutation routes use scheduler transitions", async () => {
         reason: "needs_operator_decision"
       });
       assert.equal(block.status, "blocked");
-      assert.equal(block.slack.skipped, true);
+      assertSkippedSlack(block.slack);
+      graph = await assertSummaryMatchesGraph(visualizer.url, block.summary, graphPath);
+      assert.equal(graph.graph.nodes.A.status, "blocked");
+      assert.equal(graph.graph.nodes.A.question, "Proceed?");
+      assert.equal(graph.graph.nodes.A.blockedReason, "needs_operator_decision");
+      assert.equal(latestHistory(graph.graph.nodes.A).event, "blocked");
 
       const answer = await postNode("answer", { nodeId: "A", answer: "Proceed.", responder: "api-test" });
       assert.equal(answer.status, "pending");
       assert.equal(answer.answer, "Proceed.");
-      assert.equal(answer.slack.skipped, true);
+      assertSkippedSlack(answer.slack);
+      graph = await assertSummaryMatchesGraph(visualizer.url, answer.summary, graphPath);
+      assert.equal(graph.graph.nodes.A.status, "pending");
+      assert.equal(graph.graph.nodes.A.answer, "Proceed.");
+      assert.equal(graph.graph.nodes.A.answeredBy, "api-test");
+      assert.equal(graph.graph.nodes.A.lease, undefined);
+      assert.equal(latestHistory(graph.graph.nodes.A).event, "answered");
 
       const failClaim = await postNode("claim", { nodeId: "A", session: "codex-api" });
       const fail = await postNode("fail", {
@@ -191,10 +266,20 @@ test("visualizer node mutation routes use scheduler transitions", async () => {
         report: "reports/fail.md"
       });
       assert.equal(fail.status, "failed");
-      assert.equal(fail.slack.skipped, true);
+      assertSkippedSlack(fail.slack);
+      graph = await assertSummaryMatchesGraph(visualizer.url, fail.summary, graphPath);
+      assert.equal(graph.graph.nodes.A.status, "failed");
+      assert.equal(graph.graph.nodes.A.failureReason, "exercise API fail");
+      assert.equal(graph.graph.nodes.A.report, "reports/fail.md");
+      assert.equal(graph.graph.nodes.A.lease, undefined);
+      assert.equal(latestHistory(graph.graph.nodes.A).event, "failed");
 
       const subtreeReset = await postNode("reset-subtree", { nodeId: "ROOT", reason: "exercise API subtree reset" });
-      assert.ok(subtreeReset.resetNodes.includes("A"));
+      assert.deepEqual(new Set(subtreeReset.resetNodes), new Set(["ROOT", "A", "P", "B", "C", "G"]));
+      graph = await assertSummaryMatchesGraph(visualizer.url, subtreeReset.summary, graphPath);
+      assert.equal(graph.graph.nodes.A.status, "pending");
+      assert.equal(graph.graph.nodes.P.status, "pending");
+      assert.equal(latestHistory(graph.graph.nodes.A).resetScope, "subtree");
 
       const decomposeClaim = await postNode("claim", { nodeId: "A", session: "codex-api" });
       const decompose = await postNode("decompose", {
@@ -208,14 +293,122 @@ test("visualizer node mutation routes use scheduler transitions", async () => {
         ]
       });
       assert.deepEqual(decompose.children, ["A1", "A2"]);
-      assert.equal(decompose.slack.skipped, true);
+      assertSkippedSlack(decompose.slack);
+      graph = await assertSummaryMatchesGraph(visualizer.url, decompose.summary, graphPath);
+      assert.deepEqual(graph.graph.nodes.A.children, ["A1", "A2"]);
+      assert.equal(graph.graph.nodes.A.kind, "series");
+      assert.equal(graph.graph.nodes.A.status, "pending");
+      assert.equal(graph.graph.nodes.A.lease, undefined);
+      assert.equal(graph.graph.nodes.A1.status, "pending");
+      assert.equal(latestHistory(graph.graph.nodes.A).event, "decomposed");
 
       const reachableReset = await postNode("reset-reachable", { nodeId: "A", reason: "exercise API reachable reset" });
       assert.ok(reachableReset.resetNodes.includes("A1"));
-
-      const graph = await readGraph(graphPath);
+      assert.ok(reachableReset.resetNodes.includes("P"));
+      assert.ok(reachableReset.resetNodes.includes("G"));
+      graph = await assertSummaryMatchesGraph(visualizer.url, reachableReset.summary, graphPath);
       assert.deepEqual(graph.graph.nodes.A.children, ["A1", "A2"]);
       assert.equal(graph.graph.nodes.A1.status, "pending");
+      assert.equal(latestHistory(graph.graph.nodes.A1).resetScope, "reachable");
+    } finally {
+      await visualizer.close();
+    }
+  });
+});
+
+test("visualizer node mutation routes reject lease mismatches without mutating graph", async (t) => {
+  const cases = [
+    {
+      route: "start",
+      body: (claim) => ({ nodeId: "A", session: "wrong-session", runId: claim.runId }),
+      expected: /Lease session mismatch/,
+      assertUnchanged: (node) => assert.equal(node.startedAt, undefined)
+    },
+    {
+      route: "renew",
+      body: () => ({ nodeId: "A", session: "codex-api", runId: "wrong-run", leaseSeconds: 120 }),
+      expected: /Lease runId mismatch/,
+      assertUnchanged: (node, claim) => assert.equal(node.lease.expiresAt, claim.lease.expiresAt)
+    },
+    {
+      route: "done",
+      body: (claim) => ({ nodeId: "A", session: "wrong-session", runId: claim.runId, report: "reports/A.md" }),
+      expected: /Lease session mismatch/,
+      assertUnchanged: (node) => {
+        assert.equal(node.completedAt, undefined);
+        assert.equal(node.report, undefined);
+      }
+    },
+    {
+      route: "block",
+      body: () => ({ nodeId: "A", session: "codex-api", runId: "wrong-run", question: "Proceed?" }),
+      expected: /Lease runId mismatch/,
+      assertUnchanged: (node) => {
+        assert.equal(node.blockedAt, undefined);
+        assert.equal(node.question, undefined);
+      }
+    },
+    {
+      route: "fail",
+      body: (claim) => ({ nodeId: "A", session: "wrong-session", runId: claim.runId, reason: "wrong owner" }),
+      expected: /Lease session mismatch/,
+      assertUnchanged: (node) => {
+        assert.equal(node.failedAt, undefined);
+        assert.equal(node.failureReason, undefined);
+      }
+    }
+  ];
+
+  for (const item of cases) {
+    await t.test(item.route, async () => {
+      await withTempGraph(async (graphPath) => {
+        const visualizer = await createVisualizerServer({ graphPath, port: 0 });
+        try {
+          const claim = await postNodeOrFail(visualizer.url, "claim", { nodeId: "A", session: "codex-api" });
+          const before = await readGraph(graphPath);
+          const response = await postJson(`${visualizer.url}/api/node/${item.route}`, item.body(claim));
+          assert.equal(response.status, 500);
+          assert.match(await response.text(), item.expected);
+
+          const graph = await readGraph(graphPath);
+          assert.equal(graph.graphVersion, before.graphVersion);
+          assert.equal(graph.graph.nodes.A.status, "claimed");
+          assert.equal(graph.graph.nodes.A.lease.session, "codex-api");
+          assert.equal(graph.graph.nodes.A.lease.runId, claim.runId);
+          item.assertUnchanged(graph.graph.nodes.A, claim);
+          assert.deepEqual(graph.graph.nodes.A.history, before.graph.nodes.A.history);
+        } finally {
+          await visualizer.close();
+        }
+      });
+    });
+  }
+});
+
+test("visualizer done route rejects report body paths outside the graph directory", async () => {
+  await withTempGraph(async (graphPath, dir) => {
+    const visualizer = await createVisualizerServer({ graphPath, port: 0 });
+    try {
+      const claim = await postNodeOrFail(visualizer.url, "claim", { nodeId: "A", session: "codex-api" });
+      const before = await readGraph(graphPath);
+      const escapedReport = `escaped-report-${process.pid}.md`;
+      const response = await postJson(`${visualizer.url}/api/node/done`, {
+        nodeId: "A",
+        session: "codex-api",
+        runId: claim.runId,
+        report: `../${escapedReport}`,
+        reportBody: "should not be written"
+      });
+      assert.equal(response.status, 500);
+      assert.match(await response.text(), /Path escapes graph directory/);
+      assert.equal(existsSync(join(dir, "..", escapedReport)), false);
+
+      const graph = await readGraph(graphPath);
+      assert.equal(graph.graphVersion, before.graphVersion);
+      assert.equal(graph.graph.nodes.A.status, "claimed");
+      assert.equal(graph.graph.nodes.A.report, undefined);
+      assert.equal(graph.graph.nodes.A.completedAt, undefined);
+      assert.deepEqual(graph.graph.nodes.A.history, before.graph.nodes.A.history);
     } finally {
       await visualizer.close();
     }
@@ -340,7 +533,7 @@ test("visualizer refuses unprotected non-loopback write endpoints", async () => 
 });
 
 test("visualizer write token protects mutation routes", async () => {
-  await withTempGraph(async (graphPath) => {
+  await withTempGraph(async (graphPath, dir) => {
     await claimNode(graphPath, { session: "codex-A", nodeId: "A" });
     await blockNode(graphPath, { nodeId: "A", session: "codex-A", question: "Use cache?" });
 
@@ -407,6 +600,20 @@ test("visualizer write token protects mutation routes", async () => {
       });
       assert.equal(claimResponse.status, 200);
       assert.equal((await claimResponse.json()).nodeId, "A");
+
+      const forbiddenDone = await fetch(`${url}/api/node/done`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          nodeId: "A",
+          session: "token-test",
+          report: "reports/token-denied.md",
+          reportBody: "denied report body"
+        })
+      });
+      assert.equal(forbiddenDone.status, 403);
+      assert.equal(existsSync(join(dir, "reports", "token-denied.md")), false);
+      assert.equal((await readGraph(graphPath)).graph.nodes.A.status, "claimed");
 
       const resetResponse = await fetch(`${url}/api/node/reset`, {
         method: "POST",
