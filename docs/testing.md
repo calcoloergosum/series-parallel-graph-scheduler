@@ -19,7 +19,7 @@ Run these checks from the repository root:
 | Build | `npm run build` | TypeScript builds to `dist/`, prompts are copied, and package binaries are executable. | Yes |
 | Behavior tests | `npm test` | Runs `typecheck`, `build`, and the focused Node suites, including `tests/regressions.test.mjs`, without the Chromium-only browser suite. | Yes |
 | Core coverage | `npm run coverage:core` | Runs the Node test suite through c8 and enforces per-file branch/function coverage for `scripts/graph-traversal.ts`, `scripts/node-mutations.ts`, `scripts/graph-io.ts`, `scripts/cli.ts`, `scripts/worker.ts`, and `scripts/visualizer.ts`. | Yes |
-| Visualizer browser tests | `npm run test:visualizer` | Starts the local visualizer server and drives the real HTML in Chromium to answer blocked work, observe SSE updates, and start/stop managed workers without live Codex or Slack. | Yes in GitHub CI after installing Playwright Chromium |
+| Visualizer browser tests | `npm run test:visualizer` | Starts the local visualizer server and drives the real HTML in Chromium to answer blocked work, observe SSE updates, start/stop managed workers, and check representative graph layouts for visible, unclipped, non-overlapping SVG content without live Codex or Slack. | Yes in GitHub CI after installing Playwright Chromium |
 | Migration smoke | `npm run smoke:migration` | Real built entry points can operate on relative and absolute graph paths, run a harmless worker, render HTML, and start `serve`. | Yes, where server binding is supported |
 | Package dry run | `npm run release:check` | The package builds, `npm pack --dry-run` contains the expected release files, source/runtime artifacts are excluded, and checklist evidence lists version, changelog status, package files, and built binaries. | Yes |
 | Lock contention benchmark | `npm run benchmark:lock-contention` | Measures p50, p95, and max latency for concurrent graph mutation paths on the current local filesystem. | No, manual release evidence only |
@@ -119,7 +119,7 @@ supports `127.0.0.1` before treating the release as verified.
 | Integration | `tests/scheduler-mutations.test.mjs`, `tests/worker-runtime.test.mjs`, and `tests/visualizer-renderer.test.mjs` temporary graph tests. | Prove multi-step scheduler semantics with real files: claim/start/done, leases, reset variants, decompose, reconcile, locking, reports, notification hooks, and visualizer APIs. | A behavior crosses module boundaries, mutates graph files, relies on leases or locks, or coordinates scheduler state across more than one command. |
 | Smoke | `scripts/migration-smoke.mjs` via `npm run smoke:migration`. | Prove built entry points work together in realistic operator paths without requiring Slack or Codex credentials. | The issue is about packaging, generated `dist/`, wrapper parity, relative versus absolute graph paths, or serve startup. Keep smoke broad and shallow. |
 | Documentation examples | `tests/doc-examples.test.mjs`. | Keep README quickstart, disposable demo, renderer, diagnostics, and visualizer startup examples aligned with current CLI flags and JSON or HTTP output contracts. | A README command is meant to be copied by operators, especially command flags, graph path resolution, renderer output, diagnostics fields, or serve startup behavior. |
-| Browser and DOM | Browser-like coverage lives in `tests/visualizer-renderer.test.mjs` through visualizer HTML script execution, escaped renderer output checks, and HTTP calls to the local server. Real-browser interaction coverage lives in `tests/visualizer-browser.test.mjs`. | Prove the local visualizer payload, answer and worker APIs, server-sent-event shell assumptions, client-side escaping, static renderer escaping, and Chromium-visible visualizer interactions. | The behavior touches HTML insertion, browser-visible text, local API routes, worker-manager forms, or rendered graph output. Prefer focused DOM or browser tests over duplicating scheduler integration flows. |
+| Browser and DOM | Browser-like coverage lives in `tests/visualizer-renderer.test.mjs` through visualizer HTML script execution, escaped renderer output checks, and HTTP calls to the local server. Real-browser interaction and layout coverage lives in `tests/visualizer-browser.test.mjs`. | Prove the local visualizer payload, action metadata, answer and worker APIs, server-sent-event shell assumptions, client-side escaping, static renderer escaping, Chromium-visible visualizer interactions, and SVG layout invariants. | The behavior touches HTML insertion, browser-visible text, local API routes, worker-manager forms, rendered graph output, or visual geometry. Prefer focused DOM or browser tests over duplicating scheduler integration flows. |
 | Security | Current coverage is in the focused Node suites and `scripts/migration-smoke.mjs`. | Prove malformed graph rejection, report path containment, visualizer host warnings, request validation, worker command size limits, Slack isolation, and HTML escaping. | User-controlled input reaches the filesystem, child processes, HTTP APIs, generated HTML, Slack text, graph JSON, or process environment. |
 | Regression | `tests/regressions.test.mjs`; no snapshot suite. | Preserve a previously fixed user-visible failure with the smallest fixture that would fail if the bug returned. | A bug fix would otherwise rely on a large integration test or a broad smoke path. Name the test after the user-visible failure, not the implementation detail. |
 
@@ -138,6 +138,45 @@ supports `127.0.0.1` before treating the release as verified.
 - New tests should be deterministic: no live Slack webhook, no live Codex
   process, no dependency on wall-clock timing without a short polling helper, and
   no writes outside a temporary directory.
+
+## GUI And Visualizer Changes
+
+Future GUI work should test the boundary that owns the behavior:
+
+- Payload and action metadata: add contract or integration assertions in
+  `tests/graph-contracts.typecheck.ts` and
+  `tests/visualizer-renderer.test.mjs` when `/api/graph`, `/events`,
+  normalized node details, `actionPolicy`, `actions`, diagnostics, recent
+  events, or worker-manager status fields change. Run `npm run typecheck` for
+  the type contract and `npm test` for the Node suites.
+- HTTP routes: add `tests/visualizer-renderer.test.mjs` coverage for each new
+  route, including success responses, malformed JSON or query validation,
+  write-token rejection when the route is a `POST`, render-after-update when
+  graph state changes, and SSE broadcast when browser state should refresh. Run
+  `npm test`; use `npm run coverage:core` when the route change also alters one
+  of the covered scheduler modules named in the authoritative checks table.
+- Browser interactions: add `tests/visualizer-browser.test.mjs` coverage when a
+  user workflow changes in the real page, such as answering a blocked node,
+  starting or stopping managed workers, selecting actions, or observing SSE
+  updates. Run `npx playwright install chromium` once locally if needed, then
+  `npm run test:visualizer`.
+- Visual layout: extend the representative layout fixtures in
+  `tests/visualizer-browser.test.mjs` when SVG geometry, graph filtering,
+  sizing, labels, or status styling changes. The browser layout check should
+  prove every expected leaf and frame renders, the SVG has non-empty dimensions,
+  graph elements stay inside rendered bounds, node rectangles do not overlap,
+  and node labels are not clipped. Run `npm run test:visualizer`; set
+  `SPG_REQUIRE_BROWSER=1` for required local gates and
+  `SPG_BROWSER_ARTIFACT_DIR=<dir>` when screenshots, failure HTML, and graph
+  snapshots should be kept.
+- Documentation examples: update `tests/doc-examples.test.mjs` only when README
+  visualizer commands, startup flags, or operator-copyable examples change. Run
+  `npm test`.
+
+Do not use the browser suite to re-prove scheduler transition semantics already
+covered by `tests/scheduler-mutations.test.mjs`. For a new GUI action, prove the
+mutation rule at the scheduler layer, the route/request contract at the
+visualizer server layer, and only the visible user flow in Chromium.
 
 ## Documentation Example Policy
 
