@@ -13,6 +13,7 @@
     "scripts/sp-layout.mjs",
     "schemas/",
     "docs/",
+    "examples/",
     "plan-example.graph.json"
   ],
   "bin": {

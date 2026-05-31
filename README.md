@@ -39,6 +39,8 @@ npm run build
 
 This repository currently checks in named graph files:
 
+- `examples/goal-git-footprint.graph.json`: a small metadata-rich graph showing
+  goal, planner, and Git footprint fields.
 - `plan-example.graph.json`: a completed demo graph with renderer document
   content.
 - `plan-scheduler-priority.graph.json`: the active priority-selection graph for
@@ -76,6 +78,12 @@ http://127.0.0.1:8787
 ```
 
 `serve` runs until stopped with `Ctrl-C`.
+
+Validate the goal and Git metadata example:
+
+```bash
+npm run summary -- --graph ./examples/goal-git-footprint.graph.json
+```
 
 ## Operating Model
 
@@ -149,6 +157,47 @@ npm run summary
 If neither `--graph` nor `PLAN_GRAPH` is set, scheduler commands resolve
 `plan.graph.json` from the package root. Renderer commands use `--graph`, then a
 positional graph path, then `PLAN_GRAPH`, then `plan.graph.json`.
+
+## Goal-Driven Planning
+
+Use `plan --goal` when the graph should be generated from an operator goal
+instead of hand-authored first. The `plan` command creates a graph artifact; the
+existing scheduler, worker, renderer, and visualizer commands then operate on
+that graph path.
+
+CLI review workflow:
+
+```bash
+node scripts/plan-scheduler.mjs plan --goal "Ship a searchable audit log" --graph /tmp/spg-audit-log/plan.graph.json --plan-only
+node scripts/plan-scheduler.mjs summary --graph /tmp/spg-audit-log/plan.graph.json
+node scripts/plan-scheduler.mjs ready --graph /tmp/spg-audit-log/plan.graph.json
+npm run worker -- --graph /tmp/spg-audit-log/plan.graph.json --session codex-A --once --cwd "$PWD"
+```
+
+GUI review workflow:
+
+```bash
+node scripts/plan-scheduler.mjs plan --goal "Ship a searchable audit log" --graph /tmp/spg-audit-log/plan.graph.json --plan-only
+npm run serve -- --graph /tmp/spg-audit-log/plan.graph.json --cwd "$PWD" --port 8787
+```
+
+Then open `http://127.0.0.1:8787` and review the generated goal, planner
+metadata, ready work, diagnostics, and Git footprint summaries before starting
+or stopping workers from the visualizer.
+
+For immediate execution, make the opt-in explicit:
+
+```bash
+node scripts/plan-scheduler.mjs plan --goal "Ship a searchable audit log" --graph /tmp/spg-audit-log/plan.graph.json --then-run --session codex-A --once --cwd "$PWD"
+```
+
+The meaning of `plan.graph.json` depends on the command mode. For `plan
+--goal`, `--graph PATH` names the output graph to create. If `--graph` is
+omitted, the generated artifact is written under
+`runs/goals/<timestamp>-<safe-goal-slug>/plan.graph.json`. For every existing
+command such as `summary`, `worker`, `serve`, `render`, `claim`, or `done`,
+`--graph PATH` selects an input graph. Resume generated work by reusing the
+written graph path; rerunning `plan --goal` creates a new planning artifact.
 
 ## Command Entry Points
 
@@ -391,9 +440,10 @@ The second command is expected to fail; it is useful when checking diagnostics.
 The visualizer is a trusted local operator tool. It can show the rendered graph,
 summary counts, ready leaves, active and attention-needed nodes, blocked
 questions, report paths, diagnostics, recent operational events, worker process
-ids, Git isolation refs, and recent worker output. Its Worker Manager can start
-and stop local scheduler worker processes, and its write routes expose the same
-node and recovery mutations as the CLI.
+ids, goal and planner metadata, Git isolation refs, Git footprint summaries, and
+recent worker output. Its Worker Manager can start and stop local scheduler
+worker processes, and its write routes expose the same node and recovery
+mutations as the CLI.
 
 Default loopback mode:
 
@@ -672,6 +722,8 @@ dry-run package manifest for that checklist.
 - `plan-example.graph.json`: completed sample graph with renderer document
   content.
 - `plan-scheduler-priority.graph.json`: active priority-selection graph.
+- `examples/goal-git-footprint.graph.json`: validated metadata example for
+  goal-first plans and Git-aware visualizer fields.
 - `prompts/codex-worker-task.md`: default worker prompt template.
 - `scripts/plan-scheduler.ts`: scheduler CLI, exports, and visualizer server
   integration.

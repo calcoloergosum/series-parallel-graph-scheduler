@@ -1,10 +1,11 @@
 import { spawn } from "node:child_process";
 import test from "node:test";
-import { assert, execFileAsync, fileURLToPath, join, mkdtemp, readFile, rm, schedulerScriptPath, rendererScriptPath, tmpdir, writeFile } from "./helpers/plan-scheduler-harness.mjs";
+import { assert, buildVisualizerPayload, execFileAsync, fileURLToPath, join, mkdtemp, readFile, rm, schedulerScriptPath, rendererScriptPath, tmpdir, writeFile } from "./helpers/plan-scheduler-harness.mjs";
 
 const rootDir = fileURLToPath(new URL("..", import.meta.url));
 const readmePath = join(rootDir, "README.md");
 const testingDocsPath = join(rootDir, "docs", "testing.md");
+const goalGitFootprintExamplePath = join(rootDir, "examples", "goal-git-footprint.graph.json");
 const commandEnv = { ...process.env, SLACK_WEBHOOK_URL: "" };
 
 test("README quickstart read-only examples keep scheduler JSON contracts", async () => {
@@ -151,6 +152,24 @@ test("README visualizer startup example serves the graph API", async () => {
     }
     await rm(dir, { recursive: true, force: true });
   }
+});
+
+test("goal and git footprint example validates and feeds visualizer metadata", async () => {
+  const readme = await readFile(readmePath, "utf8");
+  assertDocCommand(readme, "npm run summary -- --graph ./examples/goal-git-footprint.graph.json");
+
+  const summary = await runSchedulerJson(["summary", "--graph", goalGitFootprintExamplePath]);
+  assert.equal(summary.title, "Goal And Git Footprint Example");
+  assert.equal(summary.root, "ROOT");
+  assert.equal(summary.totalNodes, 3);
+  assert.deepEqual(summary.counts, { done: 3 });
+
+  const payload = await buildVisualizerPayload(goalGitFootprintExamplePath);
+  const node = payload.nodes.find((candidate) => candidate.id === "IMPLEMENT");
+  assert.equal(node.goalText, "Add searchable audit log documentation");
+  assert.equal(node.plannerDecision, "Implement the smallest user-visible documentation slice first");
+  assert.equal(node.gitFootprint.diffStat.totalChanges, 14);
+  assert.deepEqual(node.changedFiles.map((file) => file.path), ["docs/audit-log.md"]);
 });
 
 test("documentation example policy records reasons for examples not run in CI", async () => {
