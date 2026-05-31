@@ -1131,6 +1131,81 @@ test("operational event export flattens recent redacted history entries", async 
   });
 });
 
+test("operational event export keeps history separate from current git footprint", async () => {
+  await withTempGraph(async (graphPath) => {
+    const graph = await readGraph(graphPath);
+    graph.graph.nodes.A.status = "done";
+    graph.graph.nodes.A.outputRef = {
+      name: "refs/heads/spg/node/A/run-success",
+      commit: "2222222222222222222222222222222222222222"
+    };
+    graph.graph.nodes.A.gitFootprint = {
+      source: "git-diff",
+      baseRef: {
+        name: "refs/remotes/origin/main",
+        commit: "1111111111111111111111111111111111111111"
+      },
+      headRef: {
+        name: "refs/heads/spg/node/A/run-success",
+        commit: "2222222222222222222222222222222222222222"
+      },
+      commit: "2222222222222222222222222222222222222222",
+      diffStat: { filesChanged: 1, additions: 3, deletions: 0, totalChanges: 3 },
+      files: [{ path: "src/success.ts", changeType: "added", additions: 3, deletions: 0, totalChanges: 3 }],
+      collectedAt: "2026-05-27T00:10:00.000Z"
+    };
+    graph.graph.nodes.A.history = [
+      {
+        at: "2026-05-27T00:00:00.000Z",
+        event: "claimed",
+        session: "codex-A",
+        runId: "run-old"
+      },
+      {
+        at: "2026-05-27T00:01:00.000Z",
+        event: "failed",
+        status: "failed",
+        session: "codex-A",
+        runId: "run-old",
+        failedAt: "2026-05-27T00:01:00.000Z",
+        failureReason: "tests failed",
+        report: "reports/A-old.md"
+      },
+      {
+        at: "2026-05-27T00:10:00.000Z",
+        event: "done",
+        status: "done",
+        session: "codex-A",
+        runId: "run-success",
+        completedAt: "2026-05-27T00:10:00.000Z",
+        report: "reports/A-success.md",
+        diffStatCollected: true,
+        diffStat: { filesChanged: 1, additions: 3, deletions: 0, totalChanges: 3 },
+        gitFootprint: graph.graph.nodes.A.gitFootprint
+      }
+    ];
+    await writeFile(graphPath, `${JSON.stringify(graph, null, 2)}\n`, "utf8");
+
+    const failedEvent = exportOperationalEvents(await readGraph(graphPath), { nodeId: "A", event: "failed", limit: 1 })[0];
+    assert.equal(failedEvent.status, "failed");
+    assert.equal(failedEvent.details.failureReason, "tests failed");
+    assert.equal(failedEvent.details.gitFootprint, undefined);
+    assert.equal(failedEvent.details.diffStat, undefined);
+    assert.equal(JSON.stringify(failedEvent).includes("2222222222222222222222222222222222222222"), false);
+    assert.equal(JSON.stringify(failedEvent).includes("src/success.ts"), false);
+
+    const claimedEvent = exportOperationalEvents(await readGraph(graphPath), { nodeId: "A", event: "claimed", limit: 1 })[0];
+    assert.equal(claimedEvent.status, undefined);
+
+    const doneEvent = exportOperationalEvents(await readGraph(graphPath), { nodeId: "A", event: "done", limit: 1 })[0];
+    assert.equal(doneEvent.details.gitFootprint.headRef.commit, "2222222222222222222222222222222222222222");
+    assert.deepEqual(doneEvent.details.diffStat, { filesChanged: 1, additions: 3, deletions: 0, totalChanges: 3 });
+
+    const diagnostics = await diagnoseGraph(graphPath);
+    assert.equal(diagnostics.gitFootprint.nodes.find((node) => node.nodeId === "A").commit, "2222222222222222222222222222222222222222");
+  });
+});
+
 test("graph validator reports non-fatal warnings separately from errors", async () => {
   await withTempGraph(async (graphPath) => {
     const graph = fixtureGraph();

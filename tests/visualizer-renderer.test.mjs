@@ -1424,7 +1424,7 @@ test("visualizer builds graph payload and real-time HTML shell", async () => {
   });
 });
 
-test("visualizer and event payloads expose git footprints with redaction", async () => {
+test("visualizer exposes current git footprints while event payloads stay event-time", async () => {
   await withTempGraph(async (graphPath) => {
     const graph = await readGraph(graphPath);
     graph.graph.nodes.A.status = "done";
@@ -1490,8 +1490,9 @@ test("visualizer and event payloads expose git footprints with redaction", async
     assert.deepEqual(payload.diagnostics.gitFootprint.nodes.map((node) => node.nodeId), ["A", "B"]);
     assert.equal(withFootprint.workspace.remote, "https://[REDACTED]@example.com/org/repo.git");
     assert.doesNotMatch(JSON.stringify(payload), /secret-token|workspace-secret/);
-    assert.equal(payload.recentEvents[0].details.gitFootprint.headRef.commit, "2222222222222222222222222222222222222222");
-    assert.deepEqual(payload.recentEvents[0].details.diffStat, { filesChanged: 1, additions: 4, deletions: 1, totalChanges: 5 });
+    assert.equal(payload.recentEvents[0].details.gitFootprint, undefined);
+    assert.equal(payload.recentEvents[0].details.diffStat, undefined);
+    assert.equal(payload.recentEvents[0].details.commit, "2222222222222222222222222222222222222222");
   });
 });
 

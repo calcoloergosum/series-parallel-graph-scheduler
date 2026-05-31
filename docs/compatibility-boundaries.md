@@ -214,9 +214,12 @@ Commands that currently print JSON should continue to print a single JSON value 
   `outputRef` fallback used by the visualizer when rendering commit and
   line-change summaries.
 - `events`: array of newest-first event objects with at least `at`, `event`,
-  `nodeId`, `status`, `timestamps`, and `details`; `session` and `runId` are
-  present when known. `--node`, `--event`, and `--limit` filter the exported
-  history without mutating graph state.
+  `nodeId`, `timestamps`, and `details`; `status`, `session`, and `runId` are
+  present when recorded on the history entry. `--node`, `--event`, and
+  `--limit` filter the exported history without mutating graph state. The
+  export is event-time only: it must not backfill current node fields such as
+  `outputRef`, `gitFootprint`, `diffStat`, changed files, or current status
+  onto older history entries.
 - `claim`: object with at least `nodeId`, `runId`, `lease`, `releasedExpired`, and `summary`; `title` is present when known. `lease` has at least `session`, `runId`, `claimedAt`, and `expiresAt`.
 - `start`: object with at least `nodeId`, `status`, and `summary`; `title` is present when known.
 - `renew`: object with at least `nodeId`, `lease`, and `summary`. Renewed leases keep `session`, `runId`, `claimedAt`, `expiresAt`, and add or update `renewedAt`.
@@ -755,6 +758,12 @@ runs show a commit and line-change counts when only `outputRef` metadata exists.
 `gitFootprintWarning` records a best-effort stats collection failure after the
 ref was published; it must not make completion, reconcile, or reset flows fail,
 and it should be cleared by reset or by a later successful collection.
+
+Operational event exports do not synthesize this current node metadata onto
+history entries. Event payloads may include `diffStat`, `gitFootprint`, or
+warning fields only when the producer wrote those fields to that exact history
+entry. Diagnostics and visualizer node details remain the current-state surfaces
+for `node.gitFootprint` and legacy `outputRef` fallback display.
 
 The stable `node.gitFootprint` shape is:
 
