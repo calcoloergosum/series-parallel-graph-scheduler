@@ -116,6 +116,7 @@ export function buildPlanGraphJsonSchema(): Record<string, unknown> {
           workRef: { "$ref": "#/$defs/namedRef" },
           outputRef: { "$ref": "#/$defs/namedRef" },
           integrationRef: { "$ref": "#/$defs/integrationRef" },
+          gitFootprint: { "$ref": "#/$defs/gitFootprint" },
           workspace: { "$ref": "#/$defs/workspace" }
         },
         allOf: [
@@ -208,7 +209,63 @@ export function buildPlanGraphJsonSchema(): Record<string, unknown> {
           report: { type: "string" },
           resolvedAt: { "$ref": "#/$defs/timestamp" },
           createdAt: { "$ref": "#/$defs/timestamp" },
-          producedAt: { "$ref": "#/$defs/timestamp" }
+          producedAt: { "$ref": "#/$defs/timestamp" },
+          diffStat: { "$ref": "#/$defs/gitDiffStat" },
+          files: {
+            type: "array",
+            items: { "$ref": "#/$defs/gitFileFootprint" }
+          },
+          collectedAt: { "$ref": "#/$defs/timestamp" }
+        }
+      },
+      gitFootprint: {
+        type: "object",
+        additionalProperties: true,
+        properties: {
+          baseRef: { "$ref": "#/$defs/gitFootprintRef" },
+          headRef: { "$ref": "#/$defs/gitFootprintRef" },
+          branch: { type: "string" },
+          commit: { type: "string" },
+          diffStat: { "$ref": "#/$defs/gitDiffStat" },
+          files: {
+            type: "array",
+            items: { "$ref": "#/$defs/gitFileFootprint" }
+          },
+          collectedAt: { "$ref": "#/$defs/timestamp" }
+        }
+      },
+      gitFootprintRef: {
+        type: "object",
+        additionalProperties: true,
+        properties: {
+          name: { type: "string" },
+          commit: { type: "string" }
+        }
+      },
+      gitDiffStat: {
+        type: "object",
+        required: ["filesChanged", "additions", "deletions", "totalChanges"],
+        additionalProperties: true,
+        properties: {
+          filesChanged: { type: "number" },
+          additions: { type: "number" },
+          deletions: { type: "number" },
+          totalChanges: { type: "number" },
+          binaryFiles: { type: "number" }
+        }
+      },
+      gitFileFootprint: {
+        type: "object",
+        required: ["path", "additions", "deletions", "totalChanges"],
+        additionalProperties: true,
+        properties: {
+          path: { type: "string" },
+          oldPath: { type: "string" },
+          changeType: { type: "string" },
+          additions: { type: ["number", "null"] },
+          deletions: { type: ["number", "null"] },
+          totalChanges: { type: ["number", "null"] },
+          binary: { type: "boolean" }
         }
       },
       goalMetadata: {

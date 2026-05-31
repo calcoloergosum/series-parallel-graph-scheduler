@@ -613,6 +613,7 @@ export function nodeIsolationDetails(node: GraphNode): NodeIsolationDetails | un
       || integrationRef
       || node.outputRef?.commit
       || node.baseRef?.commit
+      || node.gitFootprint
       || node.integrationRef?.status
       || history.some((entry) => isolationHistoryEvents.has(entry.event))
       || stringFromUnknown(node.workspace?.cloneCwd)
@@ -634,6 +635,7 @@ export function nodeIsolationDetails(node: GraphNode): NodeIsolationDetails | un
     workRef,
     outputRef,
     outputCommit: stringFromUnknown(node.outputRef?.commit) || historyString(history, "commit", "output-ref-recorded"),
+    gitFootprint: node.gitFootprint,
     integrationRef,
     integrationStatus: stringFromUnknown(node.integrationRef?.status),
     publishedOutputRef: stringFromUnknown(node.integrationRef?.publishedOutputRef) || historyString(history, "publishedOutputRef"),

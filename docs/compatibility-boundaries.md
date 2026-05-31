@@ -168,7 +168,10 @@ Commands that currently print JSON should continue to print a single JSON value 
   `nextReady`, `leases`, `blocked`, `failed`, `isolation`, and `actions`;
   `graphPath` and `lock` are present when known. `leases` has `active` and
   `expired`; `isolation` has `activeWorkers`, `missingOutputRefs`, and
-  `unresolvedBufferConflicts`.
+  `unresolvedBufferConflicts`. Diagnostic node `isolation` details may include
+  `gitFootprint`; consumers should apply the same `gitFootprint` then
+  `outputRef` fallback used by the visualizer when rendering commit and
+  line-change summaries.
 - `events`: array of newest-first event objects with at least `at`, `event`,
   `nodeId`, `status`, `timestamps`, and `details`; `session` and `runId` are
   present when known. `--node`, `--event`, and `--limit` filter the exported
@@ -200,7 +203,7 @@ The existing graph file format must remain compatible:
 - Top-level metadata such as `schemaVersion`, `graphVersion`, `title`, `description`, `statusModel`, `scheduler`, and `document` remains allowed.
 - `graph.root` points at a node id in `graph.nodes`.
 - `graph.nodes` is an object keyed by node id.
-- Nodes may include `title`, `kind`, `status`, `children`, `description`, `deliverables`, `acceptanceCriteria`, lease fields, timestamps, `question`, `answer`, `report`, `history`, and additional metadata.
+- Nodes may include `title`, `kind`, `status`, `children`, `description`, `deliverables`, `acceptanceCriteria`, lease fields, timestamps, `question`, `answer`, `report`, `history`, Git provenance metadata, and additional metadata.
 - Unknown top-level, graph-level, and node-level metadata should be preserved unless a mutation explicitly owns that field.
 - Missing node `kind` defaults operationally to `task`; missing `status` defaults operationally to `pending`.
 - Known node kinds are `task`, `series`, `parallel`, and `gate`; unknown kinds are tolerated as metadata, with traversal falling back to visiting children in order.
@@ -419,9 +422,12 @@ the SVG. Each entry keeps at least `id`, `title`, `kind`, `status`,
 `refs`, `workspace`, `report`, `question`, `answer`, `answeredBy`,
 `blockedReason`, `failureReason`, `timestamps`, `history`, `historyCount`, and
 `historyLimit` when those values are known on the graph node. `refs` groups
-`baseRef`, `workRef`, `outputRef`, and `integrationRef`. `timestamps` groups
-the node lifecycle timestamps such as `startedAt`, `completedAt`, `blockedAt`,
-`answeredAt`, `failedAt`, and `expiredAt`. The `history` array is the latest
+`baseRef`, `workRef`, `outputRef`, `integrationRef`, and `gitFootprint`.
+Visualizer consumers that render commit or line-change counts should prefer
+`refs.gitFootprint`, then fall back to `refs.outputRef.commit` and
+`refs.outputRef.diffStat`. `timestamps` groups the node lifecycle timestamps
+such as `startedAt`, `completedAt`, `blockedAt`, `answeredAt`, `failedAt`, and
+`expiredAt`. The `history` array is the latest
 `historyLimit` entries, not the full node history; `historyCount` reports the
 full graph history length for that node. Detail fields are JSON data, not
 pre-escaped HTML. Browser renderers must insert text with `textContent` or
@@ -655,6 +661,103 @@ should use one of `explicit`, `graph-default`, `parent-base`,
 `series-predecessor`, or `parent-output`. Future source strings are allowed and
 must be preserved by mutation commands.
 
+Git footprint metadata is additive graph state for diagnostics and visualizer
+consumers that need commit and line-change summaries without re-running Git for
+every payload. The canonical node field is `gitFootprint`; `outputRef` may carry
+the same `diffStat`, `files`, and `collectedAt` fields as compatibility and
+fallback metadata. This is intentionally "both": new producers should write
+`node.gitFootprint` when they can, and may mirror the small summary under
+`outputRef`; readers must fall back to `outputRef.commit`, `outputRef.diffStat`,
+`outputRef.files`, and `outputRef.collectedAt` when `gitFootprint` is absent.
+This lets older isolated runs show a commit and line-change counts when only
+`outputRef` metadata exists.
+
+The stable `node.gitFootprint` shape is:
+
+```json
+{
+  "gitFootprint": {
+    "baseRef": {
+      "name": "refs/remotes/origin/main",
+      "commit": "0123456789abcdef0123456789abcdef01234567"
+    },
+    "headRef": {
+      "name": "refs/heads/spg/node/NODE/run_20260527_000000_NODE_abc123",
+      "commit": "fedcba9876543210fedcba9876543210fedcba98"
+    },
+    "branch": "spg/node/NODE/run_20260527_000000_NODE_abc123",
+    "commit": "fedcba9876543210fedcba9876543210fedcba98",
+    "diffStat": {
+      "filesChanged": 2,
+      "additions": 42,
+      "deletions": 7,
+      "totalChanges": 49,
+      "binaryFiles": 0
+    },
+    "files": [
+      {
+        "path": "scripts/contracts.ts",
+        "oldPath": "scripts/types.ts",
+        "changeType": "renamed",
+        "additions": 20,
+        "deletions": 3,
+        "totalChanges": 23,
+        "binary": false
+      }
+    ],
+    "collectedAt": "2026-05-27T00:05:01.000Z"
+  }
+}
+```
+
+Stable field meanings:
+
+- `baseRef`: ref and commit used as the diff base. It normally matches
+  `node.baseRef`, or the parent composition base for aggregate nodes.
+- `headRef`: ref and commit used as the diff head. It normally matches
+  `node.outputRef` for completed leaves or published parent refs.
+- `branch`: display branch or short ref name for the head when available.
+- `commit`: display head commit. It should match `headRef.commit` and
+  `outputRef.commit` when those fields are present.
+- `diffStat.filesChanged`, `diffStat.additions`, `diffStat.deletions`, and
+  `diffStat.totalChanges`: numeric summary fields for visualizer consumers.
+  `totalChanges` is `additions + deletions`. `binaryFiles` is optional and
+  counts files whose line-level stats are unavailable.
+- `files`: file-level stats sorted by path unless a producer documents another
+  deterministic order. Stable field names are `path`, `oldPath`, `changeType`,
+  `additions`, `deletions`, `totalChanges`, and `binary`. Binary file line
+  counts may be `null`; otherwise `totalChanges` is `additions + deletions`.
+- `collectedAt`: timestamp for when Git metadata was collected. It may differ
+  slightly from `outputRef.producedAt` because collection can happen after the
+  output ref is recorded.
+
+Aggregate footprint rules:
+
+- Task leaves record the exact diff from their resolved `baseRef` commit/ref to
+  their `outputRef` commit/ref. If no worktree changes were committed, the
+  footprint can still record the commit with a zero-count `diffStat`.
+- Series parents use the first child subtree's resolved base as `baseRef` and
+  the final child subtree's published output as `headRef`, `branch`, and
+  `commit`. When Git can compute the parent range, `diffStat` and `files` are
+  the net diff from the series base to the final head. When only child
+  footprints are available, an implementation may publish a summed summary but
+  must preserve child footprints for audit; consumers must treat summed series
+  file stats as display metadata rather than an exact per-file net diff.
+- Parallel parents use the parent composition base as `baseRef` and the clean
+  integration output as `headRef`, `branch`, and `commit`. `diffStat` and
+  `files` describe the final integrated tree relative to the parent base, not
+  each child branch independently. While a parallel parent is `blocked` or
+  `review`, it may omit parent `gitFootprint` and rely on child footprints plus
+  `integrationRef` conflict metadata.
+- Gate parents do not create Git changes by themselves. A gate with one
+  upstream output may alias that upstream footprint; a gate that only controls
+  readiness may omit `gitFootprint`. If a future gate performs a concrete Git
+  validation or publication step, its footprint follows the same base/head rules
+  as a task leaf.
+- Resetting or rerunning a node invalidates its `gitFootprint` and any aggregate
+  parent footprints derived from it in the same way it invalidates derived
+  `outputRef` and `integrationRef` metadata.
+
 Task base refs are resolved at claim/start time in this order:
 
 - An explicit node `baseRef.name`, when already present, wins and is re-resolved
@@ -679,7 +782,9 @@ Task base refs are resolved at claim/start time in this order:
 Worker reports must include the node id, run id, report path, redacted remote,
 bare repository path, clone cwd, `baseRef.name`, `workRef.name`,
 `outputRef.name`, integration result when applicable, and resolved commits when
-known. This links a worker run to the clone and branch it used, records the
+known. When collected, reports should also include the same `diffStat` and
+file-level `files` summary recorded in `gitFootprint`. This links a worker run
+to the clone and branch it used, records the
 branch it produced, and gives downstream workers the exact ref to clone from.
 The raw remote string is allowed only for Git subprocesses; reports, graph
 history, diagnostics, visualizer payloads, and logs must use the redacted
@@ -809,8 +914,8 @@ not be treated as a non-Git isolation fallback.
 Existing graphs do not need a migration to keep using the scheduler in
 shared-cwd mode. When workers run with the default `--isolation off`, the
 presence or absence of `scheduler.remote`, `baseRef`, `workRef`, `outputRef`,
-or `integrationRef` must not change claim, prompt, worker cwd, report, reset,
-or manual status-command behavior.
+`integrationRef`, or `gitFootprint` must not change claim, prompt, worker cwd,
+report, reset, or manual status-command behavior.
 
 Graphs opt in to isolated workers by adding a concrete Git remote under
 `scheduler.remote`, then starting workers with `--isolation git`:

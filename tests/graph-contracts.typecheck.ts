@@ -112,7 +112,10 @@ const extraMetadataNode: GraphNode = {
     name: "refs/heads/spg/node/A/run_20260527_000000_A_abc123",
     commit: "fedcba9876543210fedcba9876543210fedcba98",
     report: "reports/A-run_20260527_000000_A_abc123.md",
-    producedAt: "2026-05-27T00:05:00.000Z"
+    producedAt: "2026-05-27T00:05:00.000Z",
+    diffStat: { filesChanged: 1, additions: 12, deletions: 3, totalChanges: 15 },
+    files: [{ path: "scripts/contracts.ts", changeType: "modified", additions: 12, deletions: 3, totalChanges: 15 }],
+    collectedAt: "2026-05-27T00:05:01.000Z"
   },
   integrationRef: {
     name: "refs/heads/spg/integration/P/run_20260527_000000_P_def456",
@@ -128,6 +131,18 @@ const extraMetadataNode: GraphNode = {
     runId: "run_20260527_000000_A_abc123",
     session: "codex-A",
     preparedAt: "2026-05-27T00:00:00.000Z"
+  },
+  gitFootprint: {
+    baseRef: { name: "refs/remotes/origin/main", commit: "0123456789abcdef0123456789abcdef01234567" },
+    headRef: {
+      name: "refs/heads/spg/node/A/run_20260527_000000_A_abc123",
+      commit: "fedcba9876543210fedcba9876543210fedcba98"
+    },
+    branch: "spg/node/A/run_20260527_000000_A_abc123",
+    commit: "fedcba9876543210fedcba9876543210fedcba98",
+    diffStat: { filesChanged: 1, additions: 12, deletions: 3, totalChanges: 15 },
+    files: [{ path: "scripts/contracts.ts", changeType: "modified", additions: 12, deletions: 3, totalChanges: 15 }],
+    collectedAt: "2026-05-27T00:05:01.000Z"
   },
   documentField: ["extra metadata"],
   ui: { color: "teal", priority: 2 },
@@ -348,7 +363,8 @@ const visualizerNodeDetail: VisualizerNodeDetail = {
     baseRef: extraMetadataNode.baseRef,
     workRef: extraMetadataNode.workRef,
     outputRef: extraMetadataNode.outputRef,
-    integrationRef: extraMetadataNode.integrationRef
+    integrationRef: extraMetadataNode.integrationRef,
+    gitFootprint: extraMetadataNode.gitFootprint
   },
   workspace: extraMetadataNode.workspace,
   report: "reports/A-run_20260527_000000_A_abc123.md",

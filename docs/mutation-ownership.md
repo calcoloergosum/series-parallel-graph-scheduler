@@ -10,15 +10,17 @@ Mutation rules:
 - When creating nodes from structured input such as `decompose --child-json`, copy through unknown child metadata after validating the owned fields.
 - Every history entry for a status-changing mutation should include `previousStatus`, resulting `status`, and command-specific context such as `session`, `runId`, `reason`, `question`, `answer`, `report`, `childIds`, or lease expiry when available.
 - Do not use resets as metadata scrubbers. Reset commands clear operational retry fields but preserve unrelated node metadata.
-- Git-only isolation ref fields (`baseRef`, `workRef`, `outputRef`, and
-  `integrationRef`) are owned by isolated worker and composition transitions.
+- Git-only isolation ref fields (`baseRef`, `workRef`, `outputRef`,
+  `integrationRef`, and `gitFootprint`) are owned by isolated worker and
+  composition transitions.
   Worker leaf resets preserve worker-owned refs for audit until a later worker
   run overwrites them.
 - Composition parent `outputRef` and `integrationRef` are derived from child
-  refs. Resetting a composition subtree, or reopening a completed ancestor after
-  a child reset, clears those composition-owned fields because they no longer
-  describe the current child subtree. Child worker refs are preserved unless the
-  child itself is rerun and records new refs.
+  refs, and composition parent `gitFootprint` is derived from the resulting
+  parent output. Resetting a composition subtree, or reopening a completed
+  ancestor after a child reset, clears those composition-owned fields because
+  they no longer describe the current child subtree. Child worker refs are
+  preserved unless the child itself is rerun and records new refs.
 
 ## Scheduler Transition Reference
 

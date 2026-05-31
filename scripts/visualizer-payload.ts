@@ -79,7 +79,8 @@ function normalizeVisualizerNode(
       baseRef: node.baseRef,
       workRef: node.workRef,
       outputRef: node.outputRef,
-      integrationRef: node.integrationRef
+      integrationRef: node.integrationRef,
+      gitFootprint: node.gitFootprint
     }),
     workspace: node.workspace,
     report: node.report,

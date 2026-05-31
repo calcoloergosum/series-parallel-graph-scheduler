@@ -87,6 +87,57 @@ export interface NodeOutputRefMetadata {
   session?: string;
   report?: string;
   producedAt?: IsoDateString;
+  diffStat?: GitDiffStatMetadata;
+  files?: GitFileFootprintMetadata[];
+  collectedAt?: IsoDateString;
+  [metadata: string]: unknown;
+}
+
+export interface GitRefFootprintMetadata {
+  name?: string;
+  commit?: string;
+  [metadata: string]: unknown;
+}
+
+export interface GitDiffStatMetadata {
+  filesChanged: number;
+  additions: number;
+  deletions: number;
+  totalChanges: number;
+  binaryFiles?: number;
+  [metadata: string]: unknown;
+}
+
+export type GitFileChangeType =
+  | "added"
+  | "modified"
+  | "deleted"
+  | "renamed"
+  | "copied"
+  | "typechange"
+  | "unmerged"
+  | "unknown"
+  | (string & {});
+
+export interface GitFileFootprintMetadata {
+  path: string;
+  oldPath?: string;
+  changeType?: GitFileChangeType;
+  additions: number | null;
+  deletions: number | null;
+  totalChanges: number | null;
+  binary?: boolean;
+  [metadata: string]: unknown;
+}
+
+export interface NodeGitFootprintMetadata {
+  baseRef?: GitRefFootprintMetadata;
+  headRef?: GitRefFootprintMetadata;
+  branch?: string;
+  commit?: string;
+  diffStat?: GitDiffStatMetadata;
+  files?: GitFileFootprintMetadata[];
+  collectedAt?: IsoDateString;
   [metadata: string]: unknown;
 }
 
@@ -203,6 +254,7 @@ export interface GraphNode {
   workRef?: NodeWorkRefMetadata;
   outputRef?: NodeOutputRefMetadata;
   integrationRef?: NodeIntegrationRefMetadata;
+  gitFootprint?: NodeGitFootprintMetadata;
   workspace?: NodeWorkspaceMetadata;
   [metadata: string]: unknown;
 }
@@ -455,6 +507,7 @@ export interface NodeIsolationDetails {
   workRef?: string;
   outputRef?: string;
   outputCommit?: string;
+  gitFootprint?: NodeGitFootprintMetadata;
   integrationRef?: string;
   integrationStatus?: string;
   publishedOutputRef?: string;
@@ -670,6 +723,7 @@ export interface VisualizerNodeRefs {
   workRef?: NodeWorkRefMetadata;
   outputRef?: NodeOutputRefMetadata;
   integrationRef?: NodeIntegrationRefMetadata;
+  gitFootprint?: NodeGitFootprintMetadata;
 }
 
 export interface VisualizerNodeTimestamps {

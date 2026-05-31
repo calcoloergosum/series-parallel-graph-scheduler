@@ -112,9 +112,9 @@ preserved by graph reads and writes unless a future mutation explicitly owns
 one of them.
 
 Git-only worker isolation uses optional node ref metadata fields named
-`baseRef`, `workRef`, `outputRef`, and `integrationRef`. Existing graphs do not
-need these fields, and ordinary graph validation does not require them. When
-present, their compatibility contract is documented in
+`baseRef`, `workRef`, `outputRef`, `integrationRef`, and `gitFootprint`.
+Existing graphs do not need these fields, and ordinary graph validation does not
+require them. When present, their compatibility contract is documented in
 `docs/compatibility-boundaries.md`.
 
 To opt a graph into Git-isolated workers, add a concrete remote under
@@ -131,6 +131,9 @@ To opt a graph into Git-isolated workers, add a concrete remote under
 Do not add `workRef`, `outputRef`, or `integrationRef` by hand for new work.
 The isolated worker and composition reconciliation paths record those fields as
 they prepare clones, publish task output refs, and publish parent buffer refs.
+`gitFootprint` is likewise worker- or reconciler-produced provenance metadata;
+operators should only edit it when repairing a graph from externally verified
+Git refs and commits.
 Graphs without `scheduler.remote` remain valid for read-only commands and
 shared-cwd workers, but `--isolation git` fails before claim unless a concrete
 remote is supplied with `--remote`.
