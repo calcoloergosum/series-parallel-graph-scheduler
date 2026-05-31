@@ -412,21 +412,32 @@ function layoutRegressionGraphs() {
               title: "A very long pending title that should wrap or truncate safely without overlapping neighboring nodes or controls",
               kind: "task",
               status: "pending",
-              report: "reports/long-id-<script>alert(1)</script>.md"
+              report: "reports/long-id-<script>alert(1)</script>.md",
+              outputRef: {
+                name: "refs/heads/spg/node/LONG_NODE_ID_0123/run-with-a-very-long-ref-name-and-no-diffstat"
+              }
             },
             BLOCKED_LONG: {
               title: "Blocked question with malicious-looking markup",
               kind: "task",
               status: "blocked",
               question: "Can this proceed after <img src=x onerror=alert(1)> while preserving a very long operator question?",
-              blockedReason: "Waiting for <script>alert(1)</script> confirmation"
+              blockedReason: "Waiting for <script>alert(1)</script> confirmation",
+              outputRef: {
+                name: "refs/heads/spg/node/BLOCKED_LONG/run-with-diffstat-and-no-commit",
+                diffStat: { filesChanged: 29, additions: 4200, deletions: 310, totalChanges: 4510 }
+              }
             },
             FAILED_LONG: {
               title: "Failed reason remains visible",
               kind: "task",
               status: "failed",
               failureReason: "Failure from <script>alert(1)</script> with a long explanation that should not push controls over each other.",
-              report: "reports/FAILED_LONG_<img>.md"
+              report: "reports/FAILED_LONG_<img>.md",
+              outputRef: {
+                name: "refs/heads/spg/node/FAILED_LONG/run-with-commit-and-no-stats",
+                commit: "1234567890abcdef1234567890abcdef12345678"
+              }
             }
           }
         }
@@ -941,8 +952,11 @@ test("visualizer graph layout stays visible, unclipped, and non-overlapping for 
               await runWithPageDiagnostics(page, `visualizer-layout-${fixture.slug}-${viewport.slug}`, graphPath, async () => {
                 await page.goto(visualizer.url);
                 await page.locator("#graph svg.sp-graph").waitFor();
-                if (fixture.slug !== "hostile-long-text") {
-                  await assertGraphLayoutInvariants(page, fixture.graph);
+                await assertGraphLayoutInvariants(page, fixture.graph);
+                if (fixture.slug === "hostile-long-text") {
+                  await page.locator("#graph svg.sp-graph", { hasText: "ref spg/node/LONG_NODE_..." }).waitFor();
+                  await page.locator("#graph svg.sp-graph", { hasText: "commit 1234567" }).waitFor();
+                  await page.locator("#graph svg.sp-graph", { hasText: "+4.2k -310 29f" }).waitFor();
                 }
               });
             } finally {

@@ -27,8 +27,8 @@ interface LayoutComponent {
 }
 
 const defaultOptions = {
-  nodeWidth: 190,
-  nodeHeight: 84,
+  nodeWidth: 220,
+  nodeHeight: 104,
   portGap: 34,
   seriesGap: 64,
   parallelGap: 30,
@@ -337,37 +337,44 @@ function renderTerminal(point: LayoutPoint, label: string): string {
 }
 
 function renderBox(box: LayoutBox): string {
-  const titleLines = wrapLabel(box.title, 22, 2);
+  const idLabel = truncateEnd(`${box.id} · ${box.kind}`, 27);
+  const titleLines = wrapLabel(box.title, 25, 2);
   const className = `sp-node status-${classToken(box.status, "pending")}`;
-  const idY = box.y + 20;
-  const titleY = box.y + 38;
-  const refY = box.y + box.height - 11;
+  const idY = box.y + 22;
+  const titleY = box.y + 42;
+  const refPrimaryY = box.y + box.height - 29;
+  const refStatY = box.y + box.height - 12;
   const titleSpans = titleLines
     .map((line, index) => `<tspan x="${round(box.x + 12)}" dy="${index === 0 ? 0 : 14}">${escapeHtml(line)}</tspan>`)
     .join("");
-  const refLabel = renderRefLabel(box.refLabel, box.x + box.width - 12, refY);
+  const refLabel = renderRefLabel(box.refLabel, box.x + box.width - 12, refPrimaryY, refStatY);
 
   return `<g class="${className}" data-id="${escapeHtml(box.id)}">
   <rect x="${round(box.x)}" y="${round(box.y)}" width="${round(box.width)}" height="${round(box.height)}" rx="8"/>
-  <text class="sp-node-id" x="${round(box.x + 12)}" y="${round(idY)}">${escapeHtml(box.id)} · ${escapeHtml(box.kind)}</text>
+  <text class="sp-node-id" x="${round(box.x + 12)}" y="${round(idY)}">${escapeHtml(idLabel)}</text>
   <text class="sp-node-title" x="${round(box.x + 12)}" y="${round(titleY)}">${titleSpans}</text>
   ${refLabel}
 </g>`;
 }
 
-function renderRefLabel(label: LayoutRefLabel | undefined, x: number, y: number): string {
+function renderRefLabel(label: LayoutRefLabel | undefined, x: number, primaryY: number, statY: number): string {
   if (!label) {
     return "";
   }
   if (label.insertions || label.deletions || label.filesChanged) {
-    return `<text class="sp-node-ref" x="${round(x)}" y="${round(y)}">` +
-      (label.commit ? `<tspan class="sp-node-commit">${escapeHtml(label.commit)}</tspan>` : "") +
+    const primary = label.commit || label.fallback || "";
+    const primaryLine = primary
+      ? `<text class="sp-node-ref" x="${round(x)}" y="${round(primaryY)}">` +
+        (label.commit ? `<tspan class="sp-node-commit">${escapeHtml(label.commit)}</tspan>` : escapeHtml(primary)) +
+        "</text>\n  "
+      : "";
+    return primaryLine + `<text class="sp-node-ref" x="${round(x)}" y="${round(statY)}">` +
       (label.insertions ? `<tspan class="sp-node-insertions"> ${escapeHtml(label.insertions)}</tspan>` : "") +
       (label.deletions ? `<tspan class="sp-node-deletions"> ${escapeHtml(label.deletions)}</tspan>` : "") +
       (label.filesChanged ? `<tspan class="sp-node-files"> ${escapeHtml(label.filesChanged)}</tspan>` : "") +
       "</text>";
   }
-  return `<text class="sp-node-ref" x="${round(x)}" y="${round(y)}">${escapeHtml(label.fallback || label.commit || "")}</text>`;
+  return `<text class="sp-node-ref" x="${round(x)}" y="${round(statY)}">${escapeHtml(label.fallback || label.commit || "")}</text>`;
 }
 
 function compactRefLabel(node: GraphNode): LayoutRefLabel | undefined {
@@ -382,8 +389,10 @@ function compactRefLabel(node: GraphNode): LayoutRefLabel | undefined {
   );
 
   if (diffStat) {
+    const refName = footprint?.headRef?.name || node.outputRef?.name || node.workRef?.name || node.baseRef?.name;
     return {
       ...(commit ? { commit } : {}),
+      ...(!commit && refName ? { fallback: `ref ${truncateEnd(compactRefName(refName), 22)}` } : {}),
       insertions: `+${compactCount(diffStatInsertions(diffStat))}`,
       deletions: `-${compactCount(diffStat.deletions)}`,
       filesChanged: `${compactCount(diffStat.filesChanged)}f`
@@ -395,7 +404,7 @@ function compactRefLabel(node: GraphNode): LayoutRefLabel | undefined {
     return undefined;
   }
   return {
-    fallback: commit ? `${commit} ref` : `ref ${truncateEnd(compactRefName(refName || ""), 18)}`
+    fallback: commit ? `commit ${commit}` : `ref ${truncateEnd(compactRefName(refName || ""), 22)}`
   };
 }
 
@@ -436,37 +445,36 @@ function truncateEnd(value: string, maxChars: number): string {
 }
 
 function wrapLabel(value: string, maxChars: number, maxLines: number): string[] {
-  const words = String(value || "").split(/\s+/).filter(Boolean);
-  const lines: string[] = [];
-  let line = "";
+  const text = String(value || "").replace(/\s+/g, " ").trim();
+  if (!text) {
+    return [""];
+  }
 
-  for (const word of words) {
-    const next = line ? `${line} ${word}` : word;
-    if (next.length <= maxChars) {
-      line = next;
-      continue;
-    }
-    if (line) {
-      lines.push(line);
-      line = word;
-    } else {
-      lines.push(word.slice(0, maxChars - 1));
-      line = word.slice(maxChars - 1);
-    }
-    if (lines.length === maxLines) {
+  const lines: string[] = [];
+  let remaining = text;
+
+  while (remaining && lines.length < maxLines) {
+    if (remaining.length <= maxChars) {
+      lines.push(remaining);
       break;
     }
+
+    const isLastLine = lines.length === maxLines - 1;
+    if (isLastLine) {
+      lines.push(truncateEnd(remaining, maxChars));
+      break;
+    }
+
+    const candidate = remaining.slice(0, maxChars + 1);
+    let breakAt = candidate.lastIndexOf(" ");
+    if (breakAt < Math.ceil(maxChars * 0.55)) {
+      breakAt = maxChars;
+    }
+    lines.push(remaining.slice(0, breakAt).trimEnd());
+    remaining = remaining.slice(breakAt).trimStart();
   }
 
-  if (line && lines.length < maxLines) {
-    lines.push(line);
-  }
-
-  if (words.join(" ").length > lines.join(" ").length && lines.length > 0) {
-    lines[lines.length - 1] = `${lines[lines.length - 1].replace(/\.+$/, "")}...`;
-  }
-
-  return lines.length > 0 ? lines : [""];
+  return lines;
 }
 
 function round(value: number): number {

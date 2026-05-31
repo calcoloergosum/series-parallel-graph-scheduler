@@ -2053,8 +2053,8 @@ test("planar SVG renders compact ref and diffstat labels inside nodes", () => {
   const nodeB = layout.boxes.find((box) => box.id === "B");
   const nodeC = layout.boxes.find((box) => box.id === "C");
   assert.deepEqual(nodeA.refLabel, { commit: "2222222", insertions: "+1.2k", deletions: "-45", filesChanged: "3f" });
-  assert.deepEqual(nodeB.refLabel, { fallback: "3333333 ref" });
-  assert.deepEqual(nodeC.refLabel, { fallback: "ref spg/node/C/fall..." });
+  assert.deepEqual(nodeB.refLabel, { fallback: "commit 3333333" });
+  assert.deepEqual(nodeC.refLabel, { fallback: "ref spg/node/C/fallback..." });
 
   const svg = renderPlanarSvg(graph, { layout });
   assert.match(svg, /class="sp-node-ref"/);
@@ -2062,8 +2062,41 @@ test("planar SVG renders compact ref and diffstat labels inside nodes", () => {
   assert.match(svg, /<tspan class="sp-node-insertions"> \+1\.2k<\/tspan>/);
   assert.match(svg, /<tspan class="sp-node-deletions"> -45<\/tspan>/);
   assert.match(svg, /<tspan class="sp-node-files"> 3f<\/tspan>/);
-  assert.match(svg, /3333333 ref/);
-  assert.match(svg, /ref spg\/node\/C\/fall\.\.\./);
+  assert.match(svg, /commit 3333333/);
+  assert.match(svg, /ref spg\/node\/C\/fallback\.\.\./);
+});
+
+test("planar SVG keeps long titles and ref fallbacks in stable node rows", () => {
+  const graph = fixtureGraph();
+  graph.graph.nodes.A.title = "ExtremelyLongUnbrokenTitleThatShouldNeverBleedIntoTheCommitOrDiffstatRows";
+  graph.graph.nodes.A.outputRef = {
+    name: "refs/heads/spg/node/A/run-with-a-very-long-ref-name-that-has-no-diffstat"
+  };
+  graph.graph.nodes.B.title = "Long readable title wraps before the reserved git label rows";
+  graph.graph.nodes.B.outputRef = {
+    name: "refs/heads/spg/node/B/run-with-diffstat-but-no-commit",
+    diffStat: { filesChanged: 14, additions: 2500, deletions: 1200, totalChanges: 3700 }
+  };
+
+  const layout = buildPlanarLayout(graph);
+  const nodeA = layout.boxes.find((box) => box.id === "A");
+  const nodeB = layout.boxes.find((box) => box.id === "B");
+  assert.equal(nodeA.height, 104);
+  assert.equal(nodeB.height, 104);
+  assert.deepEqual(nodeA.refLabel, { fallback: "ref spg/node/A/run-with..." });
+  assert.deepEqual(nodeB.refLabel, {
+    fallback: "ref spg/node/B/run-with...",
+    insertions: "+2.5k",
+    deletions: "-1.2k",
+    filesChanged: "14f"
+  });
+
+  const svg = renderPlanarSvg(graph, { layout });
+  assert.match(svg, /eThatShouldNeverBleedI\.\.\./);
+  assert.match(svg, /ref spg\/node\/A\/run-with\.\.\./);
+  assert.match(svg, /ref spg\/node\/B\/run-with\.\.\./);
+  assert.match(svg, /<tspan class="sp-node-insertions"> \+2\.5k<\/tspan>/);
+  assert.doesNotMatch(svg, /run-with-a-very-long-ref-name-that-has-no-diffstat/);
 });
 
 test("planar SVG escapes hostile graph titles and node ids in attributes", () => {
@@ -2082,7 +2115,7 @@ test("planar SVG escapes hostile graph titles and node ids in attributes", () =>
   const svg = renderPlanarSvg(graph);
   assert.match(svg, /aria-label="Graph &quot; &lt;script&gt;alert\(0\)&lt;\/script&gt;"/);
   assert.match(svg, /data-id="A&quot; onload=&quot;alert\(1\)&lt;script&gt;"/);
-  assert.match(svg, /A&quot; onload=&quot;alert\(1\)&lt;script&gt; · task&quot; autofocus=&quot;true/);
+  assert.match(svg, /A&quot; onload=&quot;alert\(1\)&lt;scri\.\.\./);
   assert.match(svg, /Node &quot; &lt;img src=x[\s\S]*onerror=alert\(1\)&gt;/);
   assert.doesNotMatch(svg, /<script>|<img\b|onload="alert|onmouseover="alert|autofocus="true/);
 });
