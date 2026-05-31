@@ -37,6 +37,13 @@ Auto-save is the first mode allowed to mutate a graph. It must:
 - Reject empty `series` or `parallel` decompositions before any graph write.
 - Generate or accept child node ids only after applying the safe id policy.
 - Validate the fully materialized graph with the normal graph validator.
+- Reject unsafe generated graph output paths before writing. Planner-created
+  graph files must stay inside the operator-selected output directory, must not
+  write through symlink targets that escape that directory, and CLI-generated
+  graph creation must not overwrite an existing target unless a future explicit
+  overwrite option says so. Visualizer graph-planning writes are different:
+  non-dry-run `/api/goal/plan` intentionally replaces the graph currently
+  served by that visualizer after validation and write-token checks.
 - Acquire the graph lock and re-check the current graph version before writing.
 - Write through the existing atomic graph writer so partial planner output
   cannot corrupt the graph file.
@@ -137,6 +144,12 @@ Planner request construction should minimize sensitive context. Include file
 paths, node excerpts, report summaries, and graph excerpts only when needed for
 the planning task. Do not include secrets, environment variables, Slack webhook
 URLs, credential-bearing remotes, or full worker logs in planner prompts.
+
+Planner prompt templates are trusted local configuration. `--planner-template`
+and `scheduler.workerPlanner.templatePath` resolve from the graph directory
+unless absolute paths are supplied, but the scheduler does not sandbox template
+contents or the prompt adapter. Review custom templates the same way you would
+review a custom worker prompt or command wrapper.
 
 Planner text rendered in the visualizer must be inserted with the same escaping
 and text-safe DOM practices used for graph titles, worker output, and event

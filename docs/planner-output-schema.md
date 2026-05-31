@@ -23,6 +23,10 @@ defined in
 [`planning-safety-and-approval.md`](planning-safety-and-approval.md). This
 schema is necessary but not sufficient for execution: valid planner output must
 still pass the approval and graph-write boundaries before workers can run.
+The scheduler treats this schema as a data contract, not as an instruction
+language. Planner responses cannot name shell commands to run, bypass existing
+graph locks, override visualizer write-token policy, or make raw proposal text
+claimable before materialization and validation.
 
 ## Planner Request
 
@@ -290,3 +294,12 @@ explicitly owns the field:
 Unknown fields alongside these metadata objects remain allowed. The graph
 format is intentionally extensible, and current graph validation preserves
 unknown top-level, graph-level, and node-level metadata.
+
+These additive fields do not change the minimum valid graph shape. A generated
+graph is compatible when it can be replayed from `graph.root` and `graph.nodes`
+through the ordinary scheduler commands, even if older consumers ignore every
+planner metadata field. Conversely, consumers must not infer readiness or
+execution approval from `planner.rationale`, `plannerDecision`,
+`decompositionReason`, `contextRefs`, `outputContract`, or `resultSummary`;
+those fields are audit and display metadata until a scheduler mutation owns a
+state transition.

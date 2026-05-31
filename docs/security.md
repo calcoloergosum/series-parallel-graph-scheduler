@@ -6,6 +6,7 @@ This scheduler is a local orchestration tool for trusted operators. It stores st
 
 - Plan graph files, including task titles, questions, answers, status history, leases, and report paths.
 - Worker reports and redirected worker logs, which may contain prompts, stdout, stderr, stack traces, repository paths, and command output.
+- Planner prompt templates, fixture responses, request/response artifacts, generated graph JSON, and planner reports.
 - Local repository files reachable from worker `--cwd`, Git-isolated bare caches and per-run clones under `runs/`, generated `plan.html`, lock files, and report directories under the graph directory.
 - Git remote URLs in `scheduler.remote` or `--remote`, including possible usernames, tokens, hostnames, repository names, and local filesystem paths.
 - Operator authority to claim, reset, complete, fail, answer, or decompose work.
@@ -26,7 +27,7 @@ In scope:
 
 - A local process, browser extension, or same-user webpage that can connect to a loopback visualizer while it is running.
 - A LAN or internet client that can reach the visualizer after an operator binds it to a non-loopback address.
-- A user who can edit a graph file, worker prompt template, report path, node title, blocked question, answer, failure reason, or `scheduler.remote` value before a trusted operator runs the scheduler.
+- A user who can edit a graph file, worker or planner prompt template, planner fixture, generated graph output path, report path, node title, blocked question, answer, failure reason, or `scheduler.remote` value before a trusted operator runs the scheduler.
 - A worker command that exits non-zero, writes hostile stdout/stderr, emits secret-shaped values, writes large output, or attempts to confuse Markdown reports.
 - A Git remote that is unavailable, unexpectedly large, credential-bearing, or controlled by someone other than the operator.
 - Slack recipients or Slack infrastructure that receive webhook messages when `SLACK_WEBHOOK_URL` is configured.
@@ -43,6 +44,10 @@ Out of scope:
 - The graph JSON file remains the scheduler source of truth. Visualizer payloads, diagnostics, reports, events, static HTML, and worker state displays are derived views or evidence; recovery should mutate the graph only through the documented CLI commands or visualizer write routes.
 - The graph directory is a trusted workspace. Report paths, generated HTML, lock files, Git caches, retained clones, and worker logs should stay under private OS permissions.
 - Worker commands are trusted code at the scheduler boundary. `worker` and the visualizer Worker Manager pass arguments without a shell, but the selected command still receives the operator environment and can read or write anything allowed by OS permissions.
+- Planner adapters, prompt templates, and fixture files are trusted local inputs
+  at the scheduler boundary. Scheduler validation treats planner responses as
+  untrusted proposals, but it does not sandbox the adapter process or certify
+  that template wording is safe to send to an external model.
 - Git isolation is operational isolation, not a sandbox. It gives each run a separate clone, branch, and output ref, but fetched repository contents and retained workspaces remain local sensitive files.
 - The default visualizer is trusted-local. Loopback binding limits network reachability, but it is still unauthenticated and local browser/process access is enough to read state or submit writes.
 - Non-loopback visualizer reads are public to every reachable client. `--visualizer-write-token` protects write routes only; `GET /`, `GET /index.html`, `GET /api/graph`, `GET /api/summary`, `GET /api/ready`, `GET /api/diagnostics`, `GET /api/events`, `GET /api/prompt`, `GET /api/workers`, and `GET /events` still disclose operational state.
@@ -66,6 +71,17 @@ Out of scope:
 - Filesystem boundary: graph writes are atomic and locked, but graph, report, generated HTML, and log confidentiality depends on operating system file permissions.
 - Worker process boundary: `worker` and `/api/workers/start` spawn a child process with inherited environment variables and the selected working directory.
 - Git isolation boundary: `--isolation git` prepares a local bare repository cache from `scheduler.remote` or `--remote`, then runs the child process in a generated clone. It isolates workers from each other at the working-tree level, but it is not a security sandbox and still exposes clone contents to local filesystem readers.
+- Planner boundary: `plan --goal`, worker planner preflight, and
+  `/api/goal/plan` parse planner responses as data. Valid responses still need
+  graph validation, approval, graph locks, and normal mutation guards before
+  they can create claimable work or start workers.
+- Generated graph write boundary: planner-created graph files are validated
+  before writing and are written atomically under the operator-selected output
+  directory. CLI output paths are rejected when their parent is not a directory,
+  when a symlink escape would write outside the intended directory, or when the
+  target graph already exists. Non-dry-run `/api/goal/plan` is an explicit
+  visualizer write route that replaces the currently served graph after
+  validation and write-token checks.
 - HTTP boundary: `serve` exposes unauthenticated browser APIs. The default bind address is `127.0.0.1`; a non-loopback bind extends trust to every reachable client.
 - Slack boundary: setting `SLACK_WEBHOOK_URL` sends selected node metadata outside the local machine.
 - Generated output boundary: visualizer HTML and SVG are generated from graph content and escaped before browser insertion, but generated `plan.html` and worker logs still expose graph and task data to anyone who can read them.
@@ -74,6 +90,9 @@ Out of scope:
 
 The CLI mutates work through these commands:
 
+- `plan --goal`: creates a new validated graph artifact from planner output. It
+  writes to an explicit or default output path, refuses existing targets, and
+  does not start workers without `--then-run`.
 - `claim`: selects a ready leaf, marks it `claimed`, creates a lease, and can release expired leases first.
 - `start`: changes a claimed leaf to `running`.
 - `renew`: extends a lease on claimed, running, blocked, or review work.
@@ -147,6 +166,8 @@ client can use unauthenticated write controls.
 | Retained isolated clones and local bare cache | Failed, blocked, review, or `--workspace-retention always` runs can leave full repository data, uncommitted changes, and conflict files under `runs/workspaces`; `runs/git/cache/repo.git` stores fetched refs. | Keep graph directories private; treat retained clones like source checkouts; quarantine before deletion; do not share reports without checking clone paths, refs, stdout, and stderr for sensitive data. |
 | Remote repository trust | Git fetch and clone contact the configured remote and import its refs into the local cache. A malicious or mistaken remote can provide unexpected repository content for workers. | Set `scheduler.remote` deliberately, review `--remote` overrides, avoid placeholders, verify the remote with `git ls-remote`, and use OS/network controls for stronger isolation. |
 | Path traversal in report writes | A malicious report path could overwrite files outside the graph directory. | Report paths are resolved relative to the graph and rejected if they escape the graph directory. Keep the graph directory permissioned to trusted operators. |
+| Prompt template or planner fixture tampering | A malicious template or fixture can bias generated prompts, add misleading instructions, or produce hostile planner text that later appears in reports or the visualizer. | Keep prompt templates and fixture files under trusted review; resolve custom paths deliberately; parse planner responses only through the documented JSON contract; render planner text with escaping; never treat template text as execution approval. |
+| Generated graph write path misuse | An attacker-controlled output path could overwrite a graph or write through a symlink if path checks are bypassed. | CLI generated graph paths are checked before write, existing targets are refused, symlink escapes are rejected, and graph writes use the locked atomic writer after validation. Treat non-dry-run `/api/goal/plan` as an intentional replacement of the currently served graph. Store run directories under private permissions. |
 | Graph corruption or lost updates | Concurrent commands could overwrite status transitions. | Mutating graph operations use a filesystem lock and atomic rename; stale locks are detected. Keep graph files on a local filesystem when possible and back them with version control. |
 | Slack webhook leakage | Webhook URL exposure allows unauthorized Slack posts; notification text may disclose node titles and report paths. | Store `SLACK_WEBHOOK_URL` outside committed files; rotate it if exposed; avoid putting secrets in node titles or report paths. |
 | Generated HTML/script injection | Malicious graph text rendered into the visualizer could execute in the browser if not escaped. | The live visualizer escapes dynamic text before inserting it. Treat generated HTML as sensitive output and avoid opening graph files from untrusted authors. |
@@ -173,6 +194,8 @@ This table maps each documented boundary to automated test coverage or manual re
 | Report path boundary | Code: `writeReportFile` resolves paths relative to the graph directory, rejects escapes, rejects symlink parent/target escapes, and writes report bodies under the graph directory. Tests: report-path containment and worker report tests; manual review required before sharing generated reports. |
 | Worker process boundary | Code: `worker` and Worker Manager use process spawning with argument arrays rather than shell command strings. Tests: one-shot worker execution, spawn failures, non-zero exits, timeout handling, `--codex-arg` parsing, and managed-worker start/stop cases. |
 | Worker output/report boundary | Code: worker reports escape Markdown code fences and redact common secret shapes in commands, args, stdout, stderr, errors, and isolation metadata. Tests: report-format and failed-worker tests assert redaction of Slack webhook and token-shaped output. |
+| Planner output boundary | Code: planner responses are validated, materialized into normal graph nodes, and written only through the locked graph writer; planner prompt adapters are provider-neutral. Tests: goal planning, worker planner preflight, stale preview, invalid planner output, generated graph replay, and visualizer `/api/goal/plan` coverage. |
+| Generated graph write boundary | Code: CLI generated graph paths reject overwrites, unsafe parents, and symlink escapes before validation and atomic write; non-dry-run `/api/goal/plan` replaces only the currently served graph through a protected write route. Tests: CLI plan path-safety cases, dry-run no-write coverage in `tests/cli-goldens.test.mjs`, and visualizer goal-plan route coverage. |
 | Git isolation boundary | Code: isolation requires `scheduler.remote` or `--remote`, rejects placeholders, creates per-run clones/refs, records redacted provenance, and keeps workspace roots inside the graph directory. Tests: isolated worker setup, concurrent clone/ref separation, placeholder rejection, workspace-root rejection, fetch-failure redaction, and no-shell Git invocation. |
 | Visualizer loopback boundary | Code: default host is `127.0.0.1`; `localhost`, `127.0.0.1`, `::1`, and `[::1]` are treated as local. Tests: visualizer host warning tests assert default loopback behavior and non-loopback warning text. |
 | Visualizer non-loopback write boundary | Code: non-loopback startup refuses without `--visualizer-write-token` or `--unsafe-visualizer-write`; write routes require `X-SPG-Visualizer-Token` or `Authorization: Bearer` when a token is configured. Tests: serve rejects unprotected non-loopback binding; write-token tests verify 403 for missing/wrong tokens and token-authenticated worker, node mutation, and graph-level recovery writes. |

@@ -746,6 +746,13 @@ test("visualizer write token protects mutation routes", async () => {
       const forbiddenGraphReconcile = await fetch(`${url}/api/graph/reconcile`, { method: "POST" });
       assert.equal(forbiddenGraphReconcile.status, 403);
 
+      const forbiddenGoalPlan = await fetch(`${url}/api/goal/plan`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ goal: "Denied planner write" })
+      });
+      assert.equal(forbiddenGoalPlan.status, 403);
+
       const forbiddenReleaseExpired = await fetch(`${url}/api/leases/release-expired`, {
         method: "POST",
         headers: { "x-spg-visualizer-token": "wrong-token" }
@@ -801,6 +808,66 @@ test("visualizer write token protects mutation routes", async () => {
         headers: { "x-spg-visualizer-token": "secret-token" }
       });
       assert.equal(stopAllResponse.status, 200);
+    } finally {
+      await visualizer.close();
+    }
+  });
+});
+
+test("visualizer goal planning route previews and writes generated graphs", async () => {
+  await withTempGraph(async (graphPath, dir) => {
+    await writeFile(join(dir, "goal-fixture.json"), JSON.stringify({
+      kind: "series",
+      title: "Visualizer generated plan",
+      rationale: "Route planning should produce ordinary graph JSON.",
+      children: [
+        { id: "VIS_GOAL_CONTRACT", title: "Define visualizer route contract" },
+        { id: "VIS_GOAL_VERIFY", title: "Verify visualizer route behavior" }
+      ]
+    }), "utf8");
+
+    const visualizer = await createVisualizerServer({ graphPath, port: 0 });
+    try {
+      const before = await readFile(graphPath, "utf8");
+      const previewResponse = await postJson(`${visualizer.url}/api/goal/plan`, {
+        goal: "Plan through visualizer route",
+        title: "Visualizer Route Plan",
+        preview: true,
+        plannerFixturePath: "goal-fixture.json"
+      });
+      const preview = await assertJsonResponse(previewResponse, "/api/goal/plan preview");
+      assert.equal(preview.mode, "plan-only");
+      assert.equal(preview.dryRun, true);
+      assert.equal(preview.written, false);
+      assert.equal(preview.nodeCount, 3);
+      assert.equal(preview.graph.graph.nodes.ROOT.kind, "series");
+      assert.deepEqual(preview.graph.graph.nodes.ROOT.children, ["VIS_GOAL_CONTRACT", "VIS_GOAL_VERIFY"]);
+      assert.equal(await readFile(graphPath, "utf8"), before);
+
+      const writeResponse = await postJson(`${visualizer.url}/api/goal/plan`, {
+        goal: "Plan through visualizer route",
+        title: "Visualizer Route Plan",
+        dryRun: false,
+        plannerFixturePath: "goal-fixture.json"
+      });
+      const written = await assertJsonResponse(writeResponse, "/api/goal/plan write");
+      assert.equal(written.mode, "plan-only");
+      assert.equal(written.dryRun, false);
+      assert.equal(written.written, true);
+      assert.equal(written.graphPath, graphPath);
+      assert.equal(written.validation.valid, true);
+      assert.equal(written.summary.totalNodes, 3);
+
+      const graph = await readGraph(graphPath);
+      assert.equal(graph.title, "Visualizer Route Plan");
+      assert.equal(graph.graph.nodes.ROOT.planner.requestId, "goal-plan-ROOT-1");
+      assert.deepEqual(graph.graph.nodes.ROOT.children, ["VIS_GOAL_CONTRACT", "VIS_GOAL_VERIFY"]);
+
+      const summary = await assertJsonResponse(await fetch(`${visualizer.url}/api/summary`), "/api/summary after goal plan");
+      assert.equal(summary.totalNodes, 3);
+      const payload = await assertJsonResponse(await fetch(`${visualizer.url}/api/graph`), "/api/graph after goal plan");
+      assert.equal(payload.summary.totalNodes, 3);
+      assert.ok(payload.nodes.find((node) => node.id === "VIS_GOAL_CONTRACT"));
     } finally {
       await visualizer.close();
     }

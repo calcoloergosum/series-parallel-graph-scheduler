@@ -243,6 +243,18 @@ Slack notifications are an attention channel, not the audit record. Messages inc
 
 Adding fields to JSON results is compatible. Removing, renaming, retyping, nesting, or changing the meaning of existing successful-output fields is breaking unless covered by the allowed-change list below and tests are updated.
 
+Generated graph JSON follows the same compatibility rule as hand-authored
+graphs after it is written. The stable contract is the graph file shape
+(`graph.root`, `graph.nodes`, validation, traversal, and mutation semantics),
+not a fixed planner topology or a fixed set of planner metadata fields.
+Planner-created graphs may include additive `goal`, `planner`,
+`plannerDecision`, `decompositionReason`, `contextRefs`, `outputContract`,
+`resultSummary`, `workerPlanner`, `pendingPlannerPreview`, `document`, ref, and
+`gitFootprint` metadata. Existing readers may ignore those fields. Consumers
+must not require a `PLAN` node, a `ROOT -> PLAN` edge, or Git metadata to
+replay a generated graph through `summary`, `ready`, `worker`, `serve`,
+`diagnostics`, `render`, or recovery commands.
+
 ## Graph State Semantics
 
 The existing graph file format must remain compatible:
@@ -482,8 +494,10 @@ The local visualizer started by `serve` should keep these routes:
 - `GET /events`: server-sent events carrying visualizer payload JSON.
 
 The `/api/graph` and `/events` payload should keep at least `graph`,
-`graphSvg`, `nodes`, `nodeHistoryLimit`, `actionPolicy`, `ready`, `working`,
-`summary`, and `workerManager`.
+`graphSvg`, `nodes`, `nodeHistoryLimit`, `actionPolicy`, `attention`,
+`diagnostics`, `gitFootprint`, `recentEvents`, `ready`, `working`, `summary`,
+and `workerManager`. New top-level payload fields are additive; removing or
+renaming these fields is a route compatibility change and requires tests.
 
 `actionPolicy` and each node's `actions` array are additive visualizer metadata.
 Older visualizer clients may ignore them. They describe UI availability and
@@ -492,11 +506,18 @@ authoritative.
 
 `nodes` is a normalized array for browser detail rendering without reparsing
 the SVG. Each entry keeps at least `id`, `title`, `kind`, `status`,
-`description`, `children`, `deliverables`, `acceptanceCriteria`, `lease`,
-`refs`, `workspace`, `report`, `question`, `answer`, `answeredBy`,
+`description`, `goal`, `goalText`, `planner`, `plannerDecision`,
+`decompositionReason`, `pendingPlannerPreview`, `contextRefs`,
+`outputContract`, `resultSummary`, `children`, `deliverables`,
+`acceptanceCriteria`, `lease`, `refs`, `git`, `gitFootprint`,
+`gitFootprintWarning`, `gitDiffStat`, `changedFiles`, `workspace`,
+`workspaceDisplay`, `report`, `question`, `answer`, `answeredBy`,
 `blockedReason`, `failureReason`, `timestamps`, `history`, `historyCount`, and
-`historyLimit` when those values are known on the graph node. `refs` groups
-`baseRef`, `workRef`, `outputRef`, `integrationRef`, and `gitFootprint`.
+`historyLimit` when those values are known on the graph node. These normalized
+planner and Git fields are display/provenance data; scheduler mutations still
+read the graph node state and enforce the graph validator and mutation guards.
+`refs` groups `baseRef`, `workRef`, `outputRef`, `integrationRef`, and
+`gitFootprint`.
 Visualizer consumers that render commit ids, branch names, refs, line-change
 counts, or changed file rows should prefer the normalized `git` object. `git`
 uses `insertions` consistently even when older graph metadata used `additions`,
@@ -601,6 +622,13 @@ Security assumptions are public:
 - Visualizer HTML and client renderers must escape graph text, worker log text, and user-provided values before inserting them into the page.
 
 Visualizer HTML, styling, layout, and client-side ergonomics may change as long as these routes, methods, request fields, response shapes, and security assumptions stay compatible. Endpoint changes require tests and README updates when operator usage changes.
+
+Route and payload compatibility is covered by the Node visualizer suite and the
+type contract. `tests/visualizer-renderer.test.mjs` exercises the read-only
+parity routes, write-token protection, planner/Git payload rendering, action
+metadata, `/api/goal/plan`, and generated graph replay through visualizer
+routes. `tests/graph-contracts.typecheck.ts` keeps the public payload and
+metadata interfaces type-checked.
 
 ## Worker Execution Contract
 

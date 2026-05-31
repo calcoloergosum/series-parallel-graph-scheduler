@@ -21,6 +21,8 @@ operator documentation changes must be recorded here before a release is tagged.
 - Added visualizer payload metadata for operator actions, including per-node
   `actions`, `actionPolicy`, confirmation hints for destructive actions, and
   disabled reasons when a worker-style action needs matching lease credentials.
+- Added migration and security notes for generated graph JSON, planner prompt
+  templates, visualizer route payloads, and Git footprint display metadata.
 
 ### Compatibility And Migration Notes
 
@@ -42,7 +44,17 @@ operator documentation changes must be recorded here before a release is tagged.
   mutation handlers and preserve the graph file as the source of truth.
 - The new visualizer routes and payload fields are additive. Existing clients
   that only consume `/api/graph`, `/api/workers`, or `/events` can ignore the
-  new action, goal, planner, and Git metadata.
+  new action, attention, diagnostics, recent-events, goal, planner, and Git
+  metadata. New route contracts and payload shapes are covered by the
+  visualizer route and type-contract tests.
+- Generated graph JSON is replay-compatible with static graph workflows.
+  Consumers should read `graph.root` and `graph.nodes` instead of assuming a
+  fixed `ROOT -> PLAN` topology; planner metadata fields are optional display
+  and audit data.
+- Planner text, prompt templates, fixture responses, and generated graph writes
+  are documented trust boundaries. Valid planner JSON still requires scheduler
+  validation, graph locks, approval, and existing mutation guards before it can
+  create claimable work or start workers.
 - When `serve` is started with `--visualizer-write-token`, every visualizer
   `POST` route returns HTTP 403 unless the request includes
   `X-SPG-Visualizer-Token: TOKEN` or `Authorization: Bearer TOKEN`. Read-only
