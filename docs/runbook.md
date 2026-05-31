@@ -323,7 +323,9 @@ not pass scheduler validation. No child nodes from that planner response should
 exist, and the original node should still be a leaf. `planner-preview-rejected`
 means the planner produced a valid preview while `mode: "ask-approval"` was in
 effect; the scheduler wrote a report and blocked the node instead of applying
-the preview automatically.
+the preview automatically. The blocked node should include
+`pendingPlannerPreview` metadata. Compare its `graphVersion`, `requestId`,
+`decompose.kind`, `childIds`, and report path with the report before approving.
 
 Recovery:
 
@@ -335,16 +337,20 @@ Recovery:
   ```
 
 - For an approved preview, manually decompose the still-leaf node using the
-  child ids and titles from the report. Use the node's lease session and run id
-  if it is still leased:
+  child ids, titles, deliverables, and acceptance criteria from the report or
+  `pendingPlannerPreview.decompose`. Use the node's lease session and run id if
+  it is still leased. The scheduler rejects the approval if the graph version or
+  blocked-node state changed since the preview was stored:
 
   ```bash
   node scripts/plan-scheduler.mjs decompose --graph ./plan-improve.graph.json --node TEN36 --session codex-A --run run_20260531_000000_TEN36_example --kind series --child TEN36_A="First child" --child TEN36_B="Second child"
   ```
 
-- If the preview or failure is obsolete, discard it with `reset --node TEN36`.
-  If a broader branch was based on the bad plan, use `reset-subtree` for that
-  branch. If an upstream output changed and later series work must be rerun, use
+- If the preview is stale or should be regenerated, discard it with
+  `reset --node TEN36` and rerun the planner worker. If the preview or failure
+  should stop the work, use `fail --node TEN36 --reason "..."`. If a broader
+  branch was based on the bad plan, use `reset-subtree` for that branch. If an
+  upstream output changed and later series work must be rerun, use
   `reset-reachable` from the upstream node.
 
 ## Blocked Nodes

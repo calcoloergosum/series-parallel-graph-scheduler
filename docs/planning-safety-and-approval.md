@@ -56,6 +56,13 @@ before Codex execution; `task` responses continue to Codex, while valid
 mutation and the worker does not execute Codex for that parent. `mode:
 "ask-approval"` writes an inspectable planner report and blocks the leased node
 instead of mutating children, so an operator can approve, reset, or fail it.
+The blocked node also stores `pendingPlannerPreview` metadata with the request
+id, source and persisted graph versions, proposed kind, child ids, child titles,
+deliverables, acceptance criteria, parsed planner response, materialized
+decompose mutation, report path, and the node state snapshot required for safe
+approval. Applying that stored preview through `decompose` is rejected if the
+graph version or captured node state has changed; the operator must regenerate
+or reset before applying an obsolete preview.
 The planner runtime is selected separately with `adapterMode`: `fixture` reads
 a local JSON response or request-id map for deterministic tests and demos,
 `prompt` renders a prompt through the prompt adapter boundary, and `injected`
@@ -86,7 +93,7 @@ state.
 | Invalid planner output | Reject before graph mutation. Return structured validation errors with paths into the planner response and include the planner request id when known. |
 | Empty decomposition | Reject before graph mutation. Do not convert the target leaf into an empty `series` or `parallel` node. |
 | Unsafe or conflicting planner ids | Reject planner ids that are empty, path-like, control-character-bearing, duplicate among siblings, collide with existing nodes, or fail the scheduler safe-token policy. Prefer scheduler-generated ids when the planner cannot prove determinism. This restriction is for planner output; manual/API `decompose` keeps the graph-validator boundary of non-empty string ids that reference nodes after mutation. |
-| Conflicting graph version | Abort the save and return the observed version, current version, and target node id or graph path. The operator must regenerate or reapply against the current graph. |
+| Conflicting graph version | Abort the save or approval apply and return the observed version, current version, and target node id or graph path. The operator must regenerate or reapply against the current graph. |
 | Materialized graph validation error | Reject before write and return both planner validation diagnostics and graph validator diagnostics. |
 | Graph lock timeout or write failure | Leave the previous graph file as source of truth. Return normal command JSON or an error that names the graph path and operation; do not treat the proposal as accepted. |
 

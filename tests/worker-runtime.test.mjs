@@ -2436,6 +2436,14 @@ test("worker planner preflight ask-approval blocks valid decomposition proposals
     assert.equal(updated.graph.nodes.A.children, undefined);
     assert.equal(updated.graph.nodes.A.status, "blocked");
     assert.match(updated.graph.nodes.A.question, /Planner proposed series decomposition/);
+    assert.match(updated.graph.nodes.A.question, /Approve with decompose --node A/);
+    assert.match(updated.graph.nodes.A.question, /Regenerate by resetting this node/);
+    assert.match(updated.graph.nodes.A.pendingPlannerPreview.requestId, /^worker-plan-A-run_/);
+    assert.equal(updated.graph.nodes.A.pendingPlannerPreview.proposedKind, "series");
+    assert.equal(updated.graph.nodes.A.pendingPlannerPreview.graphVersion, updated.graphVersion);
+    assert.equal(updated.graph.nodes.A.pendingPlannerPreview.nodeState.status, "blocked");
+    assert.deepEqual(updated.graph.nodes.A.pendingPlannerPreview.childIds, ["A_APPROVED"]);
+    assert.deepEqual(updated.graph.nodes.A.pendingPlannerPreview.decompose.children.map((child) => child.title), ["Approved child"]);
     const previewEvent = updated.graph.nodes.A.history.find((event) => event.event === operationalEvents.plannerPreviewRejected);
     assert.equal(previewEvent.status, "blocked");
     assert.equal(previewEvent.proposedKind, "series");
@@ -2443,6 +2451,8 @@ test("worker planner preflight ask-approval blocks valid decomposition proposals
     assert.match(previewEvent.requestId, /^worker-plan-A-run_/);
     const report = await readFile(join(dir, updated.graph.nodes.A.report), "utf8");
     assert.match(report, /Planner preflight: A/);
+    assert.match(report, /Proposed Children/);
+    assert.match(report, /Approved child/);
     assert.match(report, /A_APPROVED/);
 
     await decomposeNode(graphPath, {
@@ -2455,6 +2465,84 @@ test("worker planner preflight ask-approval blocks valid decomposition proposals
     const decomposed = await readGraph(graphPath);
     assert.equal(decomposed.graph.nodes.A.status, "pending");
     assert.deepEqual(decomposed.graph.nodes.A.children, ["A_APPROVED"]);
+    assert.equal(decomposed.graph.nodes.A.pendingPlannerPreview, undefined);
+  });
+});
+
+test("approval-gated planner previews reject stale graph versions and changed node state", async () => {
+  await withTempGraph(async (graphPath) => {
+    const graph = {
+      graphVersion: 1,
+      scheduler: { leaseSeconds: 60 },
+      graph: {
+        root: "ROOT",
+        nodes: {
+          ROOT: { title: "Root", kind: "parallel", status: "pending", children: ["A", "B"] },
+          A: { title: "Approve preview", kind: "task", status: "pending" },
+          B: { title: "Independent work", kind: "task", status: "pending" }
+        }
+      }
+    };
+    await writeFile(graphPath, `${JSON.stringify(graph, null, 2)}\n`, "utf8");
+
+    const planner = createFixturePlannerRuntime({
+      kind: "series",
+      title: "Needs approval",
+      children: [{
+        id: "A_APPROVED",
+        title: "Approved child",
+        deliverables: ["Preview child deliverable"],
+        acceptanceCriteria: ["Preview child acceptance"]
+      }]
+    });
+    const result = await runWorker(graphPath, {
+      session: "codex-planner-stale",
+      nodeId: "A",
+      once: true,
+      stream: false,
+      plannerMode: "ask-approval",
+      planner
+    });
+    assert.equal(result.results[0].status, "blocked");
+
+    await claimNode(graphPath, { session: "codex-other", nodeId: "B" });
+    await assert.rejects(
+      decomposeNode(graphPath, {
+        nodeId: "A",
+        session: "codex-planner-stale",
+        runId: result.results[0].runId,
+        kind: "series",
+        children: [{
+          id: "A_APPROVED",
+          title: "Approved child",
+          deliverables: ["Preview child deliverable"],
+          acceptanceCriteria: ["Preview child acceptance"]
+        }]
+      }),
+      /Stale planner preview for A: graphVersion changed/
+    );
+
+    const staleGraph = await readGraph(graphPath);
+    assert.equal(staleGraph.graph.nodes.A.children, undefined);
+    staleGraph.graph.nodes.A.pendingPlannerPreview.graphVersion = staleGraph.graphVersion;
+    staleGraph.graph.nodes.A.question = "Edited approval text";
+    await writeFile(graphPath, `${JSON.stringify(staleGraph, null, 2)}\n`, "utf8");
+
+    await assert.rejects(
+      decomposeNode(graphPath, {
+        nodeId: "A",
+        session: "codex-planner-stale",
+        runId: result.results[0].runId,
+        kind: "series",
+        children: [{
+          id: "A_APPROVED",
+          title: "Approved child",
+          deliverables: ["Preview child deliverable"],
+          acceptanceCriteria: ["Preview child acceptance"]
+        }]
+      }),
+      /Stale planner preview for A: node state changed/
+    );
   });
 });
 

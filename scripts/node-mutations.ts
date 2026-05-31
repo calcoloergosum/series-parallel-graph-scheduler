@@ -18,6 +18,7 @@ import {
   type NodeMutationResult,
   type NodeStatus,
   type NodeWorkspaceMetadata,
+  type PendingPlannerPreviewMetadata,
   type PlanGraphFile,
   type PlannerOutputKind,
   type PlannerRuntime,
@@ -75,6 +76,7 @@ export interface BlockNodeOptions extends OwnedNodeOptions {
   question?: string;
   reason?: string;
   report?: string;
+  plannerPreview?: PendingPlannerPreviewMetadata;
   extraHistoryEvents?: ExtraNodeHistoryEvent[];
 }
 
@@ -296,7 +298,8 @@ const resetClearedFields = [
   "outputRef",
   "integrationRef",
   "gitFootprint",
-  "gitFootprintWarning"
+  "gitFootprintWarning",
+  "pendingPlannerPreview"
 ] as const;
 const compositionResetClearedFields = ["outputRef", "integrationRef", "gitFootprint", "gitFootprintWarning"] as const;
 
@@ -439,7 +442,7 @@ export async function completeNode(
 
 export async function blockNode(
   graphPath: string,
-  { nodeId, question, reason, report, session, runId, extraHistoryEvents }: BlockNodeOptions = {}
+  { nodeId, question, reason, report, session, runId, plannerPreview, extraHistoryEvents }: BlockNodeOptions = {}
 ): Promise<NodeMutationResult> {
   return updateNodeStatus(graphPath, {
     nodeId,
@@ -450,7 +453,7 @@ export async function blockNode(
       assertLeafNode(graph, nodeId);
       assertStatus(node, schedulerTransitionTable.block.allowedFrom, "block");
     },
-    patch: (node) => {
+    patch: (node, graph) => {
       node.blockedAt = new Date().toISOString();
       node.blockedReason = reason || "needs_operator_decision";
       if (question) {
@@ -458,6 +461,13 @@ export async function blockNode(
       }
       if (report) {
         node.report = report;
+      }
+      if (plannerPreview) {
+        node.pendingPlannerPreview = {
+          ...plannerPreview,
+          graphVersion: plannerPreview.graphVersion ?? (graph.graphVersion || 0) + 1,
+          nodeState: plannerPreview.nodeState ?? pendingPlannerPreviewNodeState(node)
+        };
       }
       return { blockedAt: node.blockedAt, blockedReason: node.blockedReason, question, report };
     }
@@ -860,6 +870,7 @@ export async function decomposeNode(
     assertLeaseOwner(node, { session, runId });
 
     const normalizedChildren = normalizeChildDefinitions(children);
+    assertFreshPendingPlannerPreview(graph, nodeId, node, kind || "series", normalizedChildren);
     for (const child of normalizedChildren) {
       if (graph.graph.nodes[child.id]) {
         throw new Error(`Child node already exists: ${child.id}`);
@@ -876,6 +887,7 @@ export async function decomposeNode(
     delete node.blockedAt;
     delete node.blockedReason;
     delete node.question;
+    delete node.pendingPlannerPreview;
     appendHistory(node, operationalEvents.decomposed, {
       previousStatus,
       status: node.status,
@@ -884,7 +896,7 @@ export async function decomposeNode(
       childIds: node.children,
       session,
       runId,
-      clearedFields: ["lease", "startedAt", "blockedAt", "blockedReason", "question"]
+      clearedFields: ["lease", "startedAt", "blockedAt", "blockedReason", "question", "pendingPlannerPreview"]
     });
 
     for (const child of normalizedChildren) {
@@ -2195,6 +2207,80 @@ function mutationEventForStatus(status: NodeStatus): OperationalEventName {
     default:
       throw new Error(`No operational event is defined for mutation status: ${status}`);
   }
+}
+
+function pendingPlannerPreviewNodeState(node: GraphNode): PendingPlannerPreviewMetadata["nodeState"] {
+  return {
+    status: node.status,
+    kind: node.kind,
+    children: Array.isArray(node.children) ? [...node.children] : undefined,
+    lease: node.lease ? { session: node.lease.session, runId: node.lease.runId } : undefined,
+    blockedReason: node.blockedReason,
+    question: node.question,
+    report: node.report
+  };
+}
+
+function assertFreshPendingPlannerPreview(
+  graph: PlanGraphFile,
+  nodeId: NodeId,
+  node: GraphNode,
+  requestedKind: string,
+  requestedChildren: DecomposeChildDefinition[]
+): void {
+  const preview = node.pendingPlannerPreview;
+  if (!preview) {
+    return;
+  }
+
+  if (preview.graphVersion !== undefined && graph.graphVersion !== preview.graphVersion) {
+    throw new Error(
+      `Stale planner preview for ${nodeId}: graphVersion changed from ${preview.graphVersion} to ${graph.graphVersion ?? "unknown"}; regenerate or reset before applying`
+    );
+  }
+
+  const expectedState = stableJsonStringify(preview.nodeState ?? {});
+  const actualState = stableJsonStringify(pendingPlannerPreviewNodeState(node) ?? {});
+  if (expectedState !== actualState) {
+    throw new Error(`Stale planner preview for ${nodeId}: node state changed; regenerate or reset before applying`);
+  }
+
+  if (requestedKind !== preview.decompose.kind) {
+    throw new Error(`Planner preview for ${nodeId} proposed ${preview.decompose.kind}, not ${requestedKind}`);
+  }
+
+  const expectedChildren = stableJsonStringify(preview.decompose.children.map(canonicalPlannerPreviewChild));
+  const actualChildren = stableJsonStringify(requestedChildren.map(canonicalPlannerPreviewChild));
+  if (actualChildren !== expectedChildren) {
+    throw new Error(`Planner preview for ${nodeId} does not match requested decomposition children; apply the stored preview or regenerate it`);
+  }
+}
+
+function canonicalPlannerPreviewChild(child: DecomposeChildDefinition): Record<string, unknown> {
+  return {
+    ...child,
+    kind: child.kind || "task",
+    status: child.status || "pending"
+  };
+}
+
+function stableJsonStringify(value: unknown): string {
+  return JSON.stringify(sortJsonValue(value));
+}
+
+function sortJsonValue(value: unknown): unknown {
+  if (Array.isArray(value)) {
+    return value.map(sortJsonValue);
+  }
+  if (value && typeof value === "object") {
+    return Object.fromEntries(
+      Object.entries(value as Record<string, unknown>)
+        .filter(([, entry]) => entry !== undefined)
+        .sort(([left], [right]) => left.localeCompare(right))
+        .map(([key, entry]) => [key, sortJsonValue(entry)])
+    );
+  }
+  return value;
 }
 
 function normalizeChildDefinitions(children: DecomposeChildDefinition[]): DecomposeChildDefinition[] {

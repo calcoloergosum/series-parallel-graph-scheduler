@@ -363,6 +363,7 @@ export interface GraphNode {
   planner?: NodePlannerMetadata;
   plannerDecision?: string;
   decompositionReason?: string;
+  pendingPlannerPreview?: PendingPlannerPreviewMetadata;
   rationale?: string;
   contextRefs?: NodeContextRefMetadata[];
   resultSummary?: NodeResultSummary;
@@ -531,6 +532,35 @@ export interface PlannerDecomposeChildSpec extends PlannerProposalBase {
 export interface PlannerDecomposeMutation {
   kind: "series" | "parallel";
   children: PlannerDecomposeChildSpec[];
+}
+
+export interface PendingPlannerPreviewNodeState {
+  status?: NodeStatus;
+  kind?: NodeKind;
+  children?: NodeId[];
+  lease?: {
+    session?: string;
+    runId?: string;
+  };
+  blockedReason?: string;
+  question?: string;
+  report?: string;
+}
+
+export interface PendingPlannerPreviewMetadata {
+  requestId: string;
+  sourceGraphVersion?: number;
+  graphVersion?: number;
+  nodeState?: PendingPlannerPreviewNodeState;
+  proposedKind: PlannerOutputKind;
+  childIds: NodeId[];
+  report?: string;
+  planner?: NodePlannerMetadata;
+  response: PlannerResponse;
+  decompose: PlannerDecomposeMutation;
+  validation?: PlannerValidationResult;
+  createdAt?: IsoDateString;
+  [metadata: string]: unknown;
 }
 
 export interface PlannerValidationError {
@@ -1074,6 +1104,7 @@ export interface VisualizerNodeDetail {
   planner?: NodePlannerMetadata;
   plannerDecision?: string;
   decompositionReason?: string;
+  pendingPlannerPreview?: PendingPlannerPreviewMetadata;
   contextRefs?: NodeContextRefMetadata[];
   outputContract?: NodeOutputContract;
   resultSummary?: NodeResultSummary;

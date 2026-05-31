@@ -91,6 +91,7 @@ function normalizeVisualizerNode(
     planner: node.planner,
     plannerDecision: plannerDecisionForNode(node),
     decompositionReason: decompositionReasonForNode(node),
+    pendingPlannerPreview: node.pendingPlannerPreview,
     contextRefs: Array.isArray(node.contextRefs) ? [...node.contextRefs] : undefined,
     outputContract: node.outputContract,
     resultSummary: node.resultSummary,

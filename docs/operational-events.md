@@ -72,7 +72,7 @@ Graph history entries always include `at` and `event`.
 | `merge-conflicted` | A parallel parent buffer merge encountered conflicts and left the parent unresolved. | `parentId`, `integrationRef`, `baseRef`, `childId`, `childOutputRef`, `childOrderIndex`, `conflictedPaths`, `result` |
 | `parent-ref-published` | A composition parent published the output ref used by downstream isolated work. | `parentId`, `kind`, `integrationRef`, `outputRef`, `commit`, `result` |
 | `planner-failed` | Worker planner preflight failed validation or runtime execution and was converted to controlled `blocked` or `failed` state. | `previousStatus`, `status`, `session`, `runId`, `requestId`, `failurePolicy`, `reason`, `report` |
-| `planner-preview-rejected` | Worker planner preflight produced a valid decomposition preview, but automatic application was rejected pending operator approval. | `previousStatus`, `status`, `session`, `runId`, `requestId`, `proposedKind`, `childIds`, `reason`, `report` |
+| `planner-preview-rejected` | Worker planner preflight produced a valid decomposition preview, but automatic application was rejected pending operator approval. The blocked node records the full structured preview in `pendingPlannerPreview`. | `previousStatus`, `status`, `session`, `runId`, `requestId`, `proposedKind`, `childIds`, `reason`, `report` |
 
 Composition buffers also use `blocked` when required child refs or integration setup are missing. `blocked` and `review` composition parents are parked until an operator resets the parent or affected subtree; reconciliation does not keep retrying the same unresolved buffer.
 

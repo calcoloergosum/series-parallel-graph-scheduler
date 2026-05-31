@@ -627,7 +627,10 @@ Worker options:
   Git-isolated runs.
 - `--planner-mode off|auto-decompose|ask-approval`: opt into planner preflight
   before Codex execution. `auto-decompose` applies valid `series` or `parallel`
-  fixture/prompt decisions; `ask-approval` blocks with a preview report.
+  fixture/prompt decisions; `ask-approval` blocks with a preview report and
+  `pendingPlannerPreview` metadata. Preview approval through `decompose` is
+  rejected if the graph version or blocked-node state changed after the preview
+  was stored.
 - `--planner-adapter none|fixture|prompt`: choose the planner runtime boundary.
   `fixture` reads local JSON and never uses the network. `prompt` requires an
   injected prompt adapter; the scheduler core does not hard-code a provider.

@@ -241,7 +241,7 @@ The existing graph file format must remain compatible:
 - Top-level metadata such as `schemaVersion`, `graphVersion`, `title`, `description`, `statusModel`, `scheduler`, and `document` remains allowed.
 - `graph.root` points at a node id in `graph.nodes`.
 - `graph.nodes` is an object keyed by node id.
-- Nodes may include `title`, `kind`, `status`, `children`, `description`, `deliverables`, `acceptanceCriteria`, lease fields, timestamps, `question`, `answer`, `report`, `history`, Git provenance metadata, and additional metadata.
+- Nodes may include `title`, `kind`, `status`, `children`, `description`, `deliverables`, `acceptanceCriteria`, lease fields, timestamps, `question`, `answer`, `report`, `history`, `pendingPlannerPreview`, Git provenance metadata, and additional metadata.
 - Unknown top-level, graph-level, and node-level metadata should be preserved unless a mutation explicitly owns that field.
 - Missing node `kind` defaults operationally to `task`; missing `status` defaults operationally to `pending`.
 - Known node kinds are `task`, `series`, `parallel`, and `gate`; unknown kinds are tolerated as metadata, with traversal falling back to visiting children in order.
@@ -387,6 +387,10 @@ Mutation semantics are public behavior:
   such as ids with spaces, slashes, or colons remain accepted.
 - `decompose --child ID=Title` and `--child ID:Title` create task/pending children.
 - `decompose --child-json` accepts an array of objects with string `id` and `title`; optional `kind`, `status`, string-array `children`, and additional child metadata are preserved on created child nodes.
+- If a blocked leaf has `pendingPlannerPreview`, `decompose` also verifies that
+  the current `graphVersion`, blocked-node state, requested kind, and child
+  definitions still match the stored preview. Stale approval previews are
+  rejected and must be regenerated or reset before applying.
 - The stricter safe-token id policy is planner-only. It applies to planner-provided
   ids and scheduler-generated planner child ids, not to manual/API child ids.
 - Mutation ownership rules for preserving unknown metadata and documenting cleared fields are maintained in [Mutation Ownership](mutation-ownership.md).
