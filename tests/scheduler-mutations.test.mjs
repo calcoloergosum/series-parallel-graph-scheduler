@@ -2116,6 +2116,36 @@ test("planner response validation rejects malformed JSON without raw payload sto
   });
 });
 
+test("prompt planner public decomposition result omits raw prompt and output text", async () => {
+  await withTempGraph(async (graphPath) => {
+    const rawPlannerText = '{"kind":"series","title":"Unsafe split","rationale":"Use <img> safely","children":[{"id":"A_SAFE","title":"Safe child","prompt":"child prompt <script>"}]}';
+    const planner = createPromptPlannerRuntime({
+      templatePath: "prompts/planner-decompose-task.md",
+      adapter: {
+        async complete({ prompt }) {
+          assert.match(prompt, /Goal:\nBootstrap/);
+          assert.match(prompt, /Full request:/);
+          return rawPlannerText;
+        }
+      }
+    });
+
+    const result = await planNodeDecomposition(graphPath, {
+      nodeId: "A",
+      planner,
+      requestId: "public-plan-redaction"
+    });
+    const serialized = JSON.stringify(result);
+
+    assert.equal(result.requestId, "public-plan-redaction");
+    assert.equal("rawText" in result, false);
+    assert.equal("prompt" in result, false);
+    assert.equal(result.response.children[0].prompt, "[REDACTED: planner text]");
+    assert.doesNotMatch(serialized, /Full request:/);
+    assert.equal((await readGraph(graphPath)).graph.nodes.A.children, undefined);
+  });
+});
+
 test("planner response validation rejects unsafe decomposition proposals before mutation", async () => {
   const cases = [
     {

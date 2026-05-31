@@ -225,6 +225,16 @@ interface IndexedHistoryEntry {
 }
 
 const topLevelExportFields = new Set(["at", "event", "status", "session", "runId"]);
+const unsafePublicPlannerTextFields = new Set([
+  "prompt",
+  "rawtext",
+  "rawprompt",
+  "rawplannertext",
+  "rawplanneroutput",
+  "plannerprompt",
+  "plannerrawtext"
+]);
+const redactedPlannerText = "[REDACTED: planner text]";
 
 export function exportOperationalEvents(
   graph: PlanGraphFile,
@@ -258,19 +268,25 @@ export function exportOperationalEvents(
     .map(formatOperationalEventExportEntry);
 }
 
-function redactOperationalValue(value: unknown): unknown {
+function redactOperationalValue(value: unknown, key?: string): unknown {
+  if (key && unsafePublicPlannerTextFields.has(key.toLowerCase())) {
+    return redactedPlannerText;
+  }
   if (typeof value === "string") {
     return redactOperationalText(value);
   }
   if (Array.isArray(value)) {
-    return value.map(redactOperationalValue);
+    return value.map((entry) => redactOperationalValue(entry));
   }
   if (!value || typeof value !== "object") {
     return value;
   }
 
   return Object.fromEntries(
-    Object.entries(value as Record<string, unknown>).map(([key, childValue]) => [key, redactOperationalValue(childValue)])
+    Object.entries(value as Record<string, unknown>).map(([childKey, childValue]) => [
+      childKey,
+      redactOperationalValue(childValue, childKey)
+    ])
   );
 }
 
