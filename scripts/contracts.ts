@@ -1055,6 +1055,15 @@ export interface VisualizerGitDiffStatDisplay {
   binaryFiles?: number;
 }
 
+export type VisualizerGitActionId = "open-diff" | "compare";
+
+export interface VisualizerGitAction {
+  id: VisualizerGitActionId;
+  label: string;
+  href?: string;
+  disabledReason?: string;
+}
+
 export interface VisualizerWorkspaceDisplay {
   remote?: string;
   cloneCwd?: string;
@@ -1086,6 +1095,7 @@ export interface VisualizerGitFootprintDetail {
   changedFilesTotal: number;
   changedFilesLimit: number;
   changedFilesTruncated: number;
+  actions: VisualizerGitAction[];
   aggregation?: GitFootprintAggregationMetadata;
   collectedAt?: IsoDateString;
   remoteDisplay?: string;
@@ -1169,6 +1179,7 @@ export interface VisualizerNodeDetail {
   refs: VisualizerNodeRefs;
   git?: VisualizerGitFootprintDetail;
   gitFootprint?: NodeGitFootprintMetadata;
+  gitFootprintWarning?: string;
   gitDiffStat?: GitDiffStatMetadata;
   changedFiles?: GitFileFootprintMetadata[];
   gitFootprintWarning?: string;
