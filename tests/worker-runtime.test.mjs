@@ -2322,6 +2322,84 @@ test("worker planner preflight auto-decomposes parallel decisions before Codex",
   });
 });
 
+test("worker planner preflight recursively plans decomposed auto-decompose leaves", async () => {
+  await withTempGraph(async (graphPath, dir) => {
+    const graph = await readGraph(graphPath);
+    graph.scheduler.workerPlanner = { mode: "auto-decompose" };
+    await writeFile(graphPath, `${JSON.stringify(graph, null, 2)}\n`, "utf8");
+
+    const executionLogPath = join(dir, "recursive-auto-executions.log");
+    const fakeRunnerPath = join(dir, "fake-recursive-auto-runner.mjs");
+    await writeFile(
+      fakeRunnerPath,
+      [
+        "import { appendFileSync } from 'node:fs';",
+        "const prompt = process.argv.at(-1) || '';",
+        "const node = prompt.match(/^- Node: ([^\\n]+)/m)?.[1] || 'missing-node';",
+        `appendFileSync(${JSON.stringify(executionLogPath)}, node + '\\n');`,
+        "console.log(`executed ${node}`);"
+      ].join("\n"),
+      "utf8"
+    );
+
+    const plannerCalls = [];
+    const planner = createFixturePlannerRuntime((request) => {
+      plannerCalls.push(request.nodeId);
+      if (request.nodeId === "A") {
+        return {
+          kind: "series",
+          title: "Split A recursively",
+          children: [
+            { id: "A_DESIGN", title: "Design A" },
+            { id: "A_BUILD", title: "Build A" }
+          ]
+        };
+      }
+      return { kind: "task", title: `Keep ${request.nodeId} atomic` };
+    });
+
+    const commonOptions = {
+      once: true,
+      cwd: dir,
+      stream: false,
+      codexCommand: process.execPath,
+      codexArgs: [fakeRunnerPath],
+      planner
+    };
+
+    const decomposed = await runWorker(graphPath, {
+      ...commonOptions,
+      session: "codex-recursive-auto-parent"
+    });
+    assert.equal(decomposed.results[0].nodeId, "A");
+    assert.equal(decomposed.results[0].status, "pending");
+    assert.equal(decomposed.results[0].note, "planner decomposed node as series");
+    assert.equal(existsSync(executionLogPath), false);
+
+    const firstLeaf = await runWorker(graphPath, {
+      ...commonOptions,
+      session: "codex-recursive-auto-design"
+    });
+    assert.equal(firstLeaf.results[0].nodeId, "A_DESIGN");
+    assert.equal(firstLeaf.results[0].status, "done");
+
+    const secondLeaf = await runWorker(graphPath, {
+      ...commonOptions,
+      session: "codex-recursive-auto-build"
+    });
+    assert.equal(secondLeaf.results[0].nodeId, "A_BUILD");
+    assert.equal(secondLeaf.results[0].status, "done");
+
+    assert.deepEqual(plannerCalls, ["A", "A_DESIGN", "A_BUILD"]);
+    assert.deepEqual((await readFile(executionLogPath, "utf8")).trim().split("\n"), ["A_DESIGN", "A_BUILD"]);
+    const updated = await readGraph(graphPath);
+    assert.equal(updated.graph.nodes.A.status, "done");
+    assert.equal(updated.graph.nodes.A_DESIGN.workerPlanner.decision, "task");
+    assert.equal(updated.graph.nodes.A_BUILD.workerPlanner.decision, "task");
+    assert.deepEqual(listReadyLeafNodes(updated).map((node) => node.id), ["B", "C"]);
+  });
+});
+
 test("worker CLI fixture planner mode auto-decomposes without network access", async () => {
   await withTempGraph(async (graphPath, dir) => {
     const fixturePath = join(dir, "planner-fixture.json");
@@ -2610,6 +2688,83 @@ test("worker planner preflight ask-approval blocks valid decomposition proposals
     assert.equal(decomposed.graph.nodes.A.status, "pending");
     assert.deepEqual(decomposed.graph.nodes.A.children, ["A_APPROVED"]);
     assert.equal(decomposed.graph.nodes.A.pendingPlannerPreview, undefined);
+  });
+});
+
+test("worker planner preflight executes approved decomposition leaves after ask-approval", async () => {
+  await withTempGraph(async (graphPath, dir) => {
+    const graph = await readGraph(graphPath);
+    graph.scheduler.workerPlanner = { mode: "ask-approval" };
+    await writeFile(graphPath, `${JSON.stringify(graph, null, 2)}\n`, "utf8");
+
+    const executionLogPath = join(dir, "recursive-approval-executions.log");
+    const fakeRunnerPath = join(dir, "fake-recursive-approval-runner.mjs");
+    await writeFile(
+      fakeRunnerPath,
+      [
+        "import { appendFileSync } from 'node:fs';",
+        "const prompt = process.argv.at(-1) || '';",
+        "const node = prompt.match(/^- Node: ([^\\n]+)/m)?.[1] || 'missing-node';",
+        `appendFileSync(${JSON.stringify(executionLogPath)}, node + '\\n');`,
+        "console.log(`approved leaf executed ${node}`);"
+      ].join("\n"),
+      "utf8"
+    );
+
+    const plannerCalls = [];
+    const planner = createFixturePlannerRuntime((request) => {
+      plannerCalls.push(request.nodeId);
+      if (request.nodeId === "A") {
+        return {
+          kind: "series",
+          title: "Approve recursive split",
+          children: [{ id: "A_APPROVED_LEAF", title: "Approved leaf" }]
+        };
+      }
+      return { kind: "task", title: "Run approved leaf atomically" };
+    });
+
+    const blocked = await runWorker(graphPath, {
+      session: "codex-recursive-approval-parent",
+      once: true,
+      cwd: dir,
+      stream: false,
+      codexCommand: process.execPath,
+      codexArgs: [fakeRunnerPath],
+      planner
+    });
+    assert.equal(blocked.results[0].nodeId, "A");
+    assert.equal(blocked.results[0].status, "blocked");
+    assert.equal(existsSync(executionLogPath), false);
+
+    await applyPlannerPreview(graphPath, {
+      nodeId: "A",
+      session: "codex-recursive-approval-parent",
+      runId: blocked.results[0].runId
+    });
+    const afterApproval = await readGraph(graphPath);
+    assert.equal(afterApproval.graph.nodes.A.status, "pending");
+    assert.deepEqual(afterApproval.graph.nodes.A.children, ["A_APPROVED_LEAF"]);
+    assert.deepEqual(listReadyLeafNodes(afterApproval).map((node) => node.id), ["A_APPROVED_LEAF"]);
+
+    const leaf = await runWorker(graphPath, {
+      session: "codex-recursive-approval-leaf",
+      once: true,
+      cwd: dir,
+      stream: false,
+      codexCommand: process.execPath,
+      codexArgs: [fakeRunnerPath],
+      planner
+    });
+    assert.equal(leaf.results[0].nodeId, "A_APPROVED_LEAF");
+    assert.equal(leaf.results[0].status, "done");
+
+    assert.deepEqual(plannerCalls, ["A", "A_APPROVED_LEAF"]);
+    assert.equal((await readFile(executionLogPath, "utf8")).trim(), "A_APPROVED_LEAF");
+    const updated = await readGraph(graphPath);
+    assert.equal(updated.graph.nodes.A.status, "done");
+    assert.equal(updated.graph.nodes.A.pendingPlannerPreview, undefined);
+    assert.equal(updated.graph.nodes.A_APPROVED_LEAF.workerPlanner.decision, "task");
   });
 });
 
