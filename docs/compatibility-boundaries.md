@@ -158,6 +158,15 @@ existing `--graph` commands plan implicitly, change the default graph selection
 for static workflows, or require existing `plan.graph.json` files to adopt
 planner metadata.
 
+Planner approval and execution boundaries are part of the compatibility
+contract. Dry-run planning must not mutate the graph or start workers.
+Auto-save may write only validated planner output through the normal locked
+graph writer. Worker execution requires a separate approve-before-run step
+against a saved graph, and regenerate flows must create a new proposal instead
+of silently overwriting accepted graph state. Detailed failure and security
+rules live in
+[`planning-safety-and-approval.md`](planning-safety-and-approval.md).
+
 ## JSON Output Shapes
 
 Commands that currently print JSON should continue to print a single JSON value to stdout:

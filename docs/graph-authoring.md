@@ -104,6 +104,9 @@ schema and examples are documented in
 [`docs/planner-output-schema.md`](planner-output-schema.md). Scheduler code must
 validate a planner response and materialize safe child node ids before writing
 new `graph.nodes` entries.
+Planning approval modes, dry-run behavior, regeneration, and invalid-output
+failure handling are documented in
+[`docs/planning-safety-and-approval.md`](planning-safety-and-approval.md).
 
 Planner-created nodes may use additive metadata fields such as `goal`,
 `planner`, `contextRefs`, `outputContract`, and `resultSummary`. These fields

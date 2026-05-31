@@ -18,6 +18,12 @@ The TypeScript contract lives in
 - `PlannerValidationError` and `PlannerValidationResult`: diagnostics produced
   before any graph mutation is allowed.
 
+Planner safety, approval, dry-run, auto-save, and regenerate behavior is
+defined in
+[`planning-safety-and-approval.md`](planning-safety-and-approval.md). This
+schema is necessary but not sufficient for execution: valid planner output must
+still pass the approval and graph-write boundaries before workers can run.
+
 ## Planner Request
 
 Planner requests should include the goal text, the planning mode, and any
@@ -185,6 +191,11 @@ graph state. Validation should check at least:
   parent id, child index, and title, with collision handling.
 - The materialized graph is validated with the existing graph validator before
   the locked write is committed.
+
+Validation failure is terminal for that proposed mutation. The scheduler must
+return inspectable diagnostics or a planning artifact, but it must not create
+claimable work, start workers, or partially update the graph from invalid
+planner output.
 
 Validation errors use paths into the response object so planner adapters and
 operators can fix the source:

@@ -20,7 +20,9 @@ boundaries and extension points are mapped in
 [`docs/architecture.md`](docs/architecture.md). Operational recovery steps are
 in [`docs/runbook.md`](docs/runbook.md). Goal-driven planner response contracts
 are documented in
-[`docs/planner-output-schema.md`](docs/planner-output-schema.md).
+[`docs/planner-output-schema.md`](docs/planner-output-schema.md), with
+planning approval and failure boundaries in
+[`docs/planning-safety-and-approval.md`](docs/planning-safety-and-approval.md).
 
 ## Quickstart
 
