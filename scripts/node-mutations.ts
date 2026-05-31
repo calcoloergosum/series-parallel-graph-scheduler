@@ -2200,10 +2200,10 @@ function normalizeChildDefinitions(children: DecomposeChildDefinition[]): Decomp
     if (!child || typeof child !== "object") {
       throw new Error("Each child must be an object");
     }
-    if (!child.id || !child.title) {
+    assertNonEmptyChildId(child.id, `children[${index}].id`);
+    if (typeof child.title !== "string" || child.title.length === 0) {
       throw new Error("Each child requires id and title");
     }
-    assertSafeChildId(child.id, `children[${index}].id`);
     if (seen.has(child.id)) {
       throw new Error(`Duplicate child id in decomposition: ${child.id}`);
     }
@@ -2214,10 +2214,9 @@ function normalizeChildDefinitions(children: DecomposeChildDefinition[]): Decomp
         throw new Error(`Child children must be an array: ${child.id}`);
       }
       childIds.forEach((childId, childIndex) => {
-        if (typeof childId !== "string" || childId.trim().length === 0) {
+        if (typeof childId !== "string" || childId.length === 0) {
           throw new Error(`Child child id must be a non-empty string: ${child.id}.children[${childIndex}]`);
         }
-        assertSafeChildId(childId, `${child.id}.children[${childIndex}]`);
       });
     }
     normalized.push({
@@ -2233,9 +2232,9 @@ function normalizeChildDefinitions(children: DecomposeChildDefinition[]): Decomp
   return normalized;
 }
 
-function assertSafeChildId(id: string, path: string): void {
-  if (!/^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/.test(id) || id.includes("..")) {
-    throw new Error(`Unsafe child id at ${path}: ${id}`);
+function assertNonEmptyChildId(id: unknown, path: string): asserts id is string {
+  if (typeof id !== "string" || id.length === 0) {
+    throw new Error(`Child id must be a non-empty string at ${path}`);
   }
 }
 

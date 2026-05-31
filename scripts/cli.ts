@@ -964,9 +964,6 @@ function validateChildId(id: string, location: string): void {
   if (!id) {
     throw new Error(`${location} id cannot be empty`);
   }
-  if (!/^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/.test(id) || id.includes("..")) {
-    throw new Error(`${location} id contains unsafe characters: ${id}`);
-  }
 }
 
 function validateChildTitle(title: string, location: string): void {

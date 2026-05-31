@@ -1073,6 +1073,72 @@ test("CLI decompose updates a claimed leaf graph", async () => {
     assert.equal(graph.graph.nodes.A1.title, "First CLI child");
     assert.deepEqual(listReadyLeafNodes(graph).map((node) => node.id), ["A1"]);
   });
+
+  await withTempGraph(async (graphPath) => {
+    await execFileAsync(process.execPath, [
+      schedulerScriptPath,
+      "claim",
+      "--graph",
+      graphPath,
+      "--node",
+      "A",
+      "--session",
+      "codex-custom"
+    ]);
+    await execFileAsync(process.execPath, [
+      schedulerScriptPath,
+      "decompose",
+      "--graph",
+      graphPath,
+      "--node",
+      "A",
+      "--session",
+      "codex-custom",
+      "--kind",
+      "parallel",
+      "--child",
+      "custom path/api:1=Custom CLI child",
+      "--child",
+      "custom/path:2=Second custom CLI child"
+    ]);
+
+    const graph = await readGraph(graphPath);
+    assert.deepEqual(graph.graph.nodes.A.children, ["custom path/api:1", "custom/path:2"]);
+    assert.equal(graph.graph.nodes["custom path/api:1"].title, "Custom CLI child");
+    assert.deepEqual(validatePlanGraphFileResult(graph).errors, []);
+  });
+
+  await withTempGraph(async (graphPath) => {
+    await execFileAsync(process.execPath, [
+      schedulerScriptPath,
+      "claim",
+      "--graph",
+      graphPath,
+      "--node",
+      "A",
+      "--session",
+      "codex-json"
+    ]);
+    await execFileAsync(process.execPath, [
+      schedulerScriptPath,
+      "decompose",
+      "--graph",
+      graphPath,
+      "--node",
+      "A",
+      "--session",
+      "codex-json",
+      "--kind",
+      "parallel",
+      "--child-json",
+      "[{\"id\":\"custom/path:json\",\"title\":\"Custom JSON child\"},{\"id\":\"custom json:2\",\"title\":\"Second JSON child\"}]"
+    ]);
+
+    const graph = await readGraph(graphPath);
+    assert.deepEqual(graph.graph.nodes.A.children, ["custom/path:json", "custom json:2"]);
+    assert.equal(graph.graph.nodes["custom/path:json"].title, "Custom JSON child");
+    assert.deepEqual(validatePlanGraphFileResult(graph).errors, []);
+  });
 });
 
 test("CLI decompose rejects ambiguous child definitions with actionable errors", async () => {

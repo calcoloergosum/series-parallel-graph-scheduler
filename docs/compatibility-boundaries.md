@@ -370,8 +370,14 @@ Mutation semantics are public behavior:
   Selecting a node that is not reachable from `graph.root` resets only that
   node's child-reachable subtree.
 - `decompose` replaces a claimed, running, or blocked leaf with a `series` or `parallel` subtree and creates child nodes from `--child` or `--child-json`.
+- Manual and API `decompose` child ids follow the graph validator contract:
+  child `id` values and `children` references must be non-empty strings that
+  name nodes present after the mutation. Existing graph-compatible custom ids
+  such as ids with spaces, slashes, or colons remain accepted.
 - `decompose --child ID=Title` and `--child ID:Title` create task/pending children.
 - `decompose --child-json` accepts an array of objects with string `id` and `title`; optional `kind`, `status`, string-array `children`, and additional child metadata are preserved on created child nodes.
+- The stricter safe-token id policy is planner-only. It applies to planner-provided
+  ids and scheduler-generated planner child ids, not to manual/API child ids.
 - Mutation ownership rules for preserving unknown metadata and documenting cleared fields are maintained in [Mutation Ownership](mutation-ownership.md).
 
 Status transitions are defined by command. Worker-owned commands require matching `--session` or `--run` when a node has a lease; unleased legacy nodes in an otherwise allowed source status can still be mutated, except `renew`, which requires an existing lease. Operator and system commands do not require worker owner credentials.

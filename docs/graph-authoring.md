@@ -128,6 +128,10 @@ schema and examples are documented in
 [`docs/planner-output-schema.md`](planner-output-schema.md). Scheduler code must
 validate a planner response and materialize safe child node ids before writing
 new `graph.nodes` entries.
+That safe id materialization is specific to planner-generated children. Manual
+or API decomposition remains compatible with authored graph ids: child ids and
+child references must be non-empty strings and must reference nodes that exist
+after the mutation.
 Planning approval modes, dry-run behavior, regeneration, and invalid-output
 failure handling are documented in
 [`docs/planning-safety-and-approval.md`](planning-safety-and-approval.md).

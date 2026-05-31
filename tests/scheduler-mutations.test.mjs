@@ -1735,6 +1735,26 @@ test("decompose replaces a leaf with a child subgraph", async () => {
   });
 });
 
+test("manual decompose accepts graph-compatible custom node ids", async () => {
+  await withTempGraph(async (graphPath) => {
+    await claimNode(graphPath, { session: "codex-custom", nodeId: "A" });
+    await decomposeNode(graphPath, {
+      nodeId: "A",
+      session: "codex-custom",
+      kind: "parallel",
+      children: [
+        { id: "manual path/contract:1", title: "Custom id child" },
+        { id: "manual.path/verify:2", title: "Second custom id child" }
+      ]
+    });
+
+    const graph = await readGraph(graphPath);
+    assert.deepEqual(graph.graph.nodes.A.children, ["manual path/contract:1", "manual.path/verify:2"]);
+    assert.equal(graph.graph.nodes["manual path/contract:1"].title, "Custom id child");
+    assert.deepEqual(validatePlanGraphFileResult(graph).errors, []);
+  });
+});
+
 test("planner adapter builds decomposition requests without network access", async () => {
   await withTempGraph(async (graphPath) => {
     const graph = await readGraph(graphPath);

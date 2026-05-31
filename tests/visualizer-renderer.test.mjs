@@ -288,28 +288,28 @@ test("visualizer node mutation routes use scheduler transitions", async () => {
         runId: decomposeClaim.runId,
         kind: "series",
         children: [
-          { id: "A1", title: "API child 1", kind: "task" },
-          { id: "A2", title: "API child 2", kind: "task" }
+          { id: "API child/1:contract", title: "API child 1", kind: "task" },
+          { id: "API child/2:verify", title: "API child 2", kind: "task" }
         ]
       });
-      assert.deepEqual(decompose.children, ["A1", "A2"]);
+      assert.deepEqual(decompose.children, ["API child/1:contract", "API child/2:verify"]);
       assertSkippedSlack(decompose.slack);
       graph = await assertSummaryMatchesGraph(visualizer.url, decompose.summary, graphPath);
-      assert.deepEqual(graph.graph.nodes.A.children, ["A1", "A2"]);
+      assert.deepEqual(graph.graph.nodes.A.children, ["API child/1:contract", "API child/2:verify"]);
       assert.equal(graph.graph.nodes.A.kind, "series");
       assert.equal(graph.graph.nodes.A.status, "pending");
       assert.equal(graph.graph.nodes.A.lease, undefined);
-      assert.equal(graph.graph.nodes.A1.status, "pending");
+      assert.equal(graph.graph.nodes["API child/1:contract"].status, "pending");
       assert.equal(latestHistory(graph.graph.nodes.A).event, "decomposed");
 
       const reachableReset = await postNode("reset-reachable", { nodeId: "A", reason: "exercise API reachable reset" });
-      assert.ok(reachableReset.resetNodes.includes("A1"));
+      assert.ok(reachableReset.resetNodes.includes("API child/1:contract"));
       assert.ok(reachableReset.resetNodes.includes("P"));
       assert.ok(reachableReset.resetNodes.includes("G"));
       graph = await assertSummaryMatchesGraph(visualizer.url, reachableReset.summary, graphPath);
-      assert.deepEqual(graph.graph.nodes.A.children, ["A1", "A2"]);
-      assert.equal(graph.graph.nodes.A1.status, "pending");
-      assert.equal(latestHistory(graph.graph.nodes.A1).resetScope, "reachable");
+      assert.deepEqual(graph.graph.nodes.A.children, ["API child/1:contract", "API child/2:verify"]);
+      assert.equal(graph.graph.nodes["API child/1:contract"].status, "pending");
+      assert.equal(latestHistory(graph.graph.nodes["API child/1:contract"]).resetScope, "reachable");
     } finally {
       await visualizer.close();
     }
