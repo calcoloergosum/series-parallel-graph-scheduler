@@ -31,7 +31,7 @@ import {
 import { validatePlanGraphFileResult } from "./contracts.js";
 
 import { defaultGraphPath, readGraph, withGraphLock, writeGraphAtomic, writeReportFile } from "./graph-io.js";
-import { aggregateChildGitFootprints } from "./git-footprint.js";
+import { aggregateChildGitFootprints, gitFootprintFromNode } from "./git-footprint.js";
 import {
   findAncestorIds,
   getNode,
@@ -1841,12 +1841,16 @@ function applyWorkerRefMetadata(
     });
   }
   if (refMetadata.outputRef) {
+    const gitFootprint = gitFootprintFromNode(node);
     appendHistory(node, operationalEvents.outputRefRecorded, {
       session,
       runId,
       workRef: node.workRef?.name,
       outputRef: node.outputRef?.name,
       commit: node.outputRef?.commit,
+      diffStat: gitFootprint?.diffStat,
+      files: gitFootprint?.files,
+      gitFootprint,
       report
     });
   }

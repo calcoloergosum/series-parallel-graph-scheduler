@@ -1264,6 +1264,54 @@ test("visualizer builds graph payload and real-time HTML shell", async () => {
   });
 });
 
+test("visualizer and event payloads expose git footprints with redaction", async () => {
+  await withTempGraph(async (graphPath) => {
+    const graph = await readGraph(graphPath);
+    graph.graph.nodes.A.status = "done";
+    graph.graph.nodes.A.baseRef = {
+      name: "refs/remotes/origin/main",
+      commit: "1111111111111111111111111111111111111111"
+    };
+    graph.graph.nodes.A.outputRef = {
+      name: "refs/heads/spg/node/A/run-a",
+      commit: "2222222222222222222222222222222222222222",
+      diffStat: { filesChanged: 1, additions: 4, deletions: 1, totalChanges: 5 },
+      files: [{ path: "src/app.ts", changeType: "modified", additions: 4, deletions: 1, totalChanges: 5 }],
+      collectedAt: "2026-05-27T00:05:01.000Z"
+    };
+    graph.graph.nodes.A.workspace = {
+      remote: "https://user:secret-token@example.com/org/repo.git",
+      cloneCwd: "/tmp/spg/token=workspace-secret/workspaces/codex-A/A/run-a"
+    };
+    graph.graph.nodes.A.history = [{
+      at: "2026-05-27T00:05:02.000Z",
+      event: "output-ref-recorded",
+      status: "done",
+      remote: "https://user:secret-token@example.com/org/repo.git",
+      cloneCwd: "/tmp/spg/token=workspace-secret/workspaces/codex-A/A/run-a",
+      outputRef: "refs/heads/spg/node/A/run-a",
+      commit: "2222222222222222222222222222222222222222"
+    }];
+    await writeFile(graphPath, `${JSON.stringify(graph, null, 2)}\n`, "utf8");
+
+    const payload = await buildVisualizerPayload(graphPath);
+    const withFootprint = payload.nodes.find((node) => node.id === "A");
+    const withoutFootprint = payload.nodes.find((node) => node.id === "B");
+    assert.equal(withFootprint.refs.gitFootprint.headRef.commit, "2222222222222222222222222222222222222222");
+    assert.deepEqual(withFootprint.gitDiffStat, { filesChanged: 1, additions: 4, deletions: 1, totalChanges: 5 });
+    assert.deepEqual(withFootprint.changedFiles.map((file) => file.path), ["src/app.ts"]);
+    assert.equal(withoutFootprint.refs.gitFootprint, undefined);
+    assert.equal(withoutFootprint.gitFootprint, undefined);
+    assert.deepEqual(payload.gitFootprint.refs.commits, ["2222222222222222222222222222222222222222"]);
+    assert.deepEqual(payload.gitFootprint.changedFiles.map((file) => file.path), ["src/app.ts"]);
+    assert.deepEqual(payload.diagnostics.gitFootprint.nodes.map((node) => node.nodeId), ["A"]);
+    assert.equal(withFootprint.workspace.remote, "https://[REDACTED]@example.com/org/repo.git");
+    assert.doesNotMatch(JSON.stringify(payload), /secret-token|workspace-secret/);
+    assert.equal(payload.recentEvents[0].details.gitFootprint.headRef.commit, "2222222222222222222222222222222222222222");
+    assert.deepEqual(payload.recentEvents[0].details.diffStat, { filesChanged: 1, additions: 4, deletions: 1, totalChanges: 5 });
+  });
+});
+
 test("visualizer diagnostics payload exposes attention, events, and read-only lock state", async () => {
   await withTempGraph(async (graphPath) => {
     const graph = await readGraph(graphPath);

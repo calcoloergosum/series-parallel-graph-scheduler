@@ -13,6 +13,7 @@ import type {
 } from "./contracts.js";
 import { defaultGraphPath, inspectGraphLock, readGraph } from "./graph-io.js";
 import { buildGraphDiagnostics, listReadyLeafNodes, listWorkingNodes, summarizeGraph } from "./graph-traversal.js";
+import { gitFootprintFromNode } from "./git-footprint.js";
 import { exportOperationalEvents, redactOperationalEventDetails } from "./operational-events.js";
 import { renderPlanarSvg } from "./sp-layout.js";
 import { buildVisualizerNodeActionMap, visualizerActionPolicy } from "./visualizer-actions.js";
@@ -32,13 +33,14 @@ export async function buildVisualizerPayload(
     lock: await inspectGraphLock(graphPath)
   });
   return {
-    graph,
+    graph: redactGraphPayload(graph),
     graphSvg: renderPlanarSvg(graph),
     nodes: buildVisualizerNodeDetails(graph, visualizerNodeHistoryLimit, actionMap),
     nodeHistoryLimit: visualizerNodeHistoryLimit,
     actionPolicy: visualizerActionPolicy,
     attention: buildVisualizerAttentionSummary(diagnostics, managerStatus),
     diagnostics,
+    gitFootprint: diagnostics.gitFootprint,
     recentEvents: exportOperationalEvents(graph, { limit: visualizerRecentEventLimit }),
     ready: listReadyLeafNodes(graph),
     working: listWorkingNodes(graph),
@@ -65,6 +67,7 @@ function normalizeVisualizerNode(
   actions: VisualizerNodeDetail["actions"]
 ): VisualizerNodeDetail {
   const history = Array.isArray(node.history) ? node.history : [];
+  const gitFootprint = gitFootprintFromNode(node);
   return redactNodeDetail(omitUndefined({
     id,
     title: node.title,
@@ -81,8 +84,11 @@ function normalizeVisualizerNode(
       workRef: node.workRef,
       outputRef: node.outputRef,
       integrationRef: node.integrationRef,
-      gitFootprint: node.gitFootprint
+      gitFootprint
     }),
+    gitFootprint,
+    gitDiffStat: gitFootprint?.diffStat,
+    changedFiles: gitFootprint?.files,
     workspace: node.workspace,
     report: node.report,
     question: node.question,
@@ -114,6 +120,10 @@ function historyTail(history: GraphHistoryEntry[], limit: number): GraphHistoryE
 
 function redactNodeDetail(detail: Record<string, unknown>): VisualizerNodeDetail {
   return redactOperationalEventDetails(detail) as unknown as VisualizerNodeDetail;
+}
+
+function redactGraphPayload(graph: PlanGraphFile): PlanGraphFile {
+  return redactOperationalEventDetails(graph as unknown as Record<string, unknown>) as unknown as PlanGraphFile;
 }
 
 function omitUndefined<T extends Record<string, unknown>>(details: T): T {

@@ -2,12 +2,16 @@ import type {
   GitDiffStatMetadata,
   GitFileChangeType,
   GitFileFootprintMetadata,
+  GitFootprintNodeSummary,
+  GitFootprintSummary,
   GitRefFootprintMetadata,
+  GraphNode,
   IsoDateString,
   NodeGitFootprintMetadata,
   NodeId,
   NodeKind,
-  NodeOutputRefMetadata
+  NodeOutputRefMetadata,
+  PlanGraphFile
 } from "./contracts.js";
 
 export interface ChildGitFootprintInput {
@@ -44,7 +48,7 @@ export function aggregateChildGitFootprints({
   let binaryFiles = 0;
 
   for (const child of children) {
-    const footprint = child.gitFootprint || footprintFromOutputRef(child.outputRef);
+    const footprint = child.gitFootprint || gitFootprintFromOutputRef(child.outputRef);
     const stat = childDiffStat(footprint);
     const files = footprint?.files || [];
     if (!stat && files.length === 0) {
@@ -114,12 +118,23 @@ export function aggregateChildGitFootprints({
   };
 }
 
-function footprintFromOutputRef(outputRef: NodeOutputRefMetadata | undefined): NodeGitFootprintMetadata | undefined {
-  if (!outputRef?.diffStat && !outputRef?.files?.length) {
+export function gitFootprintFromNode(node: Pick<GraphNode, "baseRef" | "gitFootprint" | "outputRef">): NodeGitFootprintMetadata | undefined {
+  if (node.gitFootprint) {
+    return node.gitFootprint;
+  }
+  return gitFootprintFromOutputRef(node.outputRef, node.baseRef);
+}
+
+export function gitFootprintFromOutputRef(
+  outputRef: NodeOutputRefMetadata | undefined,
+  baseRef?: GitRefFootprintMetadata
+): NodeGitFootprintMetadata | undefined {
+  if (!outputRef?.commit && !outputRef?.diffStat && !outputRef?.files?.length && !outputRef?.collectedAt) {
     return undefined;
   }
   return {
     source: "git-diff",
+    ...(baseRef ? { baseRef: refFootprint(baseRef) } : {}),
     headRef: {
       name: outputRef.name,
       commit: outputRef.commit
@@ -128,6 +143,97 @@ function footprintFromOutputRef(outputRef: NodeOutputRefMetadata | undefined): N
     ...(outputRef.diffStat ? { diffStat: outputRef.diffStat } : {}),
     ...(outputRef.files ? { files: outputRef.files } : {}),
     ...(outputRef.collectedAt ? { collectedAt: outputRef.collectedAt } : {})
+  };
+}
+
+export function buildGraphGitFootprintSummary(graph: PlanGraphFile): GitFootprintSummary | undefined {
+  const children = Object.entries(graph.graph?.nodes || {})
+    .sort(([leftId], [rightId]) => leftId.localeCompare(rightId))
+    .map(([nodeId, node]) => ({
+      nodeId,
+      gitFootprint: gitFootprintFromNode(node),
+      outputRef: node.outputRef
+    }));
+  const nodeSummaries = children
+    .map((child) => {
+      const node = graph.graph.nodes[child.nodeId];
+      const footprint = child.gitFootprint;
+      return footprint ? footprintNodeSummary(child.nodeId, node, footprint) : undefined;
+    })
+    .filter((summary): summary is GitFootprintNodeSummary => Boolean(summary));
+
+  if (nodeSummaries.length === 0) {
+    return undefined;
+  }
+
+  const aggregate = aggregateChildGitFootprints({ children });
+  return {
+    nodes: nodeSummaries,
+    refs: {
+      baseRefs: uniqueRefs(nodeSummaries.map((node) => node.baseRef)),
+      headRefs: uniqueRefs(nodeSummaries.map((node) => node.headRef)),
+      commits: uniqueStrings(nodeSummaries.map((node) => node.commit))
+    },
+    diffStat: aggregate?.diffStat || zeroDiffStat(),
+    changedFiles: aggregate?.files || []
+  };
+}
+
+function footprintNodeSummary(
+  nodeId: NodeId,
+  node: GraphNode,
+  footprint: NodeGitFootprintMetadata
+): GitFootprintNodeSummary {
+  return {
+    nodeId,
+    title: node.title,
+    kind: node.kind || "task",
+    status: node.status || "pending",
+    source: footprint.source,
+    baseRef: footprint.baseRef,
+    headRef: footprint.headRef,
+    branch: footprint.branch,
+    commit: footprint.commit || footprint.headRef?.commit,
+    diffStat: footprint.diffStat,
+    changedFiles: footprint.files || [],
+    collectedAt: footprint.collectedAt
+  };
+}
+
+function uniqueRefs(refs: Array<GitRefFootprintMetadata | undefined>): GitRefFootprintMetadata[] {
+  const seen = new Set<string>();
+  const unique: GitRefFootprintMetadata[] = [];
+  for (const ref of refs) {
+    if (!ref?.name && !ref?.commit) {
+      continue;
+    }
+    const key = `${ref.name || ""}\0${ref.commit || ""}`;
+    if (seen.has(key)) {
+      continue;
+    }
+    seen.add(key);
+    unique.push(refFootprint(ref));
+  }
+  return unique.sort((left, right) => String(left.name || "").localeCompare(String(right.name || "")) || String(left.commit || "").localeCompare(String(right.commit || "")));
+}
+
+function refFootprint(ref: GitRefFootprintMetadata): GitRefFootprintMetadata {
+  return {
+    ...(ref.name ? { name: ref.name } : {}),
+    ...(ref.commit ? { commit: ref.commit } : {})
+  };
+}
+
+function uniqueStrings(values: Array<string | undefined>): string[] {
+  return [...new Set(values.filter((value): value is string => Boolean(value)))].sort();
+}
+
+function zeroDiffStat(): GitDiffStatMetadata {
+  return {
+    filesChanged: 0,
+    additions: 0,
+    deletions: 0,
+    totalChanges: 0
   };
 }
 

@@ -164,6 +164,34 @@ export interface NodeGitFootprintMetadata {
   [metadata: string]: unknown;
 }
 
+export interface GitFootprintNodeSummary {
+  nodeId: NodeId;
+  title?: string;
+  kind: NodeKind;
+  status: NodeStatus;
+  source?: GitFootprintSource;
+  baseRef?: GitRefFootprintMetadata;
+  headRef?: GitRefFootprintMetadata;
+  branch?: string;
+  commit?: string;
+  diffStat?: GitDiffStatMetadata;
+  changedFiles: GitFileFootprintMetadata[];
+  collectedAt?: IsoDateString;
+}
+
+export interface GitFootprintRefSummary {
+  baseRefs: GitRefFootprintMetadata[];
+  headRefs: GitRefFootprintMetadata[];
+  commits: string[];
+}
+
+export interface GitFootprintSummary {
+  nodes: GitFootprintNodeSummary[];
+  refs: GitFootprintRefSummary;
+  diffStat: GitDiffStatMetadata;
+  changedFiles: GitFileFootprintMetadata[];
+}
+
 export interface NodeGoalMetadata {
   text: string;
   source?: "operator" | "planner" | "parent" | (string & {});
@@ -578,6 +606,9 @@ export interface DiagnosticNode extends WorkingNode {
   blockedReason?: string;
   failureReason?: string;
   nextStep?: string;
+  gitFootprint?: NodeGitFootprintMetadata;
+  gitDiffStat?: GitDiffStatMetadata;
+  changedFiles?: GitFileFootprintMetadata[];
   remediation?: DiagnosticRemediation;
 }
 
@@ -616,6 +647,7 @@ export interface GraphDiagnostics {
     missingOutputRefs: DiagnosticNode[];
     unresolvedBufferConflicts: DiagnosticNode[];
   };
+  gitFootprint?: GitFootprintSummary;
   lock?: GraphLockDiagnostics;
   actions: string[];
   remediation: DiagnosticRemediation[];
@@ -872,6 +904,9 @@ export interface VisualizerNodeDetail {
   acceptanceCriteria: string[];
   lease?: GraphLease;
   refs: VisualizerNodeRefs;
+  gitFootprint?: NodeGitFootprintMetadata;
+  gitDiffStat?: GitDiffStatMetadata;
+  changedFiles?: GitFileFootprintMetadata[];
   workspace?: NodeWorkspaceMetadata;
   report?: string;
   question?: string;
@@ -894,6 +929,7 @@ export interface VisualizerPayload {
   actionPolicy: VisualizerActionPolicy;
   attention: VisualizerAttentionSummary;
   diagnostics: GraphDiagnostics;
+  gitFootprint?: GitFootprintSummary;
   recentEvents: OperationalEventExportEntry[];
   ready: ReadyNode[];
   working: WorkingNode[];
