@@ -26,13 +26,13 @@ authoritative coverage that should fail when the surface regresses.
 | Scheduler commands | `ready`, `summary`, `diagnostics`, `events`, `claim`, `start`, `renew`, `reset`, `reset-subtree`, `reset-reachable`, `done`, `block`, `answer`, `fail`, `decompose`, `prompt`, `worker`, `reconcile`, `release-expired`, `serve`, `help` | `README.md` "Scheduler Commands"; `docs/operational-events.md`; this document "Stable CLI Surface" | `tests/fixtures/cli-goldens.json`; `tests/cli-goldens.test.mjs`; `tests/scheduler-mutations.test.mjs`; `tests/worker-runtime.test.mjs`; `tests/validation-contracts.test.mjs`; `tests/visualizer-renderer.test.mjs` |
 | Scheduler flags | `--graph`, `--node`, `--event`, `--limit`, `--session`, `--run`, `--lease`, `--reason`, `--report`, `--report-body`, `--question`, `--answer`, `--responder`, `--kind`, `--child`, `--child-json`, `--template`, `--cwd`, `--once`, `--quiet`, `--idle-ms`, `--timeout-ms`, `--codex-command`, repeated `--codex-arg`, `--isolation`, `--remote`, `--workspace-root`, `--workspace-retention`, `--port`, `--host`, `--visualizer-write-token`, `--unsafe-visualizer-write`, `--help` | `README.md`; `docs/operational-events.md`; this document "Stable CLI Surface" and "Worker Execution Contract" | `tests/fixtures/cli-goldens.json`; `tests/cli-goldens.test.mjs`; `tests/worker-runtime.test.mjs`; `tests/visualizer-renderer.test.mjs` |
 | Renderer flags and positional arguments | `--graph`, `--output`, `--out`, first positional graph path, second positional output path | `README.md` "Renderer Usage"; this document "Renderer Output Locations" | `tests/visualizer-renderer.test.mjs` static renderer tests; `scripts/migration-smoke.mjs` |
-| Environment variables | `PLAN_GRAPH`, `SLACK_WEBHOOK_URL`, `SPG_SLACK_TIMEOUT_MS`, `SPG_DEBUG`, `SPG_GRAPH_LOCK_TIMEOUT_MS`, `SPG_GIT_CACHE_LOCK_TIMEOUT_MS` | `README.md`; `docs/security.md`; this document "Stable CLI Surface" | `tests/cli-goldens.test.mjs`; `tests/visualizer-renderer.test.mjs`; `tests/validation-contracts.test.mjs`; `tests/worker-runtime.test.mjs` |
+| Environment variables | `PLAN_GRAPH`, `SLACK_WEBHOOK_URL`, `SPG_SLACK_TIMEOUT_MS`, `SPG_DEBUG`, `SPG_GRAPH_LOCK_TIMEOUT_MS` | `README.md`; `docs/security.md`; this document "Stable CLI Surface" | `tests/cli-goldens.test.mjs`; `tests/visualizer-renderer.test.mjs`; `tests/validation-contracts.test.mjs` |
 | JSON stdout shapes | Successful JSON from `ready`, `summary`, `diagnostics`, `events`, `claim`, `start`, `renew`, `reset`, `reset-subtree`, `reset-reachable`, `done`, `block`, `answer`, `fail`, `decompose`, `worker`, `reconcile`, and `release-expired` | This document "JSON Output Shapes"; `docs/operational-events.md` | `tests/fixtures/cli-goldens.json`; `tests/cli-goldens.test.mjs`; `tests/validation-contracts.test.mjs` |
 | Graph JSON format | Top-level graph metadata, `scheduler`, `document`, `graph.root`, `graph.nodes`, node status/kind/lease/history/report/ref fields, unknown metadata preservation, validation errors and warnings | `README.md` "Graph Validation"; `docs/graph-authoring.md`; `docs/mutation-ownership.md`; this document "Graph State Semantics" | `tests/validation-contracts.test.mjs`; `tests/fixtures/graphs/*`; `tests/graph-contracts.typecheck.ts` |
 | Graph behavior | Series/parallel/gate readiness, busy and terminal statuses, lease ownership and expiry, status transitions, reset scopes, decomposition, reconciliation, composition output refs | `README.md` "Operating Model"; this document "Graph State Semantics"; `docs/mutation-ownership.md`; `docs/worker-isolation-remote-cache.md` | `tests/scheduler-mutations.test.mjs`; `tests/worker-runtime.test.mjs`; `tests/validation-contracts.test.mjs` |
 | Prompt variables | `cwd`, `graphPath`, `nodeId`, `runId`, `session`, `reportPath`, `schedulerCommand`, `planTitle`, `planDescription`, `nodeTitle`, `nodeKind`, `nodeStatus`, `nodeJson`, `readyJson`, `summaryJson` | `README.md` "Worker Usage"; this document "Worker Execution Contract"; `prompts/codex-worker-task.md` | `tests/worker-runtime.test.mjs` "prompt command renders an external template"; `scripts/migration-smoke.mjs` |
 | Worker execution | Shared-cwd worker mode, Git-only isolation mode, report generation, Codex command invocation, streaming/quiet behavior, heartbeat renewal, workspace-retention controls | `README.md` "Worker Usage"; `docs/worker-isolation-remote-cache.md`; this document "Worker Execution Contract" | `tests/worker-runtime.test.mjs`; `tests/cli-goldens.test.mjs` worker CLI tests |
-| Visualizer routes | `GET /`, `GET /index.html`, `GET /api/graph`, `GET /api/workers`, `GET /events`, `POST /api/answer`, `POST /api/workers/start`, `POST /api/workers/stop`, `POST /api/workers/stop-all` | `README.md` "Visualizer Safety"; `docs/security.md`; this document "Visualizer Contract" | `tests/visualizer-renderer.test.mjs` visualizer API and payload tests; `tests/visualizer-browser.test.mjs`; `scripts/migration-smoke.mjs` |
+| Visualizer routes | `GET /`, `GET /index.html`, `GET /api/graph`, `GET /api/workers`, `GET /api/summary`, `GET /api/ready`, `GET /api/diagnostics`, `GET /api/events`, `GET /api/prompt`, `GET /events`, `POST /api/answer`, `POST /api/node/claim`, `POST /api/node/start`, `POST /api/node/renew`, `POST /api/node/done`, `POST /api/node/block`, `POST /api/node/answer`, `POST /api/node/fail`, `POST /api/node/reset`, `POST /api/node/reset-subtree`, `POST /api/node/reset-reachable`, `POST /api/node/decompose`, `POST /api/graph/reconcile`, `POST /api/leases/release-expired`, `POST /api/workers/start`, `POST /api/workers/stop`, `POST /api/workers/stop-all` | `README.md` "Visualizer Safety"; `docs/security.md`; this document "Visualizer Contract" | `tests/visualizer-renderer.test.mjs` visualizer API and payload tests; `tests/visualizer-browser.test.mjs`; `scripts/migration-smoke.mjs` |
 | Renderer outputs | Static HTML output resolution, atomic replacement, escaped document text, safe href handling, structural tables, and planar graph SVG | `README.md` "Renderer Usage"; this document "Renderer Output Locations" | `tests/visualizer-renderer.test.mjs` static renderer and planar SVG tests; `scripts/migration-smoke.mjs` |
 | Reports and generated artifacts | `reports/<safe-node-id>-<safe-run-id>.md`, manual report writes, `dist/`, copied prompts, optional generated `plan.html`, graph lock metadata, two-space graph JSON with trailing newline | `README.md`; this document "Reports" and "Generated Artifacts"; `docs/output-safety-audit.md` | `tests/validation-contracts.test.mjs`; `tests/worker-runtime.test.mjs`; `tests/package-smoke.test.mjs` |
 | Operational events | Graph history names, worker-manager names, lock diagnostic names, stable fields, redaction rules | `docs/operational-events.md`; this document "Graph State Semantics" | `tests/validation-contracts.test.mjs`; `tests/scheduler-mutations.test.mjs`; `tests/visualizer-renderer.test.mjs`; `tests/worker-runtime.test.mjs`; `tests/graph-contracts.typecheck.ts` |
@@ -91,8 +91,6 @@ Stable environment variables:
 - `SPG_DEBUG=1`: prints stack traces with CLI errors.
 - `SPG_GRAPH_LOCK_TIMEOUT_MS`: graph lock wait timeout in milliseconds;
   default `5000`.
-- `SPG_GIT_CACHE_LOCK_TIMEOUT_MS`: Git isolation cache lock wait timeout in
-  milliseconds; default `60000`.
 
 CLI graph path resolution is stable:
 
@@ -105,11 +103,7 @@ Changes that rename commands, remove flags, change flag meanings, remove package
 
 Commands that currently print JSON should continue to print a single JSON value to stdout:
 
-- `ready`: array of ready leaf objects with at least `id`, `kind`, and
-  `status`; `title`, `question`, `answer`, and `answeredAt` are present when
-  known on the node. Priority metadata fields `depth`, `child_count`, and
-  `shared_parent_count_with_current_task` are additive when present and use the
-  meanings defined under "Automatic claim priority" below.
+- `ready`: array of ready leaf objects with at least `id`, `kind`, and `status`; `title`, `question`, `answer`, and `answeredAt` are present when known on the node.
 - `summary`: object with at least `totalNodes`, `root`, and `counts`; `graphVersion`, `title`, and `description` are present when known on the graph.
 - `diagnostics`: object with at least `generatedAt`, `summary`,
   `nextReady`, `leases`, `blocked`, `failed`, `isolation`, and `actions`;
@@ -137,16 +131,6 @@ Commands that currently print JSON should continue to print a single JSON value 
 `slack` is `{ "skipped": true, "reason": string }`, `{ "sent": true }`, or `{ "failed": true, "reason": string }`. Delivery failures are non-disruptive: if the graph mutation succeeded, the command still exits successfully and reports the notification failure in this field.
 
 Slack notifications are an attention channel, not the audit record. Messages include compact operational pointers: event, node id/title, graph version, status counts, and report path when available. Report bodies, worker stdout/stderr, and operator-provided question, answer, and reason text remain in the graph file and reports by default.
-
-ReadyNode objects appear in `ready` stdout, `diagnostics.nextReady`, visualizer
-`ready` payloads, and worker prompt `readyJson`. These read-only surfaces use
-the same default priority order with no current task context, so
-`shared_parent_count_with_current_task` is `0` for every ready candidate unless a
-future surface explicitly accepts current-task context. ReadyNode objects emit
-the numeric priority metadata fields `depth`, `child_count`, and
-`shared_parent_count_with_current_task`. Existing consumers may ignore them.
-Removing, renaming, retyping, or changing the meaning of those fields is
-breaking unless a new compatibility version and migration note say otherwise.
 
 Adding fields to JSON results is compatible. Removing, renaming, retyping, nesting, or changing the meaning of existing successful-output fields is breaking unless covered by the allowed-change list below and tests are updated.
 
@@ -277,68 +261,6 @@ Readiness semantics are public behavior:
   move the parent to `review`; setup failures or missing child output refs move
   it to `blocked`.
 
-Automatic claim priority is public behavior:
-
-- Eligibility is still determined by the readiness rules above. Priority only
-  orders the ready candidate set; it must not make a blocked, busy, terminal,
-  internal, unreachable, or otherwise non-ready node claimable.
-- Automatic `claim` selects the best ready candidate by this tuple, in order:
-  `depth` ascending, `child_count` descending,
-  `shared_parent_count_with_current_task` ascending, then raw `id` ascending.
-  Explicit `claim --node ID` bypasses priority ordering and succeeds only when
-  `ID` is already ready.
-- `depth` is the graph distance from `graph.root` to the ready candidate along
-  the selected root path. The selected root path is the shortest valid
-  root-to-node path. If more than one shortest path reaches the same node, choose
-  the lexicographically smallest sequence of node ids after `graph.root`,
-  comparing raw string values, so depth and path-dependent metadata do not
-  depend on `graph.nodes` object insertion order or worker timing.
-- `child_count` is the ready candidate node's outgoing edge count: the length of
-  its `children` array when present, otherwise `0`. Because this compatibility
-  version preserves the leaf-only claim model, claimable ready candidates
-  naturally have `child_count: 0`; the field remains part of the comparator so a
-  future, explicitly documented eligibility change has defined ordering.
-- `parent set` uses ancestor semantics, not direct-parent-only semantics. For a
-  node, its parent set is every ancestor id on the selected root path, excluding
-  the node itself and including `graph.root` when the node is below the root.
-- `shared_parent_count_with_current_task` is the size of the intersection
-  between the ready candidate's parent set and the current task's parent set.
-  The current task is the single node id resolved for automatic claim priority;
-  comparator code must not infer it from map iteration, race timing, or
-  completion order.
-- Automatic claim resolves the current task source in this order:
-  1. An explicit `currentTaskId` option supplied to the claim API.
-  2. If no explicit option was supplied, exactly one active `claimed` or
-     `running` node whose lease session matches the claiming `session`.
-  3. No current task context.
-- Same-session active task inference is deterministic: zero active
-  `claimed`/`running` nodes means no current task; one active node means that
-  node is the current task; multiple active nodes also mean no current task
-  unless the caller supplies explicit `currentTaskId`. The resolver must not
-  pick among multiple active same-session tasks by graph order, claim time,
-  lease expiry, or any other incidental ordering.
-- When there is no current task context,
-  `shared_parent_count_with_current_task` is `0` for every ready candidate. This
-  is the default fallback for existing CLI callers because automatic `claim`
-  does not require a current-task option.
-- Current task context affects only automatic `claim` selection. Explicit
-  `claim --node ID` keeps its existing behavior and bypasses priority ordering.
-  The CLI command shape remains compatible: no current-task CLI flag is required
-  or stable in compatibility version `0.1`. If a future optional CLI flag exposes
-  current task context, omitting it must keep the default behavior above:
-  same-session inference when exactly one active same-session task exists,
-  otherwise no current task context and shared parent counts of `0`. The
-  TypeScript claim API may accept optional `currentTaskId` as a
-  backward-compatible option, and the worker flow may either pass that option or
-  rely on same-session inference.
-- Exact ties are resolved by ascending raw node id. This final tie-breaker is
-  stable across repeated runs and independent of object insertion order, ready
-  traversal order, lease timing, and worker timing.
-- Changing the leaf-only claim model, removing the final node-id tie-breaker, or
-  changing any priority field meaning is a compatibility change requiring tests,
-  README/operator-doc updates when user-visible, and a migration note if
-  existing workflows can observe different automatic claims.
-
 Mutation semantics are public behavior:
 
 - Worker-owned leased node mutations require matching `--session` or `--run`.
@@ -397,18 +319,64 @@ Changes to readiness, status transitions, lease ownership, reset scope, or decom
 
 ## Visualizer Contract
 
+The current visualizer parity work is additive. It does not remove scheduler
+commands, change CLI flags, alter successful CLI JSON stdout shapes, or change
+the graph mutation semantics documented above. GUI and HTTP write paths invoke
+the same scheduler mutation handlers and graph lock as the CLI; the graph file
+remains the source of truth.
+
 The local visualizer started by `serve` should keep these routes:
 
 - `GET /` and `GET /index.html`: HTML application.
 - `GET /api/graph`: visualizer payload JSON.
 - `GET /api/workers`: worker-manager status JSON.
+- `GET /api/summary`: same graph summary JSON shape as the CLI.
+- `GET /api/ready`: same ready leaf JSON shape as the CLI.
+- `GET /api/diagnostics`: same diagnostics JSON shape as the CLI.
+- `GET /api/events`: same operational event export JSON shape as the CLI, with optional `limit`, `node`, and `event` query parameters.
+- `GET /api/prompt`: rendered prompt preview as plain text, with required `node` and optional `session`, `run`, `template`, `cwd`, and `report` query parameters.
 - `POST /api/workers/start`: starts managed workers and returns `{ started, workerManager }`.
 - `POST /api/workers/stop`: stops one managed worker and returns `{ worker, workerManager }`.
 - `POST /api/workers/stop-all`: stops managed workers and returns `{ stopped, workerManager }`.
-- `POST /api/answer`: answers a blocked node and returns the raw scheduler answer result shape, augmented with `slack`.
+- `POST /api/node/claim`, `/start`, `/renew`, `/reset`, `/reset-subtree`, and `/reset-reachable`: mutate nodes and return the same result shapes as the matching CLI commands.
+- `POST /api/node/done`, `/block`, `/answer`, `/fail`, and `/decompose`: mutate nodes and return the same result shapes as the matching CLI commands, including `slack`.
+- `POST /api/graph/reconcile`: reconciles completed graph subtrees and returns the same result shape as the `reconcile` CLI command.
+- `POST /api/leases/release-expired`: releases expired leases and returns the same result shape as the `release-expired` CLI command.
+- `POST /api/answer`: legacy browser-flow alias for `POST /api/node/answer`.
 - `GET /events`: server-sent events carrying visualizer payload JSON.
 
-The `/api/graph` and `/events` payload should keep at least `graph`, `graphSvg`, `ready`, `working`, `summary`, and `workerManager`.
+The `/api/graph` and `/events` payload should keep at least `graph`,
+`graphSvg`, `nodes`, `nodeHistoryLimit`, `actionPolicy`, `ready`, `working`,
+`summary`, and `workerManager`.
+
+`actionPolicy` and each node's `actions` array are additive visualizer metadata.
+Older visualizer clients may ignore them. They describe UI availability and
+confirmation hints only; server-side scheduler mutation guards remain
+authoritative.
+
+`nodes` is a normalized array for browser detail rendering without reparsing
+the SVG. Each entry keeps at least `id`, `title`, `kind`, `status`,
+`description`, `children`, `deliverables`, `acceptanceCriteria`, `lease`,
+`refs`, `workspace`, `report`, `question`, `answer`, `answeredBy`,
+`blockedReason`, `failureReason`, `timestamps`, `history`, `historyCount`, and
+`historyLimit` when those values are known on the graph node. `refs` groups
+`baseRef`, `workRef`, `outputRef`, and `integrationRef`. `timestamps` groups
+the node lifecycle timestamps such as `startedAt`, `completedAt`, `blockedAt`,
+`answeredAt`, `failedAt`, and `expiredAt`. The `history` array is the latest
+`historyLimit` entries, not the full node history; `historyCount` reports the
+full graph history length for that node. Detail fields are JSON data, not
+pre-escaped HTML. Browser renderers must insert text with `textContent` or
+equivalent escaping. Secret-shaped strings in detail payloads pass through the
+operational redaction rules before being exposed.
+
+Each node detail also includes `actions`, a server-computed prediction of
+selected-node operations. Action entries keep `id`, `label`, `danger`,
+`requiredFields`, optional `disabledReason`, and confirmation metadata for
+danger-level destructive actions. When the visualizer request has no worker
+`session` or `runId`, lease-protected worker actions for leased nodes are
+disabled with a credential reason. The scheduler mutation guards remain
+authoritative and may still reject an action whose availability was predicted
+by the visualizer payload.
 
 `workerManager` status keeps at least `defaults`, lifecycle counts, and
 `workers`. `defaults` keeps `cwd`, `sessionPrefix`, `codexCommand`,
@@ -420,13 +388,24 @@ least `id`, `session`, `status`, `startedAt`, and `logTail`; `pid`, `cwd`,
 
 Visualizer request contracts:
 
-- `POST /api/answer` accepts JSON with string `nodeId`, string `answer`, and optional string `responder`.
+- `POST /api/node/claim` and legacy alias `POST /api/claim` accept JSON with optional string `nodeId`, optional string `session`, optional numeric `leaseSeconds` or `lease`, and optional boolean `resolveBaseRef`.
+- `POST /api/node/start` and legacy alias `POST /api/start` accept JSON with string `nodeId`, optional string `session`, and optional string `runId` or `run`.
+- `POST /api/node/renew` and legacy alias `POST /api/renew` accept JSON with string `nodeId`, optional string `session`, optional string `runId` or `run`, and optional numeric `leaseSeconds` or `lease`.
+- `POST /api/node/done` and legacy alias `POST /api/done` accept JSON with string `nodeId`, optional string `session`, optional string `runId` or `run`, optional string `report`, and optional `reportBody` or `report-body`. Report bodies are written through the scheduler report writer, constrained to the graph directory, before the node is completed.
+- `POST /api/node/block` and legacy alias `POST /api/block` accept JSON with string `nodeId`, optional string `session`, optional string `runId` or `run`, optional string `question`, and optional string `reason`.
+- `POST /api/node/answer` and its legacy alias `POST /api/answer` accept JSON with string `nodeId`, string `answer`, and optional string `responder`.
+- `POST /api/node/fail` and legacy alias `POST /api/fail` accept JSON with string `nodeId`, optional string `session`, optional string `runId` or `run`, optional string `reason`, and optional string `report`.
+- `POST /api/node/reset`, `/reset-subtree`, and `/reset-reachable` plus legacy aliases `POST /api/reset`, `/api/reset-subtree`, and `/api/reset-reachable` accept JSON with string `nodeId` and optional string `reason`.
+- `POST /api/node/decompose` and legacy alias `POST /api/decompose` accept JSON with string `nodeId`, optional string `session`, optional string `runId` or `run`, optional string `kind`, and `children`, an array of child node objects with string `id` and `title`.
+- `POST /api/graph/reconcile` and `POST /api/leases/release-expired` do not require a body.
 - `POST /api/workers/start` accepts JSON with optional `count`,
   `sessionPrefix`, `cwd`, `codexCommand`, `codexArgs`, `idleMs`, `timeoutMs`,
   `leaseSeconds`, `templatePath`, `nodeId`, `quiet`, `once`, `isolation`,
   `remote`, `workspaceRoot`, and `workspaceRetention`.
 - `POST /api/workers/stop` accepts JSON with string `id`.
 - `POST /api/workers/stop-all` does not require a body.
+- `GET /api/events` applies the same `--limit` numeric bounds as the CLI.
+- `GET /api/prompt` resolves `template` from the graph directory and defaults `cwd` to the graph directory, matching the CLI prompt command.
 - `/events` emits server-sent events whose `data:` payload is the same minimum shape as `/api/graph`.
 
 Visualizer response and error conventions:
@@ -468,8 +447,8 @@ Security assumptions are public:
 - `serve` binds to `127.0.0.1` by default.
 - Binding to `localhost`, `127.0.0.1`, `::1`, or `[::1]` is treated as local.
 - Binding to any other host refuses startup unless `--visualizer-write-token` is provided or `--unsafe-visualizer-write` is explicitly set.
-- Binding to any other host prints a warning because the worker manager can start and stop local processes.
-- With `--visualizer-write-token`, `POST /api/answer`, `POST /api/workers/start`, `POST /api/workers/stop`, and `POST /api/workers/stop-all` return HTTP 403 unless the request includes either `X-SPG-Visualizer-Token: TOKEN` or `Authorization: Bearer TOKEN`.
+- Binding to any other host prints a warning because write routes can start and stop local worker processes, mutate graph nodes, and run graph-level recovery mutations.
+- With `--visualizer-write-token`, all visualizer `POST` routes return HTTP 403 unless the request includes either `X-SPG-Visualizer-Token: TOKEN` or `Authorization: Bearer TOKEN`.
 - Without `--visualizer-write-token`, loopback mode and explicit unsafe mode keep the existing unauthenticated trusted-client behavior.
 - Visualizer HTML and client renderers must escape graph text, worker log text, and user-provided values before inserting them into the page.
 
@@ -488,7 +467,6 @@ The worker command should continue to:
 - Spawn worker and Codex subprocesses with argument arrays and no shell interpolation. User-controlled command strings, args, remotes, paths, and prompt text must never be concatenated into a shell command by the scheduler.
 - Inherit the scheduler process environment for worker and Codex subprocesses. The scheduler is not an environment sandbox; operators should use OS accounts, containers, or wrapper commands to narrow environment access when needed.
 - Renew its lease while Codex is running.
-- In Git-isolated mode, auto-commit dirty workspace changes after a successful child process and before publishing the output ref. Clean no-op work still publishes the run output ref at the base commit.
 - Treat no ready work as `{ idle: true, results: [] }` in `--once` mode.
 - Return worker results with `nodeId`, `runId`, `status`, `summary`, `code`, and `slack` when a node is finalized.
 - Use the child process working directory from `--cwd`, or the graph directory by default.
@@ -545,9 +523,8 @@ Operator-facing examples must show how to set `scheduler.remote`, may show
 `--remote` as a per-process override, and must state that cache and clone setup is
 automatic once a concrete Git remote is available.
 
-Each isolated worker run checks out a unique node branch, auto-commits dirty
-workspace changes after a successful child process, and publishes the resulting
-node output ref without pushing directly to the shared base branch:
+Each isolated worker run checks out a unique node branch and publishes the
+resulting node output ref without pushing directly to the shared base branch:
 
 ```text
 spg/node/<node-id>/<run-id>

@@ -1,7 +1,4 @@
 import test from "node:test";
-<<<<<<< Updated upstream
-import { addUnknownMetadata, answerNode, assert, assertUnknownMetadata, blockNode, checkSchedulerTransitionReference, claimNode, completeNode, completedDeepReadinessGraph, concurrentMutationGraph, decomposeNode, deepReadinessGraph, diagnoseGraph, dirname, escapeRegExp, execFileAsync, failNode, knownTransitionStatuses, lastHistory, listReadyLeafNodes, listWorkingNodes, lockArtifacts, mutationOwnershipDocsPath, nestedResetReachabilityGraph, readGraph, readyIds, reconcileGraphStatus, releaseExpiredLeases, renewNodeLease, resetNode, resetReachable, resetSubtree, schedulerScriptPath, schedulerTransitionTable, setNodeStatus, startNode, stressScriptPath, withTempGraph, writeFile } from "./helpers/plan-scheduler-harness.mjs";
-=======
 import { addUnknownMetadata, answerNode, assert, assertUnknownMetadata, attachReadyPriorityFields, blockNode, buildReachableParentMap, buildReadyPrioritySelections, buildStableRootPathMap, buildVisualizerPayload, buildWorkerPrompt, checkSchedulerTransitionReference, claimNode, compareReadyPriorityCandidates, completeNode, completedDeepReadinessGraph, concurrentMutationGraph, countSharedParentsWithCurrentTask, decomposeNode, deepReadinessGraph, depthPriorityGraph, diagnoseGraph, dirname, escapeRegExp, execFileAsync, failNode, knownTransitionStatuses, lastHistory, leafOnlyChildCountPriorityGraph, listReadyLeafNodes, listWorkingNodes, lockArtifacts, mutationOwnershipDocsPath, nestedResetReachabilityGraph, readGraph, readyIds, reconcileGraphStatus, releaseExpiredLeases, renewNodeLease, resetNode, resetReachable, resetSubtree, schedulerScriptPath, schedulerTransitionTable, setNodeStatus, sharedParentPriorityGraph, startNode, stressScriptPath, validatePlanGraphFileResult, withTempGraph, writeFile } from "./helpers/plan-scheduler-harness.mjs";
 
 function priorityCandidate(id, depth, childCount, sharedParentCountWithCurrentTask) {
@@ -302,7 +299,6 @@ test("explicit node claim bypasses current task priority context", async () => {
     assert.equal(claim.nodeId, "A_TARGET");
   });
 });
->>>>>>> Stashed changes
 
 test("series-parallel readiness exposes only legal leaf nodes", async () => {
   await withTempGraph(async (graphPath) => {

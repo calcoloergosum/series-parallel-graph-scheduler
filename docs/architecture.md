@@ -56,7 +56,7 @@ interfaces.
 
 | Module | Boundary | Side effects |
 | --- | --- | --- |
-| `scripts/contracts.ts` | Public TypeScript shapes, known statuses and kinds, graph validation, renderer and visualizer payload shapes. | Pure. Validation returns issues and does not read or write files. |
+| `scripts/contracts.ts` | Public TypeScript shapes, known statuses and kinds, graph validation, renderer and visualizer payload shapes, visualizer action metadata shapes. | Pure. Validation returns issues and does not read or write files. |
 | `scripts/graph-traversal.ts` | Read-only graph queries: node lookup, leaf detection, readiness traversal, working-node list, summaries, ancestor discovery. | Pure after receiving a parsed graph object. |
 | `scripts/sp-layout.ts` | Planar graph layout and SVG rendering for renderer and visualizer graph views. | Pure after receiving a parsed graph object. |
 | `scripts/numeric-args.ts` | Shared numeric CLI and API argument ranges. | Pure. |
@@ -68,9 +68,10 @@ interfaces.
 | `scripts/cli.ts` | Argument parsing, CLI command dispatch, help text, output shaping, handler interface. | Designed to be mostly testable through injected handlers. It should not directly own filesystem or process behavior beyond resolving CLI paths and printing through `output`. |
 | `scripts/worker.ts` | Worker prompt rendering, claim/start/run/finalize loop, lease heartbeat, Codex child-process execution, report formatting. | Side-effectful runtime code. Uses an injected `WorkerRuntime` for graph operations and notifications. |
 | `scripts/visualizer.ts` | Compatibility facade for visualizer exports. | Re-exports the visualizer server, payload, worker-manager, host-security, and HTML helpers. |
-| `scripts/visualizer-client.ts` | Visualizer HTML, CSS, and browser client script. | Pure string rendering. Browser-side code calls the public visualizer HTTP API. |
-| `scripts/visualizer-payload.ts` | Visualizer graph payload shaping for SVG, ready/working lists, summary, and worker-manager status defaults. | Reads graph files through `graph-io`; otherwise composes lower-layer read-only helpers. |
-| `scripts/visualizer-routes.ts` | Local HTTP visualizer server, public routes, SSE, request JSON parsing, and write-token enforcement. | Side-effectful HTTP and filesystem watch code. Mutations still go through injected runtime handlers. |
+| `scripts/visualizer-client.ts` | Visualizer HTML, CSS, and browser client script. | Pure string rendering. Browser-side code calls the public visualizer HTTP API and treats server payload text as untrusted. |
+| `scripts/visualizer-actions.ts` | Server-computed node action availability, required fields, danger level, confirmation metadata, and lease credential policy hints. | Pure after receiving a parsed graph object. These hints are advisory; mutation guards remain authoritative. |
+| `scripts/visualizer-payload.ts` | Visualizer graph payload shaping for SVG, normalized node details, action metadata, attention summaries, diagnostics, events, ready/working lists, summary, and worker-manager status defaults. | Reads graph files and lock state through `graph-io`; otherwise composes lower-layer read-only helpers. |
+| `scripts/visualizer-routes.ts` | Local HTTP visualizer server, public routes, SSE, request JSON/query parsing, route-level request validation, write-token enforcement, and broadcast after writes. | Side-effectful HTTP and filesystem watch code. Mutations still go through injected runtime handlers. |
 | `scripts/visualizer-worker-manager.ts` | Visualizer-managed scheduler worker process control and worker-start validation. | Side-effectful child-process code. Starts scheduler worker subprocesses instead of importing the worker loop directly. |
 | `scripts/render-plan.ts` | Static HTML renderer for graph `document` content and planar SVG output. | Side-effectful CLI entry point: reads graph files and writes HTML. Escaping and rendering helpers should remain local unless tests need a narrower export. |
 | `scripts/plan-scheduler.ts` | Main scheduler entry point and composition root. Re-exports public helpers, constructs CLI handlers, builds worker and visualizer runtimes, and handles direct execution. | Side-effectful orchestration. This is where concrete modules are wired together. |
@@ -124,6 +125,13 @@ worker manager starts scheduler worker processes instead of importing the worker
 loop directly, which keeps visualizer process control visible and compatible
 with package entry points.
 
+The visualizer payload is public enough for browser code, tests, and local
+operator integrations to rely on its minimum shape. Keep the compatibility
+contract in [`compatibility-boundaries.md`](compatibility-boundaries.md) aligned
+when changing `/api/graph`, `/events`, normalized node details, action metadata,
+or worker-manager status fields. Additive fields are compatible; removing or
+renaming documented fields is a compatibility change.
+
 ## Ready Priority Ownership
 
 Readiness and priority are intentionally separate helper boundaries:
@@ -153,11 +161,11 @@ visualizer, or mutation code; those callers should consume the traversal helper
 so display order, diagnostics, and automatic claim behavior cannot drift apart.
 
 The final raw node-id tie-breaker is part of the concurrency contract. Multiple
-workers can observe the same ready set before one wins the graph lock, and object
-insertion order, traversal order, lease timing, or worker timing must not decide
-which equally ranked node is selected. A deterministic final tie-breaker keeps
-automatic claims repeatable across processes and makes concurrency failures
-auditable from graph history.
+workers can observe the same ready set before one wins the graph lock, and
+object insertion order, traversal order, lease timing, or worker timing must not
+decide which equally ranked node is selected. A deterministic final tie-breaker
+keeps automatic claims repeatable across processes and makes concurrency
+failures auditable from graph history.
 
 ## Extension Points
 
@@ -176,7 +184,8 @@ Add commands in this order:
    append history, increment `graphVersion`, and preserve unknown metadata.
 5. Wire the handler in `plan-scheduler.ts`.
 6. If the command is reachable from the visualizer, add request validation in
-   `visualizer.ts` and keep token enforcement on write routes.
+   `visualizer-routes.ts`, keep token enforcement on write routes, and delegate
+   graph mutations through the injected `VisualizerRuntime`.
 7. Update `README.md`, `compatibility-boundaries.md`, and CLI help when operator
    behavior changes.
 8. Add the lowest useful tests: parser/unit tests for parsing, direct mutation
@@ -186,6 +195,40 @@ Add commands in this order:
 New commands should not bypass `node-mutations.ts` for graph state changes. That
 module is the maintainer-owned place for status guards, lease rules, history
 events, and metadata preservation.
+
+### Adding A Visualizer Action Or Route
+
+Add GUI actions in this order:
+
+1. If the action changes scheduler state, add or reuse a CLI/mutation operation
+   in `node-mutations.ts` first. The visualizer must not invent a separate
+   state transition.
+2. Add typed action metadata in `contracts.ts` when the browser payload exposes
+   a new action id, danger level, required field, confirmation, or policy
+   field.
+3. Add action availability in `visualizer-actions.ts`. Use graph traversal and
+   transition-table helpers for advisory disabled reasons, and keep lease checks
+   consistent with the server mutation guards.
+4. Add payload fields in `visualizer-payload.ts` only when the browser needs
+   normalized data that should not be recomputed in client code. Redact
+   secret-shaped values before returning node details or event-derived fields.
+5. Add the HTTP route in `visualizer-routes.ts`. Parse JSON or query fields at
+   the route boundary, enforce the visualizer write token for every `POST`
+   route, call the injected runtime handler, render after graph writes, and
+   broadcast an updated payload over SSE.
+6. Add or update browser behavior in `visualizer-client.ts`. Insert graph,
+   worker, log, and user-provided text through text-safe DOM APIs.
+7. Document route, request, response, and payload compatibility changes in
+   `compatibility-boundaries.md`. Update README only when operator-facing
+   commands, flags, safety behavior, or startup examples change.
+8. Add tests at the matching boundary: payload/action contract tests, route
+   validation and token tests, browser interaction tests, and layout checks when
+   the UI or SVG geometry changes.
+
+Read-only GUI routes may compose `graph-traversal`, `operational-events`,
+`worker`, or payload helpers, but they should not mutate the graph. Write routes
+must follow the same mutation, report, render, notification, and history
+ownership used by CLI commands.
 
 ### Adding A Graph Field
 

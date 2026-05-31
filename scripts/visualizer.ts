@@ -1,6 +1,11 @@
 export { renderVisualizerHtml } from "./visualizer-client.js";
 export { buildVisualizerPayload } from "./visualizer-payload.js";
 export {
+  buildVisualizerNodeActionMap,
+  buildVisualizerNodeActions,
+  visualizerActionPolicy
+} from "./visualizer-actions.js";
+export {
   createVisualizerServer,
   isLocalVisualizerHost,
   readRequestJson,

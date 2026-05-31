@@ -274,8 +274,16 @@ function workerRuntime() {
 function visualizerRuntime() {
   return {
     defaultGraphPath,
+    defaultPromptTemplatePath,
+    schedulerCommand: `node ${schedulerScriptPath}`,
     schedulerScriptPath,
     rootDir,
+    readGraph,
+    getNode,
+    listReadyLeafNodes,
+    summarizeGraph,
+    defaultReportPath,
+    diagnoseGraph,
     claimNode,
     startNode,
     renewNodeLease,

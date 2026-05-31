@@ -9,13 +9,14 @@ import { isRecord } from "./contracts.js";
 import type {
   AnswerNodeResult,
   DecomposeNodeResult,
+  GraphDiagnostics,
+  GraphNode,
   GraphSummary,
   JsonValue,
   LeaseClaimResult,
-  NodeId,
-  NodeKind,
   NodeMutationResult,
-  NodeStatus,
+  PlanGraphFile,
+  ReadyNode,
   ReconcileGraphResult,
   ReleaseExpiredLeasesResult,
   RenewLeaseResult,
@@ -26,7 +27,7 @@ import type {
 } from "./contracts.js";
 import { defaultGraphPath } from "./graph-io.js";
 import { NumericArgumentError, numericArgumentRanges, parseNumericArgument } from "./numeric-args.js";
-import { operationalEvents } from "./operational-events.js";
+import { exportOperationalEvents, operationalEvents } from "./operational-events.js";
 import { errorMessage } from "./shared-utils.js";
 import { renderVisualizerHtml } from "./visualizer-client.js";
 import { buildVisualizerPayload } from "./visualizer-payload.js";
@@ -34,11 +35,21 @@ import {
   createWorkerManager,
   WorkerStartValidationError
 } from "./visualizer-worker-manager.js";
+import { buildWorkerPrompt } from "./worker.js";
+import type { DecomposeChildDefinition } from "./node-mutations.js";
 
 export interface VisualizerRuntime {
   defaultGraphPath: string;
+  defaultPromptTemplatePath: string;
+  schedulerCommand: string;
   schedulerScriptPath: string;
   rootDir: string;
+  readGraph(graphPath: string): Promise<PlanGraphFile>;
+  getNode(graph: PlanGraphFile, nodeId: string): GraphNode;
+  listReadyLeafNodes(graph: PlanGraphFile): ReadyNode[];
+  summarizeGraph(graph: PlanGraphFile): GraphSummary;
+  defaultReportPath(nodeId: string, runId: string): string;
+  diagnoseGraph(graphPath: string): Promise<GraphDiagnostics>;
   claimNode(graphPath: string, options: {
     session?: string;
     nodeId?: string;
@@ -56,7 +67,7 @@ export interface VisualizerRuntime {
     runId?: string;
     leaseSeconds?: number;
   }): Promise<RenewLeaseResult>;
-  writeReportFile(graphPath: string, reportPath: string | undefined, reportBody: unknown): Promise<string | undefined>;
+  writeReportFile(graphPath: string, reportPath?: string, reportBody?: unknown): Promise<string | undefined>;
   completeNode(graphPath: string, options: {
     nodeId?: string;
     report?: string;
@@ -96,8 +107,8 @@ export interface VisualizerRuntime {
   }): Promise<ResetSubtreeResult>;
   decomposeNode(graphPath: string, options: {
     nodeId?: string;
-    kind?: NodeKind;
-    children?: VisualizerDecomposeChild[];
+    kind?: string;
+    children?: DecomposeChildDefinition[];
     session?: string;
     runId?: string;
   }): Promise<DecomposeNodeResult>;
@@ -121,15 +132,6 @@ export interface CreateVisualizerServerOptions {
   runtime: VisualizerRuntime;
 }
 
-interface VisualizerDecomposeChild {
-  id: NodeId;
-  title: string;
-  kind?: NodeKind;
-  status?: NodeStatus;
-  children?: NodeId[];
-  [metadata: string]: unknown;
-}
-
 export class RequestValidationError extends Error {
   constructor(message: string) {
     super(message);
@@ -150,9 +152,9 @@ export function visualizerHostSecurityWarning(host: string, allowUnsafeWrites = 
     return undefined;
   }
   if (allowUnsafeWrites) {
-    return `Warning: unsafe visualizer writes are enabled on ${host}. Any reachable client can start or stop workers and mutate blocked answers without a token.`;
+    return `Warning: unsafe visualizer writes are enabled on ${host}. Any reachable client can start or stop workers, mutate graph nodes, and run graph-level recovery mutations without a token.`;
   }
-  return `Warning: the visualizer worker manager API is intended for trusted local use. Binding to ${host} may expose worker start/stop controls to other machines unless write requests require a token.`;
+  return `Warning: the visualizer write API is intended for trusted local use. Binding to ${host} may expose worker start/stop controls, node mutation routes, and graph-level recovery mutation routes to other machines unless write requests require a token.`;
 }
 
 export async function createVisualizerServer({
@@ -209,6 +211,49 @@ export async function createVisualizerServer({
         return;
       }
 
+      if (req.method === "GET" && url.pathname === "/api/summary") {
+        res.writeHead(200, { "content-type": "application/json; charset=utf-8", "cache-control": "no-store" });
+        res.end(JSON.stringify(runtime.summarizeGraph(await runtime.readGraph(graphPath))));
+        return;
+      }
+
+      if (req.method === "GET" && url.pathname === "/api/ready") {
+        res.writeHead(200, { "content-type": "application/json; charset=utf-8", "cache-control": "no-store" });
+        res.end(JSON.stringify(runtime.listReadyLeafNodes(await runtime.readGraph(graphPath))));
+        return;
+      }
+
+      if (req.method === "GET" && url.pathname === "/api/diagnostics") {
+        res.writeHead(200, { "content-type": "application/json; charset=utf-8", "cache-control": "no-store" });
+        res.end(JSON.stringify(await runtime.diagnoseGraph(graphPath)));
+        return;
+      }
+
+      if (req.method === "GET" && url.pathname === "/api/events") {
+        const limit = numericQueryParam(url, "limit", { ...numericArgumentRanges.eventLimit, defaultValue: 50 });
+        res.writeHead(200, { "content-type": "application/json; charset=utf-8", "cache-control": "no-store" });
+        res.end(JSON.stringify(exportOperationalEvents(await runtime.readGraph(graphPath), {
+          limit,
+          nodeId: queryStringParam(url, "node"),
+          event: queryStringParam(url, "event")
+        })));
+        return;
+      }
+
+      if (req.method === "GET" && url.pathname === "/api/prompt") {
+        const prompt = await buildWorkerPrompt(graphPath, {
+          nodeId: requiredQueryStringParam(url, "node", "prompt"),
+          session: queryStringParam(url, "session"),
+          runId: queryStringParam(url, "run"),
+          templatePath: queryStringParam(url, "template"),
+          cwd: queryStringParam(url, "cwd") || dirname(graphPath),
+          reportPath: queryStringParam(url, "report")
+        }, runtime);
+        res.writeHead(200, { "content-type": "text/plain; charset=utf-8", "cache-control": "no-store" });
+        res.end(prompt);
+        return;
+      }
+
       if (req.method === "GET" && url.pathname === "/api/workers") {
         res.writeHead(200, { "content-type": "application/json; charset=utf-8", "cache-control": "no-store" });
         res.end(JSON.stringify(workerManager.status()));
@@ -249,7 +294,7 @@ export async function createVisualizerServer({
         return;
       }
 
-      if (req.method === "POST" && url.pathname === "/api/claim") {
+      if (req.method === "POST" && (url.pathname === "/api/node/claim" || url.pathname === "/api/claim")) {
         if (!authorizeWriteRequest(req, res, requiredWriteToken)) {
           return;
         }
@@ -257,14 +302,18 @@ export async function createVisualizerServer({
         const result = await runtime.claimNode(graphPath, {
           session: optionalStringBodyField(body, "session"),
           nodeId: optionalStringBodyField(body, "nodeId"),
-          leaseSeconds: optionalLeaseSecondsBodyField(body),
+          leaseSeconds: numericBodyField(body, "leaseSeconds", numericArgumentRanges.leaseSeconds)
+            ?? numericBodyField(body, "lease", numericArgumentRanges.leaseSeconds),
           resolveBaseRef: optionalBooleanBodyField(body, "resolveBaseRef")
         });
-        await sendMutationResponse(res, graphPath, runtime, broadcast, result);
+        await runtime.renderPlanAfterUpdate(graphPath);
+        await broadcast();
+        res.writeHead(200, { "content-type": "application/json; charset=utf-8", "cache-control": "no-store" });
+        res.end(JSON.stringify(result));
         return;
       }
 
-      if (req.method === "POST" && url.pathname === "/api/start") {
+      if (req.method === "POST" && (url.pathname === "/api/node/start" || url.pathname === "/api/start")) {
         if (!authorizeWriteRequest(req, res, requiredWriteToken)) {
           return;
         }
@@ -272,13 +321,16 @@ export async function createVisualizerServer({
         const result = await runtime.startNode(graphPath, {
           nodeId: stringBodyField(body, "nodeId"),
           session: optionalStringBodyField(body, "session"),
-          runId: optionalStringBodyField(body, "runId")
+          runId: optionalRunIdBodyField(body)
         });
-        await sendMutationResponse(res, graphPath, runtime, broadcast, result);
+        await runtime.renderPlanAfterUpdate(graphPath);
+        await broadcast();
+        res.writeHead(200, { "content-type": "application/json; charset=utf-8", "cache-control": "no-store" });
+        res.end(JSON.stringify(result));
         return;
       }
 
-      if (req.method === "POST" && url.pathname === "/api/renew") {
+      if (req.method === "POST" && (url.pathname === "/api/node/renew" || url.pathname === "/api/renew")) {
         if (!authorizeWriteRequest(req, res, requiredWriteToken)) {
           return;
         }
@@ -286,35 +338,42 @@ export async function createVisualizerServer({
         const result = await runtime.renewNodeLease(graphPath, {
           nodeId: stringBodyField(body, "nodeId"),
           session: optionalStringBodyField(body, "session"),
-          runId: optionalStringBodyField(body, "runId"),
-          leaseSeconds: optionalLeaseSecondsBodyField(body)
+          runId: optionalRunIdBodyField(body),
+          leaseSeconds: numericBodyField(body, "leaseSeconds", numericArgumentRanges.leaseSeconds)
+            ?? numericBodyField(body, "lease", numericArgumentRanges.leaseSeconds)
         });
-        await sendMutationResponse(res, graphPath, runtime, broadcast, result);
+        await runtime.renderPlanAfterUpdate(graphPath);
+        await broadcast();
+        res.writeHead(200, { "content-type": "application/json; charset=utf-8", "cache-control": "no-store" });
+        res.end(JSON.stringify(result));
         return;
       }
 
-      if (req.method === "POST" && url.pathname === "/api/done") {
+      if (req.method === "POST" && (url.pathname === "/api/node/done" || url.pathname === "/api/done")) {
         if (!authorizeWriteRequest(req, res, requiredWriteToken)) {
           return;
         }
         const body = await readRequestJson(req);
         const nodeId = stringBodyField(body, "nodeId");
         const report = optionalStringBodyField(body, "report");
-        await runtime.writeReportFile(graphPath, report, optionalReportBodyField(body));
-        const result = await runtime.completeNode(graphPath, {
-          nodeId,
-          report,
-          session: optionalStringBodyField(body, "session"),
-          runId: optionalStringBodyField(body, "runId")
-        });
-        await sendMutationResponse(res, graphPath, runtime, broadcast, result, operationalEvents.done, {
-          nodeId,
-          report
-        });
+        await runtime.writeReportFile(graphPath, report, optionalBodyField(body, "reportBody") ?? optionalBodyField(body, "report-body"));
+        const result: NodeMutationResult & { slack?: SlackNotificationResult } = {
+          ...await runtime.completeNode(graphPath, {
+            nodeId,
+            report,
+            session: optionalStringBodyField(body, "session"),
+            runId: optionalRunIdBodyField(body)
+          })
+        };
+        await runtime.renderPlanAfterUpdate(graphPath);
+        result.slack = await runtime.sendSlackNotification(graphPath, operationalEvents.done, { nodeId, report });
+        await broadcast();
+        res.writeHead(200, { "content-type": "application/json; charset=utf-8", "cache-control": "no-store" });
+        res.end(JSON.stringify(result));
         return;
       }
 
-      if (req.method === "POST" && url.pathname === "/api/block") {
+      if (req.method === "POST" && (url.pathname === "/api/node/block" || url.pathname === "/api/block")) {
         if (!authorizeWriteRequest(req, res, requiredWriteToken)) {
           return;
         }
@@ -322,41 +381,46 @@ export async function createVisualizerServer({
         const nodeId = stringBodyField(body, "nodeId");
         const question = optionalStringBodyField(body, "question");
         const reason = optionalStringBodyField(body, "reason");
-        const result = await runtime.blockNode(graphPath, {
-          nodeId,
-          question,
-          reason,
-          session: optionalStringBodyField(body, "session"),
-          runId: optionalStringBodyField(body, "runId")
-        });
-        await sendMutationResponse(res, graphPath, runtime, broadcast, result, operationalEvents.blocked, {
-          nodeId,
-          question,
-          reason
-        });
+        const result: NodeMutationResult & { slack?: SlackNotificationResult } = {
+          ...await runtime.blockNode(graphPath, {
+            nodeId,
+            question,
+            reason,
+            session: optionalStringBodyField(body, "session"),
+            runId: optionalRunIdBodyField(body)
+          })
+        };
+        await runtime.renderPlanAfterUpdate(graphPath);
+        result.slack = await runtime.sendSlackNotification(graphPath, operationalEvents.blocked, { nodeId, question, reason });
+        await broadcast();
+        res.writeHead(200, { "content-type": "application/json; charset=utf-8", "cache-control": "no-store" });
+        res.end(JSON.stringify(result));
         return;
       }
 
-      if (req.method === "POST" && url.pathname === "/api/answer") {
+      if (req.method === "POST" && (url.pathname === "/api/node/answer" || url.pathname === "/api/answer")) {
         if (!authorizeWriteRequest(req, res, requiredWriteToken)) {
           return;
         }
         const body = await readRequestJson(req);
         const nodeId = stringBodyField(body, "nodeId");
         const answer = stringBodyField(body, "answer");
-        const result = await runtime.answerNode(graphPath, {
-          nodeId,
-          answer,
-          responder: optionalStringBodyField(body, "responder")
-        });
-        await sendMutationResponse(res, graphPath, runtime, broadcast, result, operationalEvents.answered, {
-          nodeId,
-          answer
-        });
+        const result: AnswerNodeResult & { slack?: SlackNotificationResult } = {
+          ...await runtime.answerNode(graphPath, {
+            nodeId,
+            answer,
+            responder: optionalStringBodyField(body, "responder")
+          })
+        };
+        await runtime.renderPlanAfterUpdate(graphPath);
+        result.slack = await runtime.sendSlackNotification(graphPath, operationalEvents.answered, { nodeId, answer });
+        await broadcast();
+        res.writeHead(200, { "content-type": "application/json; charset=utf-8", "cache-control": "no-store" });
+        res.end(JSON.stringify(result));
         return;
       }
 
-      if (req.method === "POST" && url.pathname === "/api/fail") {
+      if (req.method === "POST" && (url.pathname === "/api/node/fail" || url.pathname === "/api/fail")) {
         if (!authorizeWriteRequest(req, res, requiredWriteToken)) {
           return;
         }
@@ -364,22 +428,24 @@ export async function createVisualizerServer({
         const nodeId = stringBodyField(body, "nodeId");
         const reason = optionalStringBodyField(body, "reason");
         const report = optionalStringBodyField(body, "report");
-        const result = await runtime.failNode(graphPath, {
-          nodeId,
-          reason,
-          report,
-          session: optionalStringBodyField(body, "session"),
-          runId: optionalStringBodyField(body, "runId")
-        });
-        await sendMutationResponse(res, graphPath, runtime, broadcast, result, operationalEvents.failed, {
-          nodeId,
-          reason,
-          report
-        });
+        const result: NodeMutationResult & { slack?: SlackNotificationResult } = {
+          ...await runtime.failNode(graphPath, {
+            nodeId,
+            reason,
+            report,
+            session: optionalStringBodyField(body, "session"),
+            runId: optionalRunIdBodyField(body)
+          })
+        };
+        await runtime.renderPlanAfterUpdate(graphPath);
+        result.slack = await runtime.sendSlackNotification(graphPath, operationalEvents.failed, { nodeId, reason, report });
+        await broadcast();
+        res.writeHead(200, { "content-type": "application/json; charset=utf-8", "cache-control": "no-store" });
+        res.end(JSON.stringify(result));
         return;
       }
 
-      if (req.method === "POST" && url.pathname === "/api/reset") {
+      if (req.method === "POST" && (url.pathname === "/api/node/reset" || url.pathname === "/api/reset")) {
         if (!authorizeWriteRequest(req, res, requiredWriteToken)) {
           return;
         }
@@ -388,11 +454,14 @@ export async function createVisualizerServer({
           nodeId: stringBodyField(body, "nodeId"),
           reason: optionalStringBodyField(body, "reason")
         });
-        await sendMutationResponse(res, graphPath, runtime, broadcast, result);
+        await runtime.renderPlanAfterUpdate(graphPath);
+        await broadcast();
+        res.writeHead(200, { "content-type": "application/json; charset=utf-8", "cache-control": "no-store" });
+        res.end(JSON.stringify(result));
         return;
       }
 
-      if (req.method === "POST" && url.pathname === "/api/reset-subtree") {
+      if (req.method === "POST" && (url.pathname === "/api/node/reset-subtree" || url.pathname === "/api/reset-subtree")) {
         if (!authorizeWriteRequest(req, res, requiredWriteToken)) {
           return;
         }
@@ -401,11 +470,14 @@ export async function createVisualizerServer({
           nodeId: stringBodyField(body, "nodeId"),
           reason: optionalStringBodyField(body, "reason")
         });
-        await sendMutationResponse(res, graphPath, runtime, broadcast, result);
+        await runtime.renderPlanAfterUpdate(graphPath);
+        await broadcast();
+        res.writeHead(200, { "content-type": "application/json; charset=utf-8", "cache-control": "no-store" });
+        res.end(JSON.stringify(result));
         return;
       }
 
-      if (req.method === "POST" && url.pathname === "/api/reset-reachable") {
+      if (req.method === "POST" && (url.pathname === "/api/node/reset-reachable" || url.pathname === "/api/reset-reachable")) {
         if (!authorizeWriteRequest(req, res, requiredWriteToken)) {
           return;
         }
@@ -414,24 +486,33 @@ export async function createVisualizerServer({
           nodeId: stringBodyField(body, "nodeId"),
           reason: optionalStringBodyField(body, "reason")
         });
-        await sendMutationResponse(res, graphPath, runtime, broadcast, result);
+        await runtime.renderPlanAfterUpdate(graphPath);
+        await broadcast();
+        res.writeHead(200, { "content-type": "application/json; charset=utf-8", "cache-control": "no-store" });
+        res.end(JSON.stringify(result));
         return;
       }
 
-      if (req.method === "POST" && url.pathname === "/api/decompose") {
+      if (req.method === "POST" && (url.pathname === "/api/node/decompose" || url.pathname === "/api/decompose")) {
         if (!authorizeWriteRequest(req, res, requiredWriteToken)) {
           return;
         }
         const body = await readRequestJson(req);
         const nodeId = stringBodyField(body, "nodeId");
-        const result = await runtime.decomposeNode(graphPath, {
-          nodeId,
-          kind: optionalStringBodyField(body, "kind") as NodeKind | undefined,
-          children: decomposeChildrenBodyField(body),
-          session: optionalStringBodyField(body, "session"),
-          runId: optionalStringBodyField(body, "runId")
-        });
-        await sendMutationResponse(res, graphPath, runtime, broadcast, result, operationalEvents.decomposed, { nodeId });
+        const result: DecomposeNodeResult & { slack?: SlackNotificationResult } = {
+          ...await runtime.decomposeNode(graphPath, {
+            nodeId,
+            kind: optionalStringBodyField(body, "kind"),
+            children: childDefinitionsBodyField(body, "children"),
+            session: optionalStringBodyField(body, "session"),
+            runId: optionalRunIdBodyField(body)
+          })
+        };
+        await runtime.renderPlanAfterUpdate(graphPath);
+        result.slack = await runtime.sendSlackNotification(graphPath, operationalEvents.decomposed, { nodeId });
+        await broadcast();
+        res.writeHead(200, { "content-type": "application/json; charset=utf-8", "cache-control": "no-store" });
+        res.end(JSON.stringify(result));
         return;
       }
 
@@ -439,6 +520,7 @@ export async function createVisualizerServer({
         if (!authorizeWriteRequest(req, res, requiredWriteToken)) {
           return;
         }
+        await readRequestJson(req);
         const result = await runtime.reconcileGraphStatus(graphPath);
         await runtime.renderPlanAfterUpdate(graphPath);
         await broadcast();
@@ -451,6 +533,7 @@ export async function createVisualizerServer({
         if (!authorizeWriteRequest(req, res, requiredWriteToken)) {
           return;
         }
+        await readRequestJson(req);
         const result = await runtime.releaseExpiredLeases(graphPath);
         await runtime.renderPlanAfterUpdate(graphPath);
         await broadcast();
@@ -522,24 +605,6 @@ export async function createVisualizerServer({
       await new Promise<void>((resolveClose) => server.close(() => resolveClose()));
     }
   };
-}
-
-async function sendMutationResponse<T extends { summary?: GraphSummary }>(
-  res: ServerResponse,
-  graphPath: string,
-  runtime: VisualizerRuntime,
-  broadcast: () => Promise<void>,
-  result: T,
-  slackEvent?: string,
-  slackDetails?: Record<string, JsonValue | undefined>
-): Promise<void> {
-  await runtime.renderPlanAfterUpdate(graphPath);
-  const response = slackEvent
-    ? { ...result, slack: await runtime.sendSlackNotification(graphPath, slackEvent, slackDetails) }
-    : result;
-  await broadcast();
-  res.writeHead(200, { "content-type": "application/json; charset=utf-8", "cache-control": "no-store" });
-  res.end(JSON.stringify(response));
 }
 
 export async function readRequestJson(req: IncomingMessage): Promise<Record<string, unknown>> {
@@ -632,12 +697,62 @@ function constantTimeStringEqual(left: string, right: string): boolean {
   return leftBuffer.length === rightBuffer.length && timingSafeEqual(leftBuffer, rightBuffer);
 }
 
+function queryStringParam(url: URL, key: string): string | undefined {
+  const values = url.searchParams.getAll(key);
+  if (values.length === 0) {
+    return undefined;
+  }
+  if (values.length > 1) {
+    throw new RequestValidationError(`Query parameter ${key} can only be provided once`);
+  }
+  return values[0];
+}
+
+function requiredQueryStringParam(url: URL, key: string, command: string): string {
+  const value = queryStringParam(url, key);
+  if (value === undefined || value.trim() === "") {
+    throw new RequestValidationError(`${command} requires ${key}`);
+  }
+  return value;
+}
+
+function numericQueryParam(
+  url: URL,
+  key: string,
+  options: Omit<Parameters<typeof parseNumericArgument>[1], "flag">
+): number | undefined {
+  const values = url.searchParams.getAll(key);
+  if (values.length > 1) {
+    throw new RequestValidationError(`Query parameter ${key} can only be provided once`);
+  }
+  return parseNumericArgument(values.length === 0 ? undefined : values[0], { flag: `--${key}`, ...options });
+}
+
 function stringBodyField(body: Record<string, unknown>, field: string): string {
   const value = optionalStringBodyField(body, field);
   if (!value) {
     throw new RequestValidationError(`Missing ${field}`);
   }
   return value;
+}
+
+function numericBodyField(
+  body: Record<string, unknown>,
+  field: string,
+  options: Omit<Parameters<typeof parseNumericArgument>[1], "flag">
+): number | undefined {
+  const value = body[field];
+  if (value === undefined) {
+    return undefined;
+  }
+  if (typeof value !== "string" && typeof value !== "number") {
+    throw new RequestValidationError(`${field} must be a number`);
+  }
+  return parseNumericArgument(String(value), { flag: field, ...options });
+}
+
+function optionalBodyField(body: Record<string, unknown>, field: string): unknown {
+  return body[field];
 }
 
 function optionalStringBodyField(body: Record<string, unknown>, field: string): string | undefined {
@@ -656,44 +771,31 @@ function optionalBooleanBodyField(body: Record<string, unknown>, field: string):
   return value;
 }
 
-function optionalLeaseSecondsBodyField(body: Record<string, unknown>): number | undefined {
-  const value = body.leaseSeconds ?? body.lease;
-  return parseNumericArgument(value as Parameters<typeof parseNumericArgument>[0], {
-    flag: "leaseSeconds",
-    ...numericArgumentRanges.leaseSeconds
-  });
+function optionalRunIdBodyField(body: Record<string, unknown>): string | undefined {
+  return optionalStringBodyField(body, "runId") ?? optionalStringBodyField(body, "run");
 }
 
-function optionalReportBodyField(body: Record<string, unknown>): unknown {
-  return body.reportBody ?? body["report-body"];
-}
-
-function decomposeChildrenBodyField(body: Record<string, unknown>): VisualizerDecomposeChild[] {
-  const value = body.children;
-  if (!Array.isArray(value) || value.length === 0) {
-    throw new RequestValidationError("Missing children");
+function childDefinitionsBodyField(body: Record<string, unknown>, field: string): DecomposeChildDefinition[] {
+  const value = body[field];
+  if (!Array.isArray(value)) {
+    throw new RequestValidationError(`Missing ${field}`);
   }
-
   return value.map((child, index) => {
     if (!isRecord(child)) {
-      throw new RequestValidationError(`children[${index}] must be an object`);
+      throw new RequestValidationError(`${field}[${index}] must be an object`);
     }
-    const id = stringRecordField(child, "id", `children[${index}]`);
-    const title = stringRecordField(child, "title", `children[${index}]`);
-    const normalized: VisualizerDecomposeChild = {
-      ...child,
-      id,
-      title
-    };
+    const id = requiredChildString(child, "id", field, index);
+    const title = requiredChildString(child, "title", field, index);
+    const normalized: DecomposeChildDefinition = { ...child, id, title };
     if (child.kind !== undefined) {
-      normalized.kind = String(child.kind) as NodeKind;
+      normalized.kind = childString(child, "kind", field, index);
     }
     if (child.status !== undefined) {
-      normalized.status = String(child.status) as NodeStatus;
+      normalized.status = childString(child, "status", field, index);
     }
     if (child.children !== undefined) {
-      if (!Array.isArray(child.children) || child.children.some((nodeId) => typeof nodeId !== "string")) {
-        throw new RequestValidationError(`children[${index}].children must be an array of strings`);
+      if (!Array.isArray(child.children) || !child.children.every((item) => typeof item === "string")) {
+        throw new RequestValidationError(`${field}[${index}].children must be an array of strings`);
       }
       normalized.children = child.children;
     }
@@ -701,10 +803,23 @@ function decomposeChildrenBodyField(body: Record<string, unknown>): VisualizerDe
   });
 }
 
-function stringRecordField(record: Record<string, unknown>, field: string, location: string): string {
-  const value = record[field];
-  if (typeof value !== "string" || !value.trim()) {
-    throw new RequestValidationError(`${location}.${field} must be a non-empty string`);
+function requiredChildString(
+  child: Record<string, unknown>,
+  key: string,
+  field: string,
+  index: number
+): string {
+  const value = childString(child, key, field, index);
+  if (!value) {
+    throw new RequestValidationError(`Missing ${field}[${index}].${key}`);
+  }
+  return value;
+}
+
+function childString(child: Record<string, unknown>, key: string, field: string, index: number): string {
+  const value = child[key];
+  if (typeof value !== "string") {
+    throw new RequestValidationError(`${field}[${index}].${key} must be a string`);
   }
   return value;
 }

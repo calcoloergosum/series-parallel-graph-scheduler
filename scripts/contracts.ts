@@ -381,6 +381,26 @@ export interface OperationalEventExportEntry {
   details: JsonObject;
 }
 
+export interface VisualizerAttentionSummary {
+  failed: {
+    count: number;
+    nodeIds: NodeId[];
+  };
+  blocked: {
+    count: number;
+    nodeIds: NodeId[];
+  };
+  expired: {
+    count: number;
+    nodeIds: NodeId[];
+    releasable: number;
+  };
+  workerErrors: {
+    count: number;
+    workerIds: string[];
+  };
+}
+
 export interface LeaseClaimResult {
   nodeId: NodeId;
   title?: string;
@@ -530,9 +550,98 @@ export interface WorkerManager {
   status(): WorkerManagerStatus;
 }
 
+export interface VisualizerNodeRefs {
+  baseRef?: NodeBaseRefMetadata;
+  workRef?: NodeWorkRefMetadata;
+  outputRef?: NodeOutputRefMetadata;
+  integrationRef?: NodeIntegrationRefMetadata;
+}
+
+export interface VisualizerNodeTimestamps {
+  startedAt?: IsoDateString;
+  completedAt?: IsoDateString;
+  blockedAt?: IsoDateString;
+  answeredAt?: IsoDateString;
+  failedAt?: IsoDateString;
+  expiredAt?: IsoDateString;
+}
+
+export type VisualizerActionDanger = "none" | "caution" | "danger";
+
+type VisualizerActionId =
+  | "claim"
+  | "start"
+  | "renew"
+  | "done"
+  | "block"
+  | "answer"
+  | "fail"
+  | "reset"
+  | "reset-subtree"
+  | "reset-reachable"
+  | "decompose";
+
+export interface VisualizerActionConfirmation {
+  required: boolean;
+  label: string;
+  message: string;
+}
+
+export interface VisualizerNodeAction {
+  id: VisualizerActionId;
+  label: string;
+  danger: VisualizerActionDanger;
+  requiredFields: string[];
+  disabledReason?: string;
+  confirmation?: VisualizerActionConfirmation;
+}
+
+export interface VisualizerActionPolicy {
+  leaseProtectedWorkerActions: {
+    whenCredentialsAbsent: "disable-leased-node-actions";
+    requiredCredential: "matching-session-or-runId";
+  };
+  destructiveActions: {
+    danger: "danger";
+    requireConfirmationMetadata: true;
+  };
+  serverAuthority: "scheduler-mutation-guards";
+}
+
+export interface VisualizerNodeDetail {
+  id: NodeId;
+  title?: string;
+  kind: NodeKind;
+  status: NodeStatus;
+  description?: string;
+  children: NodeId[];
+  deliverables: string[];
+  acceptanceCriteria: string[];
+  lease?: GraphLease;
+  refs: VisualizerNodeRefs;
+  workspace?: NodeWorkspaceMetadata;
+  report?: string;
+  question?: string;
+  answer?: string;
+  answeredBy?: string;
+  blockedReason?: string;
+  failureReason?: string;
+  timestamps: VisualizerNodeTimestamps;
+  history: GraphHistoryEntry[];
+  historyCount: number;
+  historyLimit: number;
+  actions: VisualizerNodeAction[];
+}
+
 export interface VisualizerPayload {
   graph: PlanGraphFile;
   graphSvg: string;
+  nodes: VisualizerNodeDetail[];
+  nodeHistoryLimit: number;
+  actionPolicy: VisualizerActionPolicy;
+  attention: VisualizerAttentionSummary;
+  diagnostics: GraphDiagnostics;
+  recentEvents: OperationalEventExportEntry[];
   ready: ReadyNode[];
   working: WorkingNode[];
   summary: GraphSummary;

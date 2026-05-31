@@ -346,20 +346,46 @@ export function renderVisualizerHtml(): string {
     }
     .ready-list,
     .working-list,
-    .worker-list {
+    .worker-list,
+    .diagnostic-list,
+    .event-list {
       display: grid;
       gap: 8px;
       margin-top: 12px;
     }
     .ready-item,
     .working-item,
-    .worker-item {
+    .worker-item,
+    .diagnostic-item,
+    .event-item {
       border: 1px solid var(--line);
       border-radius: 8px;
       padding: 9px;
       background: #fbfcfd;
       overflow-wrap: anywhere;
       word-break: break-word;
+    }
+    .diagnostic-item.warning {
+      border-color: #e7b767;
+      border-left: 6px solid var(--blocked);
+      background: #fff9ef;
+    }
+    .diagnostic-item.critical {
+      border-color: #efa9a9;
+      border-left: 6px solid var(--failed);
+      background: #fff5f5;
+    }
+    .event-heading {
+      display: flex;
+      justify-content: space-between;
+      gap: 8px;
+      align-items: baseline;
+    }
+    .event-details {
+      margin-top: 5px;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      font-size: 11px;
+      white-space: pre-wrap;
     }
     .working-item.status-blocked,
     .working-item.status-review {
@@ -522,7 +548,7 @@ export function renderVisualizerHtml(): string {
             <button class="filter-button" type="button" data-filter="all" aria-pressed="true">All</button>
             <button class="filter-button" type="button" data-filter="ready" aria-pressed="false">Ready</button>
             <button class="filter-button" type="button" data-filter="working" aria-pressed="false">Working</button>
-            <button class="filter-button" type="button" data-filter="attention" aria-pressed="false">Blocked/Failed</button>
+            <button class="filter-button" type="button" data-filter="attention" aria-pressed="false">Attention</button>
           </div>
         </div>
       </div>
@@ -614,6 +640,14 @@ export function renderVisualizerHtml(): string {
         <h2 id="working-heading">Active Sessions</h2>
         <p>Claimed, running, blocked, review, and failed nodes.</p>
         <div id="working" class="working-list" role="list"></div>
+      </section>
+      <section class="sidebar-section" aria-labelledby="diagnostics-heading">
+        <h2 id="diagnostics-heading">Diagnostics</h2>
+        <div id="diagnostics" class="diagnostic-list" role="list"></div>
+      </section>
+      <section class="sidebar-section" aria-labelledby="events-heading">
+        <h2 id="events-heading">Recent Events</h2>
+        <div id="recent-events" class="event-list" role="list"></div>
       </section>
       <section class="sidebar-section" aria-labelledby="ready-heading">
         <h2 id="ready-heading">Ready Leaf Nodes</h2>
@@ -736,6 +770,11 @@ export function renderVisualizerHtml(): string {
     return status === "blocked" || status === "review" || status === "failed";
   }
 
+  function isAttentionNode(node) {
+    const expiredIds = latestPayload?.attention?.expired?.nodeIds || [];
+    return isAttentionStatus(node.status) || expiredIds.includes(node.id);
+  }
+
   function workingPriority(node) {
     if (node.status === "failed") {
       return 0;
@@ -761,7 +800,7 @@ export function renderVisualizerHtml(): string {
       return [];
     }
     return working
-      .filter((node) => filters.activity !== "attention" || isAttentionStatus(node.status))
+      .filter((node) => filters.activity !== "attention" || isAttentionNode(node))
       .filter((node) => matchesQuery(nodeSearchText(node)))
       .slice()
       .sort((left, right) => workingPriority(left) - workingPriority(right) || String(left.id).localeCompare(String(right.id)));
@@ -1012,15 +1051,89 @@ export function renderVisualizerHtml(): string {
   }
 
   function renderAttentionSummary(payload) {
-    const counts = payload.summary.counts || {};
-    const blocked = Number(counts.blocked || 0) + Number(counts.review || 0);
-    const failed = Number(counts.failed || 0);
-    const workerErrors = (payload.workerManager?.workers || []).filter((worker) => worker.status === "error").length;
-    const className = failed || blocked || workerErrors ? "count-chip urgent" : "count-chip";
+    const attention = payload.attention || {};
+    const blocked = Number(attention.blocked?.count || 0);
+    const failed = Number(attention.failed?.count || 0);
+    const expired = Number(attention.expired?.count || 0);
+    const workerErrors = Number(attention.workerErrors?.count || 0);
+    const className = failed || blocked || expired || workerErrors ? "count-chip urgent" : "count-chip";
     document.getElementById("attention-summary").innerHTML =
       '<span class="' + className + '">failed: ' + failed + '</span>' +
       '<span class="' + className + '">blocked: ' + blocked + '</span>' +
+      '<span class="' + className + '">expired: ' + expired + '</span>' +
       '<span class="' + className + '">worker errors: ' + workerErrors + '</span>';
+  }
+
+  function renderDiagnostics(payload) {
+    const diagnostics = payload.diagnostics || {};
+    const attention = payload.attention || {};
+    const items = [];
+    if (attention.failed?.count) {
+      items.push({
+        severity: "critical",
+        title: "Failed nodes",
+        body: attention.failed.nodeIds.join(", ")
+      });
+    }
+    if (attention.blocked?.count) {
+      items.push({
+        severity: "warning",
+        title: "Blocked or review nodes",
+        body: attention.blocked.nodeIds.join(", ")
+      });
+    }
+    if (attention.expired?.count) {
+      items.push({
+        severity: "warning",
+        title: "Expired leases",
+        body: attention.expired.nodeIds.join(", ") + " / releasable: " + Number(attention.expired.releasable || 0)
+      });
+    }
+    if (attention.workerErrors?.count) {
+      items.push({
+        severity: "critical",
+        title: "Worker errors",
+        body: attention.workerErrors.workerIds.join(", ")
+      });
+    }
+    if (diagnostics.lock) {
+      const lock = diagnostics.lock;
+      const owner = lock.owner ? [
+        lock.owner.ownerId,
+        lock.owner.pid ? "pid " + lock.owner.pid : "",
+        lock.owner.host
+      ].filter(Boolean).join(" / ") : "unknown owner";
+      items.push({
+        severity: lock.exists ? (lock.stale ? "critical" : "warning") : "info",
+        title: lock.exists ? (lock.stale ? "Stale graph lock" : "Graph lock present") : "Graph lock clear",
+        body: lock.exists
+          ? "read-only / " + owner + " / age " + Math.round(Number(lock.ageMs || 0) / 1000) + "s / refresh diagnostics after the owner finishes"
+          : "no lock directory present"
+      });
+    }
+    if (!items.length) {
+      return '<p>No diagnostics need attention.</p>';
+    }
+    return items.map((item) => '<div class="diagnostic-item ' + escapeHtml(item.severity) + '" role="listitem">' +
+      '<strong>' + escapeHtml(item.title) + '</strong>' +
+      '<div class="meta">' + escapeHtml(item.body) + '</div>' +
+      '</div>').join("");
+  }
+
+  function renderRecentEvents(events) {
+    if (!events?.length) {
+      return '<p>No recent events are recorded.</p>';
+    }
+    return events.slice(0, 8).map((event) => {
+      const details = event.details && Object.keys(event.details).length
+        ? '<div class="event-details">' + escapeHtml(boundedText(JSON.stringify(event.details, null, 2))) + '</div>'
+        : "";
+      return '<div class="event-item" role="listitem">' +
+        '<div class="event-heading"><strong>' + escapeHtml(event.event) + '</strong><span class="meta">' + escapeHtml(event.nodeId) + '</span></div>' +
+        '<div class="meta">' + escapeHtml(event.at || "") + '</div>' +
+        details +
+        '</div>';
+    }).join("");
   }
 
   function renderFilterSummary(visibleReady, visibleWorking, visibleWorkers) {
@@ -1122,6 +1235,8 @@ export function renderVisualizerHtml(): string {
     document.getElementById("summary").innerHTML = renderSummary(payload.summary);
     document.getElementById("graph").innerHTML = payload.graphSvg;
     document.getElementById("working").innerHTML = renderWorking(visibleWorking);
+    document.getElementById("diagnostics").innerHTML = renderDiagnostics(payload);
+    document.getElementById("recent-events").innerHTML = renderRecentEvents(payload.recentEvents || []);
     document.getElementById("ready").innerHTML = renderReady(visibleReady);
     renderAttentionSummary(payload);
     renderFilterSummary(visibleReady, visibleWorking, visibleWorkers);

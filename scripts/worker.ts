@@ -43,7 +43,7 @@ const workerProcessLimits = {
   cwdLength: 4096
 } as const;
 
-export interface WorkerRuntime {
+export interface WorkerPromptRuntime {
   defaultGraphPath: string;
   defaultPromptTemplatePath: string;
   schedulerCommand: string;
@@ -52,6 +52,9 @@ export interface WorkerRuntime {
   listReadyLeafNodes(graph: PlanGraphFile): ReadyNode[];
   summarizeGraph(graph: PlanGraphFile): GraphSummary;
   defaultReportPath(nodeId: string, runId: string): string;
+}
+
+export interface WorkerRuntime extends WorkerPromptRuntime {
   claimNode(graphPath: string, options: {
     session?: string;
     nodeId?: string;
@@ -155,7 +158,7 @@ export async function buildWorkerPrompt(
     cwd = dirname(graphPath),
     reportPath
   }: BuildWorkerPromptOptions = {},
-  runtime: WorkerRuntime
+  runtime: WorkerPromptRuntime
 ): Promise<string> {
   if (!nodeId) {
     throw new Error("Missing node id");
