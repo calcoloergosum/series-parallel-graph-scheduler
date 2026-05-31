@@ -1785,6 +1785,36 @@ test("planner adapter builds decomposition requests without network access", asy
   });
 });
 
+test("default planner prompt renders required variables and decision guidance", async () => {
+  await withTempGraph(async (graphPath) => {
+    const graph = await readGraph(graphPath);
+    const request = buildPlannerRuntimeRequest(graph, "A", {
+      requestId: "render-plan-A",
+      allowedKinds: ["task", "series", "parallel"]
+    });
+
+    const prompt = await buildPlannerPrompt(request, {
+      templatePath: "prompts/planner-decompose-task.md"
+    });
+
+    assert.match(prompt, /Return strict JSON only/);
+    assert.match(prompt, /top-level `kind` must be exactly one of `task`, `series`, or `parallel`/);
+    assert.match(prompt, /Stop and choose `task` when:/);
+    assert.match(prompt, /Choose `series` when children must run in order/);
+    assert.match(prompt, /Choose `parallel` when children can run independently/);
+    assert.match(prompt, /Root planning example:/);
+    assert.match(prompt, /Task refinement example:/);
+    assert.match(prompt, /Post-result re-planning example:/);
+    assert.match(prompt, /Goal:\nBootstrap/);
+    assert.match(prompt, /Parent context:\n\{\n {2}"nodeId": "A"/);
+    assert.match(prompt, /Current graph summary:\n\{\n {2}"graphVersion": 1,/);
+    assert.match(prompt, /"totalNodes": 6/);
+    assert.match(prompt, /"schemaRef": "docs\/planner-output-schema\.md"/);
+    assert.match(prompt, /Full request:\n\{\n {2}"requestId": "render-plan-A"/);
+    assert.doesNotMatch(prompt, /\{\{(?:goal|parentContextJson|graphSummaryJson|outputSchemaJson|requestJson)\}\}/);
+  });
+});
+
 test("planner response validation rejects malformed JSON without raw payload storage", async () => {
   assert.throws(
     () => parsePlannerResponse("not-json"),
