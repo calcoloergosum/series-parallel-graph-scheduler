@@ -1,7 +1,111 @@
 {
   "help": {
     "exitCode": 0,
-    "stdout": "Usage:\n  node scripts/plan-scheduler.mjs <command> [flags]\n  node scripts/plan-scheduler.mjs help\n  node scripts/plan-scheduler.mjs --help\n\nGraph selection:\n  --graph PATH              Optional for every command. Default: PLAN_GRAPH, then plan.graph.json.\n\nCommands:\n  ready\n    Required: none\n    Optional: --graph PATH\n    Example: node scripts/plan-scheduler.mjs ready --graph plan.graph.json\n\n  summary\n    Required: none\n    Optional: --graph PATH\n    Example: node scripts/plan-scheduler.mjs summary --graph plan.graph.json\n\n  diagnostics\n    Required: none\n    Optional: --graph PATH\n    Example: node scripts/plan-scheduler.mjs diagnostics --graph plan.graph.json\n\n  events\n    Required: none\n    Optional: --graph PATH, --limit COUNT (default: 50), --node ID, --event NAME\n    Example: node scripts/plan-scheduler.mjs events --graph plan.graph.json --limit 20\n\n  claim\n    Required: none\n    Optional: --graph PATH, --session NAME (default: codex), --node ID, --lease SECONDS (default: graph scheduler.leaseSeconds, then 1800)\n    Example: node scripts/plan-scheduler.mjs claim --session codex-A --lease 1800\n\n  start\n    Required: --node ID\n    Optional: --graph PATH, --session NAME, --run RUN_ID\n    Example: node scripts/plan-scheduler.mjs start --node KICKOFF --session codex-A\n\n  renew\n    Required: --node ID\n    Optional: --graph PATH, --session NAME, --run RUN_ID, --lease SECONDS (default: graph scheduler.leaseSeconds, then 1800)\n    Example: node scripts/plan-scheduler.mjs renew --node KICKOFF --session codex-A --lease 1800\n\n  reset\n    Required: --node ID\n    Optional: --graph PATH, --reason TEXT\n    Example: node scripts/plan-scheduler.mjs reset --node KICKOFF --reason \"retry with fresh context\"\n\n  reset-subtree\n    Required: --node ID\n    Optional: --graph PATH, --reason TEXT\n    Example: node scripts/plan-scheduler.mjs reset-subtree --node PHASE_2 --reason \"rerun phase 2\"\n\n  reset-reachable\n    Required: --node ID\n    Optional: --graph PATH, --reason TEXT\n    Example: node scripts/plan-scheduler.mjs reset-reachable --node TS3 --reason \"rerun from TS3\"\n\n  done\n    Required: --node ID\n    Optional: --graph PATH, --session NAME, --run RUN_ID, --report PATH, --report-body TEXT\n    Example: node scripts/plan-scheduler.mjs done --node KICKOFF --session codex-A --report reports/KICKOFF.md\n\n  block\n    Required: --node ID\n    Optional: --graph PATH, --session NAME, --run RUN_ID, --question TEXT, --reason TEXT\n    Example: node scripts/plan-scheduler.mjs block --node WEB1 --session codex-A --question \"Need operator decision\"\n\n  answer\n    Required: --node ID, --answer TEXT\n    Optional: --graph PATH, --responder NAME\n    Example: node scripts/plan-scheduler.mjs answer --node WEB1 --answer \"Proceed with option A.\" --responder jason\n\n  fail\n    Required: --node ID\n    Optional: --graph PATH, --session NAME, --run RUN_ID, --reason TEXT, --report PATH\n    Example: node scripts/plan-scheduler.mjs fail --node WEB1 --session codex-A --reason \"Tests failed\"\n\n  decompose\n    Required: --node ID and --child ID=Title repeated, or --child-json JSON\n    Optional: --graph PATH, --session NAME, --run RUN_ID, --kind series|parallel (default: series)\n    Example: node scripts/plan-scheduler.mjs decompose --node WEB1 --session codex-A --kind series --child WEB1a=\"Draft shell\" --child WEB1b=\"Review shell\"\n\n  prompt\n    Required: --node ID\n    Optional: --graph PATH, --session NAME, --run RUN_ID, --template PATH (default: prompts/codex-worker-task.md), --cwd PATH (default: graph directory), --report PATH\n    Example: node scripts/plan-scheduler.mjs prompt --node WEB1 --session codex-A\n\n  worker\n    Required: none\n    Optional: --graph PATH, --session NAME (default: codex-worker), --node ID, --once, --quiet, --cwd PATH (default: graph directory), --template PATH (default: prompts/codex-worker-task.md), --idle-ms MS (default: 5000), --timeout-ms MS, --lease SECONDS, --codex-command PATH (default: codex), --codex-arg ARG repeated (default: exec), --isolation off|git (default: off), --remote URL (default: scheduler.remote), --workspace-root PATH (default: runs/workspaces), --workspace-retention on-failure|always|never (default: on-failure)\n    Example: node scripts/plan-scheduler.mjs worker --graph plan.graph.json --session codex-A --once\n\n  reconcile\n    Required: none\n    Optional: --graph PATH\n    Example: node scripts/plan-scheduler.mjs reconcile --graph plan.graph.json\n\n  release-expired\n    Required: none\n    Optional: --graph PATH\n    Example: node scripts/plan-scheduler.mjs release-expired --graph plan.graph.json\n\n  serve\n    Required: none\n    Optional: --graph PATH, --port PORT (default: 8787), --host HOST (default: 127.0.0.1), --cwd PATH (default: graph directory), --visualizer-write-token TOKEN, --unsafe-visualizer-write\n    Example: node scripts/plan-scheduler.mjs serve --host 127.0.0.1 --port 8787\n\nFlag types:\n  Boolean flags take no value: --help, --once, --quiet, --unsafe-visualizer-write.\n  Repeatable flags: --child ID=Title or ID:Title; --codex-arg ARG. Use --codex-arg=--flag when the value starts with \"-\".\n  Numeric flags are integers: --lease 1..86400 seconds, --idle-ms 1..86400000, --timeout-ms 1..86400000, --port 0..65535, --limit 1..10000.\n  Path flags: --graph selects the graph; --report stays inside the graph directory; --template resolves from the graph directory; --cwd controls worker process cwd.\n  Isolation flags: --isolation git requires scheduler.remote unless --remote URL is supplied; --workspace-root selects isolated clone placement; --workspace-retention controls clone cleanup.\n\nEnvironment:\n  PLAN_GRAPH                Default graph path when --graph is omitted.\n  SLACK_WEBHOOK_URL         Enables notifications for done, block, answer, fail, and decompose.\n  SPG_SLACK_TIMEOUT_MS      Slack notification timeout in milliseconds. Default: 5000.\n  SPG_DEBUG=1               Include stack traces in CLI errors.\n  SPG_GRAPH_LOCK_TIMEOUT_MS Graph lock wait timeout in milliseconds. Default: 5000.\n  SPG_GIT_CACHE_LOCK_TIMEOUT_MS Git cache lock wait timeout in milliseconds. Default: 60000.",
+    "stdout": "Usage:\n  node scripts/plan-scheduler.mjs <command> [flags]\n  node scripts/plan-scheduler.mjs plan --goal \"...\"\n  node scripts/plan-scheduler.mjs help\n  node scripts/plan-scheduler.mjs --help\n\nGraph selection:\n  --graph PATH              Optional for every command. Default: PLAN_GRAPH, then plan.graph.json.\n\nCommands:\n  plan\n    Required: --goal TEXT\n    Optional: --graph PATH (output graph path), --title TEXT, --dry-run\n    Example: node scripts/plan-scheduler.mjs plan --goal \"Ship a searchable audit log\" --graph runs/goals/audit-log/plan.graph.json\n\n  ready\n    Required: none\n    Optional: --graph PATH\n    Example: node scripts/plan-scheduler.mjs ready --graph plan.graph.json\n\n  summary\n    Required: none\n    Optional: --graph PATH\n    Example: node scripts/plan-scheduler.mjs summary --graph plan.graph.json\n\n  diagnostics\n    Required: none\n    Optional: --graph PATH\n    Example: node scripts/plan-scheduler.mjs diagnostics --graph plan.graph.json\n\n  events\n    Required: none\n    Optional: --graph PATH, --limit COUNT (default: 50), --node ID, --event NAME\n    Example: node scripts/plan-scheduler.mjs events --graph plan.graph.json --limit 20\n\n  claim\n    Required: none\n    Optional: --graph PATH, --session NAME (default: codex), --node ID, --lease SECONDS (default: graph scheduler.leaseSeconds, then 1800)\n    Example: node scripts/plan-scheduler.mjs claim --session codex-A --lease 1800\n\n  start\n    Required: --node ID\n    Optional: --graph PATH, --session NAME, --run RUN_ID\n    Example: node scripts/plan-scheduler.mjs start --node KICKOFF --session codex-A\n\n  renew\n    Required: --node ID\n    Optional: --graph PATH, --session NAME, --run RUN_ID, --lease SECONDS (default: graph scheduler.leaseSeconds, then 1800)\n    Example: node scripts/plan-scheduler.mjs renew --node KICKOFF --session codex-A --lease 1800\n\n  reset\n    Required: --node ID\n    Optional: --graph PATH, --reason TEXT\n    Example: node scripts/plan-scheduler.mjs reset --node KICKOFF --reason \"retry with fresh context\"\n\n  reset-subtree\n    Required: --node ID\n    Optional: --graph PATH, --reason TEXT\n    Example: node scripts/plan-scheduler.mjs reset-subtree --node PHASE_2 --reason \"rerun phase 2\"\n\n  reset-reachable\n    Required: --node ID\n    Optional: --graph PATH, --reason TEXT\n    Example: node scripts/plan-scheduler.mjs reset-reachable --node TS3 --reason \"rerun from TS3\"\n\n  done\n    Required: --node ID\n    Optional: --graph PATH, --session NAME, --run RUN_ID, --report PATH, --report-body TEXT\n    Example: node scripts/plan-scheduler.mjs done --node KICKOFF --session codex-A --report reports/KICKOFF.md\n\n  block\n    Required: --node ID\n    Optional: --graph PATH, --session NAME, --run RUN_ID, --question TEXT, --reason TEXT\n    Example: node scripts/plan-scheduler.mjs block --node WEB1 --session codex-A --question \"Need operator decision\"\n\n  answer\n    Required: --node ID, --answer TEXT\n    Optional: --graph PATH, --responder NAME\n    Example: node scripts/plan-scheduler.mjs answer --node WEB1 --answer \"Proceed with option A.\" --responder jason\n\n  fail\n    Required: --node ID\n    Optional: --graph PATH, --session NAME, --run RUN_ID, --reason TEXT, --report PATH\n    Example: node scripts/plan-scheduler.mjs fail --node WEB1 --session codex-A --reason \"Tests failed\"\n\n  decompose\n    Required: --node ID and --child ID=Title repeated, or --child-json JSON\n    Optional: --graph PATH, --session NAME, --run RUN_ID, --kind series|parallel (default: series)\n    Example: node scripts/plan-scheduler.mjs decompose --node WEB1 --session codex-A --kind series --child WEB1a=\"Draft shell\" --child WEB1b=\"Review shell\"\n\n  prompt\n    Required: --node ID\n    Optional: --graph PATH, --session NAME, --run RUN_ID, --template PATH (default: prompts/codex-worker-task.md), --cwd PATH (default: graph directory), --report PATH\n    Example: node scripts/plan-scheduler.mjs prompt --node WEB1 --session codex-A\n\n  worker\n    Required: none\n    Optional: --graph PATH, --session NAME (default: codex-worker), --node ID, --once, --quiet, --cwd PATH (default: graph directory), --template PATH (default: prompts/codex-worker-task.md), --idle-ms MS (default: 5000), --timeout-ms MS, --lease SECONDS, --codex-command PATH (default: codex), --codex-arg ARG repeated (default: exec), --isolation off|git (default: off), --remote URL (default: scheduler.remote), --workspace-root PATH (default: runs/workspaces), --workspace-retention on-failure|always|never (default: on-failure)\n    Example: node scripts/plan-scheduler.mjs worker --graph plan.graph.json --session codex-A --once\n\n  reconcile\n    Required: none\n    Optional: --graph PATH\n    Example: node scripts/plan-scheduler.mjs reconcile --graph plan.graph.json\n\n  release-expired\n    Required: none\n    Optional: --graph PATH\n    Example: node scripts/plan-scheduler.mjs release-expired --graph plan.graph.json\n\n  serve\n    Required: none\n    Optional: --graph PATH, --port PORT (default: 8787), --host HOST (default: 127.0.0.1), --cwd PATH (default: graph directory), --visualizer-write-token TOKEN, --unsafe-visualizer-write\n    Example: node scripts/plan-scheduler.mjs serve --host 127.0.0.1 --port 8787\n\nFlag types:\n  Boolean flags take no value: --help, --dry-run, --once, --quiet, --unsafe-visualizer-write.\n  Repeatable flags: --child ID=Title or ID:Title; --codex-arg ARG. Use --codex-arg=--flag when the value starts with \"-\".\n  Numeric flags are integers: --lease 1..86400 seconds, --idle-ms 1..86400000, --timeout-ms 1..86400000, --port 0..65535, --limit 1..10000.\n  Path flags: --graph selects the graph; for plan only, --graph is the output graph path. --report stays inside the graph directory; --template resolves from the graph directory; --cwd controls worker process cwd.\n  Isolation flags: --isolation git requires scheduler.remote unless --remote URL is supplied; --workspace-root selects isolated clone placement; --workspace-retention controls clone cleanup.\n\nEnvironment:\n  PLAN_GRAPH                Default graph path when --graph is omitted.\n  SLACK_WEBHOOK_URL         Enables notifications for done, block, answer, fail, and decompose.\n  SPG_SLACK_TIMEOUT_MS      Slack notification timeout in milliseconds. Default: 5000.\n  SPG_DEBUG=1               Include stack traces in CLI errors.\n  SPG_GRAPH_LOCK_TIMEOUT_MS Graph lock wait timeout in milliseconds. Default: 5000.\n  SPG_GIT_CACHE_LOCK_TIMEOUT_MS Git cache lock wait timeout in milliseconds. Default: 60000.",
+    "stderr": ""
+  },
+  "planDryRun": {
+    "exitCode": 0,
+    "stdout": {
+      "graphPath": "<graphDir>/planned.graph.json",
+      "dryRun": true,
+      "written": false,
+      "validation": {
+        "valid": true,
+        "errors": [],
+        "warnings": []
+      },
+      "summary": {
+        "graphVersion": 1,
+        "title": "Audit Log Plan",
+        "description": "Generated from a CLI goal.",
+        "totalNodes": 1,
+        "root": "ROOT",
+        "counts": {
+          "pending": 1
+        }
+      },
+      "graph": {
+        "graphVersion": 1,
+        "title": "Audit Log Plan",
+        "description": "Generated from a CLI goal.",
+        "graph": {
+          "root": "ROOT",
+          "nodes": {
+            "ROOT": {
+              "title": "Audit Log Plan",
+              "kind": "task",
+              "status": "pending",
+              "description": "Ship a searchable audit log",
+              "goal": {
+                "text": "Ship a searchable audit log",
+                "source": "operator",
+                "createdAt": "<iso-date>"
+              },
+              "history": [
+                {
+                  "at": "<iso-date>",
+                  "event": "goal-planned",
+                  "source": "cli"
+                }
+              ]
+            }
+          }
+        }
+      }
+    },
+    "stderr": ""
+  },
+  "planWrite": {
+    "exitCode": 0,
+    "stdout": {
+      "graphPath": "<graphDir>/release-plan.graph.json",
+      "dryRun": false,
+      "written": true,
+      "validation": {
+        "valid": true,
+        "errors": [],
+        "warnings": []
+      },
+      "summary": {
+        "graphVersion": 1,
+        "title": "Create a release checklist",
+        "description": "Generated from a CLI goal.",
+        "totalNodes": 1,
+        "root": "ROOT",
+        "counts": {
+          "pending": 1
+        }
+      },
+      "graph": {
+        "graphVersion": 1,
+        "title": "Create a release checklist",
+        "description": "Generated from a CLI goal.",
+        "graph": {
+          "root": "ROOT",
+          "nodes": {
+            "ROOT": {
+              "title": "Create a release checklist",
+              "kind": "task",
+              "status": "pending",
+              "description": "Create a release checklist",
+              "goal": {
+                "text": "Create a release checklist",
+                "source": "operator",
+                "createdAt": "<iso-date>"
+              },
+              "history": [
+                {
+                  "at": "<iso-date>",
+                  "event": "goal-planned",
+                  "source": "cli"
+                }
+              ]
+            }
+          }
+        }
+      }
+    },
     "stderr": ""
   },
   "ready": {

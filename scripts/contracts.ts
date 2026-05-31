@@ -827,6 +827,7 @@ export interface VisualizerServerHandle {
 export type VisualizerClient = ServerResponse;
 
 export type CliCommand =
+  | "plan"
   | "ready"
   | "summary"
   | "diagnostics"

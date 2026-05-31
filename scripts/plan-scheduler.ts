@@ -6,10 +6,12 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 
 import {
   dispatchCliCommand,
+  buildGoalGraph,
   parseArgs,
   parseChildrenArgs,
   parseCodexArgs,
   renderCliHelp,
+  resolvePlanGraphOutputPath,
   shouldStreamWorkerOutput
 } from "./cli.js";
 import type { CliCommandHandlers } from "./cli.js";
@@ -25,6 +27,7 @@ import {
   inspectGraphLock,
   readGraph,
   withGraphLock,
+  writeGraphAtomic,
   writeReportFile
 } from "./graph-io.js";
 import {
@@ -145,6 +148,8 @@ export {
   parseChildrenArgs,
   parseCodexArgs,
   renderCliHelp,
+  buildGoalGraph,
+  resolvePlanGraphOutputPath,
   shouldStreamWorkerOutput,
   isLocalVisualizerHost,
   visualizerHostSecurityWarning
@@ -221,6 +226,11 @@ export async function main(argv = process.argv.slice(2)): Promise<void> {
 function cliHandlers(): CliCommandHandlers {
   return {
     readGraph,
+    writeGraphFile: async (graphPath, graph) => {
+      await withGraphLock(graphPath, async () => {
+        await writeGraphAtomic(graph, graphPath);
+      });
+    },
     listReadyLeafNodes,
     summarizeGraph,
     diagnoseGraph,

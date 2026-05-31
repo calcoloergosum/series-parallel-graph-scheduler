@@ -1,5 +1,5 @@
 import test from "node:test";
-import { answerNode, assert, assertCliFails, assertCliGolden, assertReadableGraphValidationOutput, blockNode, buildVisualizerPayload, buildWorkerPrompt, captureSchedulerCli, claimNode, completeNode, createServer, depthPriorityGraph, diagnoseGraph, dirname, execFileAsync, fixtureGraph, graphValidationCases, join, listReadyLeafNodes, mkdir, mkdtemp, parseArgs, parseChildrenArgs, readGraph, renderCliHelp, renderVisualizerHtml, rendererDocumentFixture, rendererScriptPath, resolveWorkerIsolation, rm, schedulerScriptPath, tmpdir, utimes, withTempGraph, writeFile } from "./helpers/plan-scheduler-harness.mjs";
+import { answerNode, assert, assertCliFails, assertCliGolden, assertReadableGraphValidationOutput, blockNode, buildVisualizerPayload, buildWorkerPrompt, captureSchedulerCli, claimNode, completeNode, createServer, depthPriorityGraph, diagnoseGraph, dirname, execFileAsync, existsSync, fixtureGraph, graphValidationCases, join, listReadyLeafNodes, mkdir, mkdtemp, parseArgs, parseChildrenArgs, readGraph, renderCliHelp, renderVisualizerHtml, rendererDocumentFixture, rendererScriptPath, resolveWorkerIsolation, rm, schedulerScriptPath, symlink, tmpdir, utimes, withTempGraph, writeFile } from "./helpers/plan-scheduler-harness.mjs";
 
 test("answer records operator response and makes a blocked node ready", async () => {
   await withTempGraph(async (graphPath) => {
@@ -136,6 +136,23 @@ test("CLI golden outputs cover public command shapes", async () => {
   }
 
   actual.help = await captureSchedulerCli(["help"]);
+
+  await captureWithFreshGraph("planDryRun", (graphPath, replacements) =>
+    captureSchedulerCli(["plan", "--goal", "Ship a searchable audit log", "--graph", join(dirname(graphPath), "planned.graph.json"), "--title", "Audit Log Plan", "--dry-run"], {
+      replacements: {
+        ...replacements,
+        [join(dirname(graphPath), "planned.graph.json")]: "<plannedGraphPath>"
+      }
+    })
+  );
+  await captureWithFreshGraph("planWrite", (graphPath, replacements) =>
+    captureSchedulerCli(["plan", "--goal", "Create a release checklist", "--graph", join(dirname(graphPath), "release-plan.graph.json")], {
+      replacements: {
+        ...replacements,
+        [join(dirname(graphPath), "release-plan.graph.json")]: "<plannedGraphPath>"
+      }
+    })
+  );
 
   await captureWithFreshGraph("ready", (graphPath, replacements) =>
     captureSchedulerCli(["ready", "--graph", graphPath], { replacements })
@@ -366,6 +383,84 @@ test("CLI validates numeric arguments before dispatch", async () => {
       /Refusing to bind visualizer write endpoints to 0\.0\.0\.0 without protection/
     );
   });
+});
+
+test("CLI plan creates a valid graph and rejects unsafe inputs", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "plan-cli-"));
+  let outsideDir;
+  try {
+    const graphPath = join(dir, "nested", "plan.graph.json");
+    const cli = await execFileAsync(process.execPath, [
+      schedulerScriptPath,
+      "plan",
+      "--goal",
+      "Ship a searchable audit log",
+      "--title",
+      "Audit Log Plan",
+      "--graph",
+      graphPath
+    ]);
+    const result = JSON.parse(cli.stdout);
+    assert.equal(result.graphPath, graphPath);
+    assert.equal(result.written, true);
+    assert.equal(result.dryRun, false);
+    assert.equal(result.summary.totalNodes, 1);
+    assert.equal(result.graph.graph.nodes.ROOT.goal.text, "Ship a searchable audit log");
+
+    const graph = await readGraph(graphPath);
+    assert.equal(graph.title, "Audit Log Plan");
+    assert.equal(graph.graph.root, "ROOT");
+    assert.deepEqual(listReadyLeafNodes(graph).map((node) => node.id), ["ROOT"]);
+
+    const dryRunDir = join(dir, "dry-run");
+    const dryRunPath = join(dryRunDir, "plan.graph.json");
+    const dryRun = await execFileAsync(process.execPath, [
+      schedulerScriptPath,
+      "plan",
+      "--goal",
+      "Preview only",
+      "--graph",
+      dryRunPath,
+      "--dry-run"
+    ]);
+    const dryRunResult = JSON.parse(dryRun.stdout);
+    assert.equal(dryRunResult.written, false);
+    assert.equal(dryRunResult.dryRun, true);
+    assert.equal(existsSync(dryRunPath), false);
+    assert.equal(existsSync(dryRunDir), false);
+
+    await assertCliFails(
+      ["plan", "--goal", "   ", "--graph", join(dir, "empty-goal.graph.json")],
+      /plan requires --goal/
+    );
+
+    await assertCliFails(
+      ["plan", "--goal", "Overwrite existing", "--graph", graphPath],
+      /Refusing to overwrite existing graph file:/
+    );
+
+    await assertCliFails(
+      ["plan", "--goal", "Preview existing", "--graph", graphPath, "--dry-run"],
+      /Refusing to overwrite existing graph file:/
+    );
+
+    outsideDir = await mkdtemp(join(tmpdir(), "plan-cli-outside-"));
+    const linkedDir = join(dir, "linked-output");
+    await symlink(outsideDir, linkedDir);
+    await assertCliFails(
+      ["plan", "--goal", "Write through link", "--graph", join(linkedDir, "plan.graph.json")],
+      /Unsafe graph output path: parent is a symbolic link:/
+    );
+    await assertCliFails(
+      ["plan", "--goal", "Preview through link", "--graph", join(linkedDir, "dry-run.graph.json"), "--dry-run"],
+      /Unsafe graph output path: parent is a symbolic link:/
+    );
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+    if (outsideDir) {
+      await rm(outsideDir, { recursive: true, force: true });
+    }
+  }
 });
 
 test("CLI keeps graph mutation when Slack delivery fails", async () => {
@@ -675,6 +770,7 @@ test("structured CLI parser keeps repeatable flags explicit", () => {
 test("CLI help lists commands, flag kinds, defaults, environment variables, and examples", async () => {
   const help = renderCliHelp();
   const commandNames = [
+    "plan",
     "ready",
     "summary",
     "events",
@@ -700,11 +796,11 @@ test("CLI help lists commands, flag kinds, defaults, environment variables, and 
   }
 
   assert.match(help, /--graph PATH\s+Optional for every command\. Default: PLAN_GRAPH, then plan\.graph\.json\./);
-  assert.match(help, /Boolean flags take no value: --help, --once, --quiet, --unsafe-visualizer-write\./);
+  assert.match(help, /Boolean flags take no value: --help, --dry-run, --once, --quiet, --unsafe-visualizer-write\./);
   assert.match(help, /Repeatable flags: --child ID=Title or ID:Title; --codex-arg ARG\./);
   assert.match(help, /Use --codex-arg=--flag when the value starts with "-"\./);
   assert.match(help, /--lease 1\.\.86400 seconds, --idle-ms 1\.\.86400000, --timeout-ms 1\.\.86400000, --port 0\.\.65535, --limit 1\.\.10000/);
-  assert.match(help, /Path flags: --graph selects the graph; --report stays inside the graph directory; --template resolves from the graph directory; --cwd controls worker process cwd\./);
+  assert.match(help, /Path flags: --graph selects the graph; for plan only, --graph is the output graph path\. --report stays inside the graph directory; --template resolves from the graph directory; --cwd controls worker process cwd\./);
   assert.match(help, /PLAN_GRAPH\s+Default graph path when --graph is omitted\./);
   assert.match(help, /SLACK_WEBHOOK_URL\s+Enables notifications for done, block, answer, fail, and decompose\./);
   assert.match(help, /SPG_SLACK_TIMEOUT_MS\s+Slack notification timeout in milliseconds\. Default: 5000\./);
@@ -712,6 +808,8 @@ test("CLI help lists commands, flag kinds, defaults, environment variables, and 
   assert.match(help, /SPG_GRAPH_LOCK_TIMEOUT_MS\s+Graph lock wait timeout in milliseconds\. Default: 5000\./);
   assert.match(help, /SPG_GIT_CACHE_LOCK_TIMEOUT_MS\s+Git cache lock wait timeout in milliseconds\. Default: 60000\./);
   assert.match(help, /Required: --node ID, --answer TEXT/);
+  assert.match(help, /Required: --goal TEXT/);
+  assert.match(help, /--graph PATH \(output graph path\), --title TEXT, --dry-run/);
   assert.match(help, /--child ID=Title repeated, or --child-json JSON/);
   assert.match(help, /--session NAME \(default: codex-worker\)/);
   assert.match(help, /--codex-command PATH \(default: codex\), --codex-arg ARG repeated \(default: exec\)/);

@@ -1,5 +1,6 @@
-import { dirname, resolve } from "node:path";
-import { isRecord } from "./contracts.js";
+import { lstat, mkdir } from "node:fs/promises";
+import { dirname, isAbsolute, join, relative, resolve } from "node:path";
+import { isRecord, validatePlanGraphFileResult } from "./contracts.js";
 import type {
   CliCommand,
   DecomposeNodeResult,
@@ -21,7 +22,7 @@ import type {
 } from "./contracts.js";
 import { numericArgumentRanges, parseNumericArgument } from "./numeric-args.js";
 import { exportOperationalEvents, operationalEvents } from "./operational-events.js";
-import { errorMessage } from "./shared-utils.js";
+import { errorMessage, safeFilePart } from "./shared-utils.js";
 
 export interface DecomposeChildArg {
   id: string;
@@ -51,6 +52,7 @@ export interface CliDispatchOptions {
 
 export interface CliCommandHandlers {
   readGraph(graphPath: string): Promise<PlanGraphFile>;
+  writeGraphFile(graphPath: string, graph: PlanGraphFile): Promise<void>;
   listReadyLeafNodes(graph: PlanGraphFile): unknown;
   summarizeGraph(graph: PlanGraphFile): GraphSummary;
   diagnoseGraph(graphPath: string): Promise<GraphDiagnostics>;
@@ -155,6 +157,7 @@ export interface CliCommandHandlers {
 }
 
 export const cliCommands = [
+  "plan",
   "ready",
   "summary",
   "diagnostics",
@@ -178,7 +181,7 @@ export const cliCommands = [
   "help"
 ] as const satisfies readonly CliCommand[];
 
-const booleanFlags = new Set(["help", "once", "quiet", "unsafe-visualizer-write"]);
+const booleanFlags = new Set(["help", "once", "quiet", "unsafe-visualizer-write", "dry-run"]);
 const repeatableValueFlags = new Set(["child", "codex-arg"]);
 
 export function parseArgs(argv: readonly string[]): ParsedArgs {
@@ -300,6 +303,7 @@ export function resolveCliGraphPath(rootDir: string, args: ParsedArgs, env: CliE
 export function renderCliHelp(): string {
   return `Usage:
   node scripts/plan-scheduler.mjs <command> [flags]
+  node scripts/plan-scheduler.mjs plan --goal "..."
   node scripts/plan-scheduler.mjs help
   node scripts/plan-scheduler.mjs --help
 
@@ -307,6 +311,11 @@ Graph selection:
   --graph PATH              Optional for every command. Default: PLAN_GRAPH, then plan.graph.json.
 
 Commands:
+  plan
+    Required: --goal TEXT
+    Optional: --graph PATH (output graph path), --title TEXT, --dry-run
+    Example: node scripts/plan-scheduler.mjs plan --goal "Ship a searchable audit log" --graph runs/goals/audit-log/plan.graph.json
+
   ready
     Required: none
     Optional: --graph PATH
@@ -408,10 +417,10 @@ Commands:
     Example: node scripts/plan-scheduler.mjs serve --host 127.0.0.1 --port 8787
 
 Flag types:
-  Boolean flags take no value: --help, --once, --quiet, --unsafe-visualizer-write.
+  Boolean flags take no value: --help, --dry-run, --once, --quiet, --unsafe-visualizer-write.
   Repeatable flags: --child ID=Title or ID:Title; --codex-arg ARG. Use --codex-arg=--flag when the value starts with "-".
   Numeric flags are integers: --lease 1..86400 seconds, --idle-ms 1..86400000, --timeout-ms 1..86400000, --port 0..65535, --limit 1..10000.
-  Path flags: --graph selects the graph; --report stays inside the graph directory; --template resolves from the graph directory; --cwd controls worker process cwd.
+  Path flags: --graph selects the graph; for plan only, --graph is the output graph path. --report stays inside the graph directory; --template resolves from the graph directory; --cwd controls worker process cwd.
   Isolation flags: --isolation git requires scheduler.remote unless --remote URL is supplied; --workspace-root selects isolated clone placement; --workspace-retention controls clone cleanup.
 
 Environment:
@@ -427,13 +436,45 @@ export async function dispatchCliCommand(options: CliDispatchOptions): Promise<v
   const args = parseArgs(options.argv);
   const command = args._[0];
   const output = options.output || console;
-  const graphPath = resolveCliGraphPath(options.rootDir, args, options.env, options.defaultGraphFile);
   const handlers = options.handlers;
 
   if (!command || command === "help" || booleanArg(args, "help")) {
     output.log(renderCliHelp());
     return;
   }
+
+  if (command === "plan") {
+    const goal = requiredTrimmedOptionString(args, "goal", "plan");
+    const graphPath = resolvePlanGraphOutputPath(options.rootDir, args, goal);
+    const graph = buildGoalGraph(goal, optionString(args, "title"));
+    const validation = validatePlanGraphFileResult(graph);
+    if (validation.errors.length > 0) {
+      throw new Error(`Generated graph failed validation: ${formatGraphValidationIssues(validation.errors)}`);
+    }
+    const result = {
+      graphPath,
+      dryRun: booleanArg(args, "dry-run"),
+      written: false,
+      validation: {
+        valid: true,
+        errors: validation.errors,
+        warnings: validation.warnings
+      },
+      summary: handlers.summarizeGraph(graph),
+      graph
+    };
+    if (result.dryRun) {
+      await validateSafeGraphOutputPath(graphPath);
+    } else {
+      await ensureSafeGraphOutputPath(graphPath);
+      await handlers.writeGraphFile(graphPath, graph);
+      result.written = true;
+    }
+    printJson(output, result);
+    return;
+  }
+
+  const graphPath = resolveCliGraphPath(options.rootDir, args, options.env, options.defaultGraphFile);
 
   switch (command) {
     case "ready":
@@ -685,6 +726,145 @@ function parseChildJson(child: unknown, index: number): DecomposeChildArg {
   return result;
 }
 
+export function buildGoalGraph(goal: string, title?: string): PlanGraphFile {
+  const normalizedGoal = goal.trim();
+  const normalizedTitle = title?.trim() || defaultGoalTitle(normalizedGoal);
+  const createdAt = new Date().toISOString();
+  return {
+    graphVersion: 1,
+    title: normalizedTitle,
+    description: "Generated from a CLI goal.",
+    graph: {
+      root: "ROOT",
+      nodes: {
+        ROOT: {
+          title: normalizedTitle,
+          kind: "task",
+          status: "pending",
+          description: normalizedGoal,
+          goal: {
+            text: normalizedGoal,
+            source: "operator",
+            createdAt
+          },
+          history: [
+            {
+              at: createdAt,
+              event: "goal-planned",
+              source: "cli"
+            }
+          ]
+        }
+      }
+    }
+  };
+}
+
+export function resolvePlanGraphOutputPath(rootDir: string, args: ParsedArgs, goal: string): string {
+  const explicitGraphPath = optionString(args, "graph");
+  if (explicitGraphPath !== undefined) {
+    return resolve(rootDir, explicitGraphPath);
+  }
+  return resolve(rootDir, "runs", "goals", `${goalTimestamp()}-${goalSlug(goal)}`, "plan.graph.json");
+}
+
+async function ensureSafeGraphOutputPath(graphPath: string): Promise<void> {
+  const parentDir = dirname(graphPath);
+  await ensureSafeOutputDirectory(parentDir);
+  await ensureGraphOutputTargetAvailable(graphPath);
+}
+
+async function validateSafeGraphOutputPath(graphPath: string): Promise<void> {
+  await validateSafeOutputDirectoryAncestors(dirname(graphPath));
+  await ensureGraphOutputTargetAvailable(graphPath);
+}
+
+async function ensureGraphOutputTargetAvailable(graphPath: string): Promise<void> {
+  try {
+    const targetStat = await lstat(graphPath);
+    if (targetStat.isSymbolicLink()) {
+      throw new Error(`Unsafe graph output path: target is a symbolic link: ${graphPath}`);
+    }
+    throw new Error(`Refusing to overwrite existing graph file: ${graphPath}`);
+  } catch (error) {
+    if (nodeErrorCode(error) !== "ENOENT") {
+      throw error;
+    }
+  }
+}
+
+async function validateSafeOutputDirectoryAncestors(targetDir: string): Promise<void> {
+  for (const currentPath of outputPathSegments(targetDir)) {
+    try {
+      const currentStat = await lstat(currentPath);
+      if (currentStat.isSymbolicLink()) {
+        throw new Error(`Unsafe graph output path: parent is a symbolic link: ${currentPath}`);
+      }
+      if (!currentStat.isDirectory()) {
+        throw new Error(`Unsafe graph output path: parent is not a directory: ${currentPath}`);
+      }
+    } catch (error) {
+      if (nodeErrorCode(error) === "ENOENT") {
+        return;
+      }
+      throw error;
+    }
+  }
+}
+
+async function ensureSafeOutputDirectory(targetDir: string): Promise<void> {
+  for (const currentPath of outputPathSegments(targetDir)) {
+    try {
+      const currentStat = await lstat(currentPath);
+      if (currentStat.isSymbolicLink()) {
+        throw new Error(`Unsafe graph output path: parent is a symbolic link: ${currentPath}`);
+      }
+      if (!currentStat.isDirectory()) {
+        throw new Error(`Unsafe graph output path: parent is not a directory: ${currentPath}`);
+      }
+    } catch (error) {
+      if (nodeErrorCode(error) !== "ENOENT") {
+        throw error;
+      }
+      await mkdir(currentPath);
+    }
+  }
+}
+
+function outputPathSegments(targetDir: string): string[] {
+  const resolvedDir = resolve(targetDir);
+  const root = isAbsolute(resolvedDir) ? resolve("/") : "";
+  let currentPath = root;
+  const segments: string[] = [];
+  for (const segment of relative(root, resolvedDir).split(/[\\/]+/).filter(Boolean)) {
+    currentPath = currentPath ? join(currentPath, segment) : segment;
+    segments.push(currentPath);
+  }
+  return segments;
+}
+
+function defaultGoalTitle(goal: string): string {
+  return goal.length <= 80 ? goal : `${goal.slice(0, 77)}...`;
+}
+
+function goalTimestamp(): string {
+  return new Date().toISOString().replaceAll(/[-:]/g, "").replace(/\.\d{3}Z$/, "Z");
+}
+
+function goalSlug(goal: string): string {
+  const normalized = goal.trim().toLowerCase().replaceAll(/[^a-z0-9._-]+/g, "-").replaceAll(/-+/g, "-").replaceAll(/^-|-$/g, "");
+  const safe = safeFilePart(normalized).replaceAll(/^\.|\.$/g, "").slice(0, 80);
+  return safe || "goal";
+}
+
+function formatGraphValidationIssues(issues: { path: string; message: string }[]): string {
+  return issues.map((issue) => `${issue.path} ${issue.message}`).join("; ");
+}
+
+function nodeErrorCode(error: unknown): string | undefined {
+  return isRecord(error) && typeof error.code === "string" ? error.code : undefined;
+}
+
 function argValues(value: ParsedArgs[string]): (boolean | string)[] {
   if (value === undefined) {
     return [];
@@ -713,6 +893,10 @@ function requiredOptionString(args: ParsedArgs, key: string, command: string): s
     throw new Error(`${command} requires --${key}`);
   }
   return value;
+}
+
+function requiredTrimmedOptionString(args: ParsedArgs, key: string, command: string): string {
+  return requiredOptionString(args, key, command).trim();
 }
 
 function booleanArg(args: ParsedArgs, key: string): boolean {
