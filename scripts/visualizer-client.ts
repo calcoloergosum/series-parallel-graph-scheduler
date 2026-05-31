@@ -478,6 +478,10 @@ export function renderVisualizerHtml(): string {
       gap: 8px;
       margin: 10px 0;
     }
+    .selected-actions button[disabled] {
+      cursor: not-allowed;
+      opacity: 0.55;
+    }
     .inspector-section {
       margin-top: 14px;
       padding-top: 12px;
@@ -597,6 +601,13 @@ export function renderVisualizerHtml(): string {
       padding: 8px;
       font-size: 11px;
       white-space: pre-wrap;
+    }
+    .planner-preview-list {
+      display: grid;
+      gap: 6px;
+      margin: 8px 0;
+      padding: 0;
+      list-style: none;
     }
     [data-modal-error],
     .action-error {
@@ -884,6 +895,64 @@ export function renderVisualizerHtml(): string {
       children ? "children " + children : "",
       preview.report ? "report " + preview.report : ""
     ].filter(Boolean).join(" / ");
+  }
+
+  function nodeAction(node, actionId) {
+    return (node.actions || []).find((action) => action.id === actionId);
+  }
+
+  function actionableDisabledReason(action, node) {
+    if (!action?.disabledReason) {
+      return "";
+    }
+    if (node?.lease && /no worker credentials/.test(action.disabledReason)) {
+      return "";
+    }
+    return action.disabledReason;
+  }
+
+  function previewNodeState(node) {
+    return {
+      status: node.status,
+      kind: node.kind,
+      children: Array.isArray(node.children) && node.children.length ? [...node.children] : undefined,
+      lease: node.lease ? { session: node.lease.session, runId: node.lease.runId } : undefined,
+      blockedReason: node.blockedReason,
+      question: node.question,
+      report: node.report
+    };
+  }
+
+  function sortJsonValue(value) {
+    if (Array.isArray(value)) {
+      return value.map(sortJsonValue);
+    }
+    if (value && typeof value === "object") {
+      return Object.fromEntries(Object.entries(value)
+        .filter((entry) => entry[1] !== undefined)
+        .sort((left, right) => left[0].localeCompare(right[0]))
+        .map((entry) => [entry[0], sortJsonValue(entry[1])]));
+    }
+    return value;
+  }
+
+  function stableJsonStringify(value) {
+    return JSON.stringify(sortJsonValue(value));
+  }
+
+  function clientPreviewFreshnessReason(node) {
+    const preview = node.pendingPlannerPreview;
+    if (!preview) {
+      return "";
+    }
+    const graphVersion = latestPayload?.summary?.graphVersion;
+    if (preview.graphVersion !== undefined && graphVersion !== undefined && preview.graphVersion !== graphVersion) {
+      return "Planner preview is stale: graph version changed from " + preview.graphVersion + " to " + graphVersion + ".";
+    }
+    if (stableJsonStringify(preview.nodeState || {}) !== stableJsonStringify(previewNodeState(node) || {})) {
+      return "Planner preview is stale: node state changed.";
+    }
+    return "";
   }
 
   function joinList(values) {
@@ -1641,6 +1710,41 @@ export function renderVisualizerHtml(): string {
     parent.append(section);
   }
 
+  function appendPlannerPreviewSection(parent, node) {
+    const section = document.createElement("section");
+    section.className = "inspector-section";
+    const heading = document.createElement("h3");
+    heading.textContent = "Planner Preview";
+    section.append(heading);
+
+    const preview = node.pendingPlannerPreview;
+    if (!preview) {
+      const empty = document.createElement("p");
+      empty.className = "meta";
+      empty.textContent = "No pending planner preview.";
+      section.append(empty);
+      parent.append(section);
+      return;
+    }
+
+    appendMetaLine(section, "request", preview.requestId);
+    appendMetaLine(section, "kind", preview.decompose?.kind || preview.proposedKind);
+    appendMetaLine(section, "freshness", clientPreviewFreshnessReason(node) || "fresh");
+    const children = Array.isArray(preview.decompose?.children) ? preview.decompose.children : [];
+    if (children.length) {
+      const list = document.createElement("ul");
+      list.className = "planner-preview-list";
+      for (const child of children) {
+        const item = document.createElement("li");
+        item.className = "meta";
+        item.textContent = child.id + ": " + (child.title || child.id);
+        list.append(item);
+      }
+      section.append(list);
+    }
+    parent.append(section);
+  }
+
   function renderFilterSummary(visibleReady, visibleWorking, visibleWorkers) {
     const query = filters.query ? ' / search "' + filters.query + '"' : "";
     const message = "Showing " + visibleReady.length + " ready, " + visibleWorking.length + " active, " + visibleWorkers.length + " workers" + query + ".";
@@ -1671,13 +1775,20 @@ export function renderVisualizerHtml(): string {
     document.getElementById("start-selected-worker").disabled = !ready;
     summary.textContent = ready ? "Selected: " + id + " is ready." : "Selected: " + id + " is " + (node.status || "pending") + ".";
     const children = Array.isArray(node.children) ? node.children.join(", ") : "";
-    const actions = [
-      ["claim-selected", "Claim Selected"],
-      ["start", "Start"],
-      ["block", "Block"],
-      ["reset", "Reset"],
-      ...(node.pendingPlannerPreview ? [["apply-preview", "Apply Preview"], ["reject-preview", "Reject Preview"]] : []),
-      ...((node.status === "claimed" || node.status === "running" || node.status === "blocked") && !children ? [["decompose", "Decompose"]] : [])
+    const previewReason = clientPreviewFreshnessReason(node);
+    const actionControls = [
+      { action: "claim-selected", policy: "claim", label: "Claim Selected" },
+      { action: "start", policy: "start", label: "Start" },
+      { action: "block", policy: "block", label: "Block" },
+      { action: "reset", policy: "reset", label: "Reset" },
+      { action: "decompose", policy: "decompose", label: "Split Series" },
+      { action: "split-parallel", policy: "decompose", label: "Split Parallel" },
+      ...(node.pendingPlannerPreview ? [
+        { action: "planner-preview", policy: "apply-preview", label: "Planner Preview", ignoreDisabled: true },
+        { action: "apply-preview", policy: "apply-preview", label: "Apply Preview" },
+        { action: "reject-preview", policy: "reject-preview", label: "Reject Preview" }
+      ] : []),
+      { action: "regenerate-preview", policy: "regenerate-preview", label: "Regenerate" }
     ];
     const history = (node.history || []).slice().reverse().map((event) => event.event || "event").join(", ");
     details.textContent = "";
@@ -1698,15 +1809,29 @@ export function renderVisualizerHtml(): string {
     const actionWrap = document.createElement("div");
     actionWrap.className = "selected-actions";
     actionWrap.setAttribute("aria-label", "Selected node actions");
-    for (const [action, label] of actions) {
+    for (const control of actionControls) {
+      const policy = nodeAction(node, control.policy);
+      let disabledReason = control.ignoreDisabled ? "" : (previewReason && (control.policy === "apply-preview" || control.policy === "decompose") ? previewReason : actionableDisabledReason(policy, node));
+      const previewKind = node.pendingPlannerPreview?.decompose?.kind || node.pendingPlannerPreview?.proposedKind;
+      if (!disabledReason && control.policy === "decompose" && previewKind) {
+        const requestedKind = control.action === "split-parallel" ? "parallel" : "series";
+        disabledReason = requestedKind === previewKind ? "" : "Pending planner preview proposed " + previewKind + "; reject or regenerate before using a different split.";
+      }
       const button = document.createElement("button");
       button.className = "secondary";
       button.type = "button";
-      button.dataset.nodeAction = action;
-      button.textContent = label;
+      button.dataset.nodeAction = control.action;
+      button.textContent = control.label;
+      if (disabledReason) {
+        button.disabled = true;
+        button.title = disabledReason;
+        button.setAttribute("aria-label", control.label + ": " + disabledReason);
+      }
       actionWrap.append(button);
     }
     details.append(actionWrap);
+
+    appendPlannerPreviewSection(details, node);
 
     appendMetaLine(details, "kind", node.kind || "task");
     appendMetaLine(details, "goal", detailGoalText(node));
@@ -1900,6 +2025,10 @@ export function renderVisualizerHtml(): string {
       });
       return;
     }
+    if (action === "planner-preview") {
+      openPlannerPreviewModal(entry);
+      return;
+    }
     if (action === "reject-preview") {
       openActionModal({
         title: "Reject Preview " + id,
@@ -1912,9 +2041,46 @@ export function renderVisualizerHtml(): string {
       });
       return;
     }
-    if (action === "decompose") {
-      openDecomposeModal(entry);
+    if (action === "regenerate-preview") {
+      openActionModal({
+        title: "Regenerate Preview " + id,
+        submitLabel: "Regenerate",
+        fields: [
+          ...ownerFields(node),
+          { name: "requestId", label: "Request Id", value: "" },
+          { name: "plannerFixturePath", label: "Planner Fixture", value: "" },
+          { name: "report", label: "Report", value: node.pendingPlannerPreview?.report || node.report || "" }
+        ],
+        onSubmit: (values) => apiPost("/api/regenerate-preview", {
+          nodeId: id,
+          session: values.session,
+          runId: values.runId,
+          requestId: values.requestId || undefined,
+          plannerFixturePath: values.plannerFixturePath || undefined,
+          report: values.report || undefined
+        })
+      });
+      return;
     }
+    if (action === "decompose") {
+      openDecomposeModal(entry, "series");
+      return;
+    }
+    if (action === "split-parallel") {
+      openDecomposeModal(entry, "parallel");
+    }
+  }
+
+  function openPlannerPreviewModal(entry) {
+    const root = document.getElementById("modal-root");
+    const preview = entry.node.pendingPlannerPreview;
+    root.innerHTML = '<div class="modal-backdrop"><section class="modal-dialog" role="dialog" aria-modal="true" aria-labelledby="planner-preview-modal-title">' +
+      '<h2 id="planner-preview-modal-title">Planner Preview ' + escapeHtml(entry.id) + '</h2>' +
+      '<pre class="decompose-preview">' + escapeHtml(JSON.stringify(preview || null, null, 2)) + '</pre>' +
+      '<div class="button-row"><button class="secondary" type="button" data-modal-cancel>Close</button></div>' +
+      '</section></div>';
+    root.querySelector("[data-modal-cancel]").addEventListener("click", closeModal);
+    root.querySelector("[data-modal-cancel]").focus();
   }
 
   function decomposeRowHtml(child, index) {
@@ -1978,11 +2144,11 @@ export function renderVisualizerHtml(): string {
     }
   }
 
-  function openDecomposeModal(entry) {
+  function openDecomposeModal(entry, forcedKind) {
     const root = document.getElementById("modal-root");
     const node = entry.node;
     const preview = node.pendingPlannerPreview?.decompose;
-    const initialKind = preview?.kind || "series";
+    const initialKind = forcedKind || preview?.kind || "series";
     const initialChildren = Array.isArray(preview?.children) && preview.children.length
       ? preview.children
       : [{ id: nextChildId(entry.id), title: "" }];

@@ -123,6 +123,14 @@ export interface VisualizerRuntime {
     reason?: string;
     responder?: string;
   }): Promise<PlannerPreviewMutationResult>;
+  regeneratePlannerPreview(graphPath: string, options: {
+    nodeId?: string;
+    session?: string;
+    runId?: string;
+    requestId?: string;
+    plannerFixturePath?: string;
+    report?: string;
+  }): Promise<PlannerPreviewMutationResult>;
   reconcileGraphStatus(graphPath: string): Promise<ReconcileGraphResult>;
   releaseExpiredLeases(graphPath: string): Promise<ReleaseExpiredLeasesResult>;
   planGoalGraph(graphPath: string, options: {
@@ -642,6 +650,35 @@ export async function createVisualizerServer({
           };
           await runtime.renderPlanAfterUpdate(graphPath);
           mutationResult.slack = await runtime.sendSlackNotification(graphPath, operationalEvents.plannerPreviewRejected, { nodeId, reason });
+          await broadcast();
+          return mutationResult;
+        });
+        res.writeHead(200, { "content-type": "application/json; charset=utf-8", "cache-control": "no-store" });
+        res.end(JSON.stringify(result));
+        return;
+      }
+
+      if (req.method === "POST" && (url.pathname === "/api/node/regenerate-preview" || url.pathname === "/api/regenerate-preview")) {
+        if (!authorizeWriteRequest(req, res, requiredWriteToken)) {
+          return;
+        }
+        const body = await readRequestJson(req);
+        const nodeId = stringBodyField(body, "nodeId");
+        const result = await runVisualizerWriteRoute(async () => {
+          const mutationResult: PlannerPreviewMutationResult & { slack?: SlackNotificationResult } = {
+            ...await runtime.regeneratePlannerPreview(graphPath, {
+              nodeId,
+              session: optionalStringBodyField(body, "session"),
+              runId: optionalRunIdBodyField(body),
+              requestId: optionalStringBodyField(body, "requestId"),
+              plannerFixturePath: optionalStringBodyField(body, "plannerFixturePath")
+                ?? optionalStringBodyField(body, "planner-fixture")
+                ?? optionalStringBodyField(body, "fixturePath"),
+              report: optionalStringBodyField(body, "report")
+            })
+          };
+          await runtime.renderPlanAfterUpdate(graphPath);
+          mutationResult.slack = await runtime.sendSlackNotification(graphPath, operationalEvents.plannerPreviewRegenerated, { nodeId });
           await broadcast();
           return mutationResult;
         });

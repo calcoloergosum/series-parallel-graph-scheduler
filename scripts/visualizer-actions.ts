@@ -125,7 +125,8 @@ const actionDefinitions: ActionDefinition[] = [
     label: "Decompose",
     danger: "caution",
     requiredFields: [...workerCredentialFields, "children", "kind?"],
-    disabledReason: workerActionDisabledReason("decompose")
+    disabledReason: (graph, nodeId, node, context, readyIds) =>
+      previewFreshnessDisabledReason(graph, nodeId, node) || workerActionDisabledReason("decompose")(graph, nodeId, node, context, readyIds)
   },
   {
     id: "apply-preview",
@@ -135,6 +136,10 @@ const actionDefinitions: ActionDefinition[] = [
     disabledReason: (graph, nodeId, node, context) => {
       if (!node.pendingPlannerPreview) {
         return "Node has no pending planner preview.";
+      }
+      const staleReason = previewFreshnessDisabledReason(graph, nodeId, node);
+      if (staleReason) {
+        return staleReason;
       }
       return workerActionDisabledReason("apply-preview")(graph, nodeId, node, context, new Set());
     }
@@ -155,6 +160,18 @@ const actionDefinitions: ActionDefinition[] = [
       return (schedulerTransitionTable["reject-preview"].allowedFrom as readonly string[]).includes(node.status || "pending")
         ? undefined
         : "reject-preview requires blocked or pending status.";
+    }
+  },
+  {
+    id: "regenerate-preview",
+    label: "Regenerate Preview",
+    danger: "caution",
+    requiredFields: [...workerCredentialFields, "plannerFixturePath?", "requestId?", "report?"],
+    disabledReason: (graph, nodeId, node, context) => {
+      if (!isLeaf(graph, nodeId)) {
+        return "Only leaf nodes can have planner previews regenerated.";
+      }
+      return statusOrLeaseDisabledReason(node, context, schedulerTransitionTable["regenerate-preview"].allowedFrom, "regenerate-preview");
     }
   }
 ];
@@ -248,6 +265,51 @@ function leaseCredentialDisabledReason(node: GraphNode, context: VisualizerActio
     return `Lease session mismatch; expected ${node.lease.session}.`;
   }
   return undefined;
+}
+
+function previewFreshnessDisabledReason(graph: PlanGraphFile, nodeId: NodeId, node: GraphNode): string | undefined {
+  const preview = node.pendingPlannerPreview;
+  if (!preview) {
+    return undefined;
+  }
+  if (preview.graphVersion !== undefined && graph.graphVersion !== preview.graphVersion) {
+    return `Planner preview is stale for ${nodeId}: graph version changed from ${preview.graphVersion} to ${graph.graphVersion ?? "unknown"}.`;
+  }
+  if (stableJsonStringify(preview.nodeState ?? {}) !== stableJsonStringify(previewNodeState(node) ?? {})) {
+    return `Planner preview is stale for ${nodeId}: node state changed.`;
+  }
+  return undefined;
+}
+
+function previewNodeState(node: GraphNode): NonNullable<GraphNode["pendingPlannerPreview"]>["nodeState"] {
+  return {
+    status: node.status,
+    kind: node.kind,
+    children: Array.isArray(node.children) ? [...node.children] : undefined,
+    lease: node.lease ? { session: node.lease.session, runId: node.lease.runId } : undefined,
+    blockedReason: node.blockedReason,
+    question: node.question,
+    report: node.report
+  };
+}
+
+function stableJsonStringify(value: unknown): string {
+  return JSON.stringify(sortJsonValue(value));
+}
+
+function sortJsonValue(value: unknown): unknown {
+  if (Array.isArray(value)) {
+    return value.map(sortJsonValue);
+  }
+  if (value && typeof value === "object") {
+    return Object.fromEntries(
+      Object.entries(value as Record<string, unknown>)
+        .filter(([, entry]) => entry !== undefined)
+        .sort(([left], [right]) => left.localeCompare(right))
+        .map(([key, entry]) => [key, sortJsonValue(entry)])
+    );
+  }
+  return value;
 }
 
 function destructiveConfirmation(label: string, message: string): VisualizerNodeAction["confirmation"] {

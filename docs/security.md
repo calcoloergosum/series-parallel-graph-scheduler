@@ -87,6 +87,9 @@ The CLI mutates work through these commands:
   decompose path, regenerates HTML, and may notify Slack.
 - `reject-preview`: clears stored planner preview metadata without creating
   child nodes, regenerates HTML, and may notify Slack.
+- `regenerate-preview`: replaces stored planner preview metadata through the
+  guarded planner-preview route, leaves the node blocked, regenerates HTML, and
+  may notify Slack.
 - `worker`: loops over `claim`, `start`, lease renewal, report writing, `done`, and `fail` while spawning the configured Codex command.
 - `reconcile`: marks completed internal subtrees done.
 - `release-expired`: clears expired leases and returns affected work to pending.

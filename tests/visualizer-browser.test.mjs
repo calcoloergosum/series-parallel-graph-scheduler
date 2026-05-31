@@ -954,6 +954,10 @@ test("visualizer token-protected approval flow shows planner and changed-file pr
           await page.locator("#selected-node-details", { hasText: "goal: Approve the planner preview safely" }).waitFor();
           await page.locator("#selected-node-details", { hasText: "decision: Split approval work into one implementation child" }).waitFor();
           await page.locator("#selected-node-details", { hasText: "pending planner preview: request worker-plan-APPROVAL-run_approval_preview" }).waitFor();
+          await page.locator("#selected-node-details", { hasText: "Planner Preview" }).waitFor();
+          await page.locator('[data-node-action="apply-preview"]').waitFor();
+          await page.locator('[data-node-action="reject-preview"]').waitFor();
+          await page.locator('[data-node-action="regenerate-preview"]').waitFor();
 
           await page.locator('[data-node-action="decompose"]').click();
           await page.locator("[data-decompose-preview]", { hasText: '"title": "Approved child"' }).waitFor();

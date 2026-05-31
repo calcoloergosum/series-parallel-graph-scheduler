@@ -63,6 +63,7 @@ import {
   startNode
 } from "./node-mutations.js";
 import { sendSlackNotification } from "./notification.js";
+import { regeneratePlannerPreview } from "./planner-preview-mutations.js";
 import { createFixturePlannerRuntime, defaultPlannerOutputSchema } from "./planner-runtime.js";
 import { runtimePathsFromModuleUrl } from "./runtime-paths.js";
 import {
@@ -129,6 +130,7 @@ export {
   schedulerTransitionTable,
   startNode
 } from "./node-mutations.js";
+export { regeneratePlannerPreview } from "./planner-preview-mutations.js";
 export { planNodeDecomposition } from "./node-mutations.js";
 export {
   exportOperationalEvents,
@@ -365,6 +367,23 @@ function resolveGraphRelativeFixturePath(graphPath: string, path: string): strin
   return isAbsolute(path) ? path : resolve(dirname(graphPath), path);
 }
 
+async function resolveVisualizerPlannerFixturePath(graphPath: string, path?: string): Promise<string> {
+  const explicitPath = typeof path === "string" && path.trim() ? path.trim() : undefined;
+  if (explicitPath) {
+    return resolveGraphRelativeFixturePath(graphPath, explicitPath);
+  }
+  const graph = await readGraph(graphPath);
+  const configuredPath = graph.scheduler?.workerPlanner?.fixturePath;
+  if (typeof configuredPath !== "string" || !configuredPath.trim()) {
+    throw new Error("regenerate-preview requires plannerFixturePath or scheduler.workerPlanner.fixturePath");
+  }
+  return resolveGraphRelativeFixturePath(graphPath, configuredPath);
+}
+
+function safeVisualizerRequestIdPart(value: string): string {
+  return value.replaceAll(/[^A-Za-z0-9_.-]/g, "-").replaceAll(/-+/g, "-").slice(0, 80) || "node";
+}
+
 export async function main(argv = process.argv.slice(2)): Promise<void> {
   await dispatchCliCommand({
     argv,
@@ -467,6 +486,26 @@ function visualizerRuntime() {
     decomposeNode,
     applyPlannerPreview,
     rejectPlannerPreview,
+    regeneratePlannerPreview: async (graphPath: string, options: {
+      nodeId?: string;
+      session?: string;
+      runId?: string;
+      requestId?: string;
+      plannerFixturePath?: string;
+      report?: string;
+    }) => {
+      const requestId = options.requestId || `visualizer-regenerate-${safeVisualizerRequestIdPart(options.nodeId || "node")}-${Date.now()}`;
+      return regeneratePlannerPreview(graphPath, {
+        nodeId: options.nodeId,
+        session: options.session,
+        runId: options.runId,
+        requestId,
+        report: options.report,
+        planner: createFixturePlannerRuntime(await readFixturePlannerResponses(await resolveVisualizerPlannerFixturePath(graphPath, options.plannerFixturePath))),
+        allowedKinds: ["series", "parallel"],
+        plannerMetadata: { name: "fixture-planner", requestId }
+      });
+    },
     reconcileGraphStatus,
     releaseExpiredLeases,
     planGoalGraph,
