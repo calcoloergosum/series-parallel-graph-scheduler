@@ -407,6 +407,18 @@ export interface PlannerRuntime {
   plan(request: PlannerRuntimeRequest): Promise<PlannerRuntimeResponse>;
 }
 
+export type WorkerPlannerMode = "off" | "auto-decompose" | "ask-approval";
+export type WorkerPlannerFailurePolicy = "block" | "fail";
+
+export interface WorkerPlannerConfig {
+  mode?: WorkerPlannerMode;
+  failurePolicy?: WorkerPlannerFailurePolicy;
+  allowedKinds?: PlannerOutputKind[];
+  requestIdPrefix?: string;
+  planner?: NodePlannerMetadata;
+  [metadata: string]: unknown;
+}
+
 export interface PlannerProposalBase {
   title: string;
   description?: string;
@@ -482,6 +494,7 @@ export interface SchedulerConfig {
   reportsDir?: string;
   leaseSeconds?: number;
   remote?: string;
+  workerPlanner?: WorkerPlannerConfig;
   [metadata: string]: unknown;
 }
 
@@ -1104,6 +1117,11 @@ export interface StartWorkerOptions {
   remote?: string;
   workspaceRoot?: string;
   workspaceRetention?: "on-failure" | "always" | "never" | (string & {});
+  plannerMode?: WorkerPlannerMode | (string & {});
+  plannerFailurePolicy?: WorkerPlannerFailurePolicy | (string & {});
+  plannerAllowedKinds?: PlannerOutputKind[];
+  plannerRequestIdPrefix?: string;
+  planner?: PlannerRuntime;
 }
 
 export interface RunWorkerOptions extends StartWorkerOptions {

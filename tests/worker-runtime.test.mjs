@@ -1,5 +1,5 @@
 import test from "node:test";
-import { assert, assertCliFails, blockNode, buildNodeWorkBranchName, buildWorkerPrompt, claimNode, collectGitDiffStat, completeNode, createRawWorkerManager, createRunClone, createSourceBranch, createWorkBranch, decomposeNode, depthPriorityGraph, dirname, escapeRegExp, execFileAsync, existsSync, failNode, fixtureGraph, formatWorkerReport, gitShow, join, knownTransitionStatuses, lastHistory, listReadyLeafNodes, mkdir, mkdtemp, normalizeWorkerReport, parallelWorkerIsolationGraph, parseCodexArgs, prepareBareRepository, prepareCompositionBareRepository, publishOutputRef, readFile, readGraph, readyIds, realpath, reconcileGraphStatus, recordWorkerRefMetadata, releaseExpiredLeases, renewNodeLease, resetSubtree, resolveNodeBaseRef, rm, runCodexPrompt, runGitCommand, runWorker, schedulerTransitionTable, setNodeStatus, startLeaseHeartbeat, startNode, tmpdir, waitFor, withLocalBareRemote, withTempGraph, writeCommittingWorkerRunner, writeFile, writeNoopWorkerRunner, writeWorkerIsolationGraph } from "./helpers/plan-scheduler-harness.mjs";
+import { assert, assertCliFails, blockNode, buildNodeWorkBranchName, buildWorkerPrompt, claimNode, collectGitDiffStat, completeNode, createFixturePlannerRuntime, createRawWorkerManager, createRunClone, createSourceBranch, createWorkBranch, decomposeNode, depthPriorityGraph, dirname, escapeRegExp, execFileAsync, existsSync, failNode, fixtureGraph, formatWorkerReport, gitShow, join, knownTransitionStatuses, lastHistory, listReadyLeafNodes, mkdir, mkdtemp, normalizeWorkerReport, parallelWorkerIsolationGraph, parseCodexArgs, prepareBareRepository, prepareCompositionBareRepository, publishOutputRef, readFile, readGraph, readyIds, realpath, reconcileGraphStatus, recordWorkerRefMetadata, releaseExpiredLeases, renewNodeLease, resetSubtree, resolveNodeBaseRef, rm, runCodexPrompt, runGitCommand, runWorker, schedulerTransitionTable, setNodeStatus, startLeaseHeartbeat, startNode, tmpdir, waitFor, withLocalBareRemote, withTempGraph, writeCommittingWorkerRunner, writeFile, writeNoopWorkerRunner, writeWorkerIsolationGraph } from "./helpers/plan-scheduler-harness.mjs";
 
 test("worker report formatting includes auditable fields and stable volatile normalization", () => {
   const report = normalizeWorkerReport(formatWorkerReport({
@@ -1869,6 +1869,225 @@ test("one-shot worker claims, runs command, writes report, and completes", async
     const report = await readFile(join(dir, graph.graph.nodes.A.report), "utf8");
     assert.match(report, /fake codex completed/);
     assert.match(report, /saw node A/);
+  });
+});
+
+test("worker planner preflight executes atomic task decisions normally", async () => {
+  await withTempGraph(async (graphPath, dir) => {
+    const graph = await readGraph(graphPath);
+    graph.scheduler.workerPlanner = { mode: "auto-decompose" };
+    await writeFile(graphPath, `${JSON.stringify(graph, null, 2)}\n`, "utf8");
+
+    const fakeRunnerPath = join(dir, "fake-planner-atomic-runner.mjs");
+    await writeFile(fakeRunnerPath, "console.log('atomic planner decision executed codex');\n", "utf8");
+
+    const planner = createFixturePlannerRuntime((request) => {
+      assert.equal(request.nodeId, "A");
+      return { kind: "task", title: "Keep A atomic" };
+    });
+    const result = await runWorker(graphPath, {
+      session: "codex-planner-atomic",
+      once: true,
+      cwd: dir,
+      stream: false,
+      codexCommand: process.execPath,
+      codexArgs: [fakeRunnerPath],
+      planner
+    });
+
+    assert.equal(result.results[0].nodeId, "A");
+    assert.equal(result.results[0].status, "done");
+    const updated = await readGraph(graphPath);
+    assert.equal(updated.graph.nodes.A.status, "done");
+    const report = await readFile(join(dir, updated.graph.nodes.A.report), "utf8");
+    assert.match(report, /atomic planner decision executed codex/);
+  });
+});
+
+test("worker planner preflight auto-decomposes series decisions before Codex", async () => {
+  await withTempGraph(async (graphPath, dir) => {
+    const graph = await readGraph(graphPath);
+    graph.scheduler.workerPlanner = { mode: "auto-decompose" };
+    await writeFile(graphPath, `${JSON.stringify(graph, null, 2)}\n`, "utf8");
+
+    const markerPath = join(dir, "planner-series-codex-ran");
+    const fakeRunnerPath = join(dir, "fake-planner-series-runner.mjs");
+    await writeFile(fakeRunnerPath, `import { writeFileSync } from 'node:fs'; writeFileSync(${JSON.stringify(markerPath)}, 'ran');\n`, "utf8");
+
+    const planner = createFixturePlannerRuntime({
+      kind: "series",
+      title: "Split A in order",
+      children: [
+        { id: "A_PLAN_1", title: "Prepare A" },
+        { id: "A_PLAN_2", title: "Implement A" }
+      ]
+    });
+    const result = await runWorker(graphPath, {
+      session: "codex-planner-series",
+      once: true,
+      cwd: dir,
+      stream: false,
+      codexCommand: process.execPath,
+      codexArgs: [fakeRunnerPath],
+      planner
+    });
+
+    assert.equal(result.results[0].nodeId, "A");
+    assert.equal(result.results[0].status, "pending");
+    assert.equal(result.results[0].note, "planner decomposed node as series");
+    assert.equal(existsSync(markerPath), false);
+    const updated = await readGraph(graphPath);
+    assert.equal(updated.graph.nodes.A.kind, "series");
+    assert.equal(updated.graph.nodes.A.status, "pending");
+    assert.deepEqual(updated.graph.nodes.A.children, ["A_PLAN_1", "A_PLAN_2"]);
+    assert.equal(updated.graph.nodes.A.lease, undefined);
+    assert.deepEqual(listReadyLeafNodes(updated).map((node) => node.id), ["A_PLAN_1"]);
+  });
+});
+
+test("worker planner preflight auto-decomposes parallel decisions before Codex", async () => {
+  await withTempGraph(async (graphPath, dir) => {
+    const graph = await readGraph(graphPath);
+    graph.scheduler.workerPlanner = { mode: "auto-decompose" };
+    await writeFile(graphPath, `${JSON.stringify(graph, null, 2)}\n`, "utf8");
+
+    const markerPath = join(dir, "planner-parallel-codex-ran");
+    const fakeRunnerPath = join(dir, "fake-planner-parallel-runner.mjs");
+    await writeFile(fakeRunnerPath, `import { writeFileSync } from 'node:fs'; writeFileSync(${JSON.stringify(markerPath)}, 'ran');\n`, "utf8");
+
+    const planner = createFixturePlannerRuntime({
+      kind: "parallel",
+      title: "Split A independently",
+      children: [
+        { id: "A_LEFT", title: "Left A" },
+        { id: "A_RIGHT", title: "Right A" }
+      ]
+    });
+    const result = await runWorker(graphPath, {
+      session: "codex-planner-parallel",
+      once: true,
+      cwd: dir,
+      stream: false,
+      codexCommand: process.execPath,
+      codexArgs: [fakeRunnerPath],
+      planner
+    });
+
+    assert.equal(result.results[0].status, "pending");
+    assert.equal(result.results[0].note, "planner decomposed node as parallel");
+    assert.equal(existsSync(markerPath), false);
+    const updated = await readGraph(graphPath);
+    assert.equal(updated.graph.nodes.A.kind, "parallel");
+    assert.deepEqual(updated.graph.nodes.A.children, ["A_LEFT", "A_RIGHT"]);
+    assert.deepEqual(listReadyLeafNodes(updated).map((node) => node.id), ["A_LEFT", "A_RIGHT"]);
+  });
+});
+
+test("worker planner preflight ask-approval blocks valid decomposition proposals", async () => {
+  await withTempGraph(async (graphPath, dir) => {
+    const graph = await readGraph(graphPath);
+    graph.scheduler.workerPlanner = { mode: "ask-approval" };
+    await writeFile(graphPath, `${JSON.stringify(graph, null, 2)}\n`, "utf8");
+
+    const markerPath = join(dir, "planner-approval-codex-ran");
+    const fakeRunnerPath = join(dir, "fake-planner-approval-runner.mjs");
+    await writeFile(fakeRunnerPath, `import { writeFileSync } from 'node:fs'; writeFileSync(${JSON.stringify(markerPath)}, 'ran');\n`, "utf8");
+
+    const planner = createFixturePlannerRuntime({
+      kind: "series",
+      title: "Needs operator approval",
+      children: [{ id: "A_APPROVED", title: "Approved child" }]
+    });
+    const result = await runWorker(graphPath, {
+      session: "codex-planner-approval",
+      once: true,
+      cwd: dir,
+      stream: false,
+      codexCommand: process.execPath,
+      codexArgs: [fakeRunnerPath],
+      planner
+    });
+
+    assert.equal(result.results[0].status, "blocked");
+    assert.equal(result.results[0].code, 0);
+    assert.equal(existsSync(markerPath), false);
+    const updated = await readGraph(graphPath);
+    assert.equal(updated.graph.nodes.A.kind, "task");
+    assert.equal(updated.graph.nodes.A.children, undefined);
+    assert.equal(updated.graph.nodes.A.status, "blocked");
+    assert.match(updated.graph.nodes.A.question, /Planner proposed series decomposition/);
+    const report = await readFile(join(dir, updated.graph.nodes.A.report), "utf8");
+    assert.match(report, /Planner preflight: A/);
+    assert.match(report, /A_APPROVED/);
+  });
+});
+
+test("worker planner preflight fails invalid planner output by policy", async () => {
+  await withTempGraph(async (graphPath, dir) => {
+    const graph = await readGraph(graphPath);
+    graph.scheduler.workerPlanner = { mode: "auto-decompose", failurePolicy: "fail" };
+    await writeFile(graphPath, `${JSON.stringify(graph, null, 2)}\n`, "utf8");
+
+    const markerPath = join(dir, "planner-invalid-codex-ran");
+    const fakeRunnerPath = join(dir, "fake-planner-invalid-runner.mjs");
+    await writeFile(fakeRunnerPath, `import { writeFileSync } from 'node:fs'; writeFileSync(${JSON.stringify(markerPath)}, 'ran');\n`, "utf8");
+
+    const planner = {
+      async plan(request) {
+        return {
+          requestId: request.requestId,
+          response: { kind: "series", title: "Invalid missing children" }
+        };
+      }
+    };
+    const result = await runWorker(graphPath, {
+      session: "codex-planner-invalid",
+      once: true,
+      cwd: dir,
+      stream: false,
+      codexCommand: process.execPath,
+      codexArgs: [fakeRunnerPath],
+      planner
+    });
+
+    assert.equal(result.results[0].status, "failed");
+    assert.equal(result.results[0].code, 1);
+    assert.equal(existsSync(markerPath), false);
+    const updated = await readGraph(graphPath);
+    assert.equal(updated.graph.nodes.A.status, "failed");
+    assert.match(updated.graph.nodes.A.failureReason, /planner failed: Invalid planner response/);
+    const report = await readFile(join(dir, updated.graph.nodes.A.report), "utf8");
+    assert.match(report, /missing-children/);
+  });
+});
+
+test("worker planner preflight blocks planner failures by default", async () => {
+  await withTempGraph(async (graphPath, dir) => {
+    const graph = await readGraph(graphPath);
+    graph.scheduler.workerPlanner = { mode: "auto-decompose" };
+    await writeFile(graphPath, `${JSON.stringify(graph, null, 2)}\n`, "utf8");
+
+    const markerPath = join(dir, "planner-missing-codex-ran");
+    const fakeRunnerPath = join(dir, "fake-planner-missing-runner.mjs");
+    await writeFile(fakeRunnerPath, `import { writeFileSync } from 'node:fs'; writeFileSync(${JSON.stringify(markerPath)}, 'ran');\n`, "utf8");
+
+    const result = await runWorker(graphPath, {
+      session: "codex-planner-missing",
+      once: true,
+      cwd: dir,
+      stream: false,
+      codexCommand: process.execPath,
+      codexArgs: [fakeRunnerPath]
+    });
+
+    assert.equal(result.results[0].status, "blocked");
+    assert.equal(result.results[0].code, 1);
+    assert.equal(existsSync(markerPath), false);
+    const updated = await readGraph(graphPath);
+    assert.equal(updated.graph.nodes.A.status, "blocked");
+    assert.match(updated.graph.nodes.A.blockedReason, /planner failed: worker planner mode auto-decompose requires an injected planner runtime/);
+    const report = await readFile(join(dir, updated.graph.nodes.A.report), "utf8");
+    assert.match(report, /Planner failure: A/);
   });
 });
 

@@ -52,7 +52,22 @@ export function buildPlanGraphJsonSchema(): Record<string, unknown> {
           htmlView: { type: "string" },
           reportsDir: { type: "string" },
           leaseSeconds: { type: "number" },
-          remote: { type: "string" }
+          remote: { type: "string" },
+          workerPlanner: { "$ref": "#/$defs/workerPlannerConfig" }
+        }
+      },
+      workerPlannerConfig: {
+        type: "object",
+        additionalProperties: true,
+        properties: {
+          mode: { enum: ["off", "auto-decompose", "ask-approval"] },
+          failurePolicy: { enum: ["block", "fail"] },
+          allowedKinds: {
+            type: "array",
+            items: { enum: ["task", "series", "parallel"] }
+          },
+          requestIdPrefix: { type: "string" },
+          planner: { "$ref": "#/$defs/plannerMetadata" }
         }
       },
       node: {

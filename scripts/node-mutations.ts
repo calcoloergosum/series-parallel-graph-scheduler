@@ -74,6 +74,7 @@ export interface CompleteNodeOptions extends OwnedNodeOptions {
 export interface BlockNodeOptions extends OwnedNodeOptions {
   question?: string;
   reason?: string;
+  report?: string;
 }
 
 export interface AnswerNodeOptions {
@@ -430,7 +431,7 @@ export async function completeNode(
 
 export async function blockNode(
   graphPath: string,
-  { nodeId, question, reason, session, runId }: BlockNodeOptions = {}
+  { nodeId, question, reason, report, session, runId }: BlockNodeOptions = {}
 ): Promise<NodeMutationResult> {
   return updateNodeStatus(graphPath, {
     nodeId,
@@ -446,7 +447,10 @@ export async function blockNode(
       if (question) {
         node.question = question;
       }
-      return { blockedAt: node.blockedAt, blockedReason: node.blockedReason, question };
+      if (report) {
+        node.report = report;
+      }
+      return { blockedAt: node.blockedAt, blockedReason: node.blockedReason, question, report };
     }
   });
 }

@@ -45,6 +45,17 @@ planning. A combined "plan and run" convenience flow is allowed only if it
 performs the same two checkpoints internally: validated save first, then an
 operator-confirmed worker start against the saved graph.
 
+Worker-assisted decomposition is opt-in through `scheduler.workerPlanner` or
+equivalent worker options. `mode: "off"` preserves the existing worker
+lifecycle. `mode: "auto-decompose"` asks the planner after claim/start and
+before Codex execution; `task` responses continue to Codex, while valid
+`series` or `parallel` responses are applied through the normal `decompose`
+mutation and the worker does not execute Codex for that parent. `mode:
+"ask-approval"` writes an inspectable planner report and blocks the leased node
+instead of mutating children, so an operator can approve, reset, or fail it.
+`failurePolicy: "block"` is the default for planner errors; `failurePolicy:
+"fail"` marks the node failed with the planner report attached.
+
 Regenerate creates a replacement proposal, not an implicit edit to accepted
 state. If regeneration happens while a draft is open, the UI should show the
 new request id and planner provenance so the operator can compare it with the

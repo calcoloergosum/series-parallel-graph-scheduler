@@ -290,6 +290,8 @@ function workerRuntime() {
     renewNodeLease,
     completeNode,
     failNode,
+    blockNode,
+    decomposeNode,
     publishResolvedIntegration,
     recordWorkerRefMetadata,
     writeReportFile,
