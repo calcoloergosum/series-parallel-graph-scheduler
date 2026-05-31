@@ -168,6 +168,14 @@ existing `--graph` commands plan implicitly, change the default graph selection
 for static workflows, or require existing `plan.graph.json` files to adopt
 planner metadata.
 
+The initial generated topology is not fixed. `ROOT -> PLAN` remains a valid
+minimal generated graph, but `plan --goal` may also write a validated,
+decomposed series-parallel graph directly. Consumers must inspect the written
+graph rather than assume a `PLAN` node. The user-visible acceptance workflows
+for plan-only, approve-before-run, auto-decompose, and static replay are
+defined in
+[`goal-driven-acceptance-contract.md`](goal-driven-acceptance-contract.md).
+
 Planner approval and execution boundaries are part of the compatibility
 contract. Dry-run planning must not mutate the graph or start workers.
 Auto-save may write only validated planner output through the normal locked

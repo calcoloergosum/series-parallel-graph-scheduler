@@ -10,6 +10,9 @@ only start after a valid graph exists on disk and an operator or authorized
 local process invokes the existing worker, claim, start, or visualizer worker
 routes against that graph.
 
+The acceptance workflows that exercise those boundaries are documented in
+[`goal-driven-acceptance-contract.md`](goal-driven-acceptance-contract.md).
+
 ## Operator Approval Modes
 
 Planning flows have four distinct operator modes. Implementations may expose
