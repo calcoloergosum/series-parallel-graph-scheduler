@@ -1312,6 +1312,57 @@ test("visualizer and event payloads expose git footprints with redaction", async
   });
 });
 
+test("visualizer selected-node inspector renders git refs, diffstat, and changed files", async () => {
+  await withTempGraph(async (graphPath) => {
+    const graph = await readGraph(graphPath);
+    graph.graph.nodes.A.status = "done";
+    graph.graph.nodes.A.baseRef = {
+      name: "refs/remotes/origin/main",
+      commit: "1111111111111111111111111111111111111111"
+    };
+    graph.graph.nodes.A.workRef = {
+      name: "refs/heads/spg/node/A/run-a",
+      commit: "2222222222222222222222222222222222222222"
+    };
+    graph.graph.nodes.A.outputRef = {
+      name: "refs/heads/spg/node/A/run-a",
+      commit: "2222222222222222222222222222222222222222",
+      diffStat: { filesChanged: 2, additions: 10, deletions: 3, totalChanges: 13 },
+      files: [
+        { path: "src/app.ts", changeType: "modified", additions: 8, deletions: 3, totalChanges: 11 },
+        { path: "docs/new.md", changeType: "added", additions: 2, deletions: 0, totalChanges: 2 }
+      ],
+      collectedAt: "2026-05-27T00:05:01.000Z"
+    };
+    graph.graph.nodes.A.workspace = {
+      remote: "https://user:secret-token@github.com/example-org/example-repo.git",
+      cloneCwd: "/tmp/spg/workspaces/codex-A/A/run-a"
+    };
+    await writeFile(graphPath, `${JSON.stringify(graph, null, 2)}\n`, "utf8");
+
+    const payload = await buildVisualizerPayload(graphPath);
+    const { context, element } = runVisualizerClientScript();
+    context.render(payload);
+    context.selectNode("A");
+
+    let html = element("selected-node-details").innerHTML;
+    assert.match(html, /Git Refs/);
+    assert.match(html, /Diffstat/);
+    assert.match(html, /Changed Files/);
+    assert.match(html, /src\/app\.ts/);
+    assert.match(html, /docs\/new\.md/);
+    assert.match(html, /href="https:\/\/github\.com\/example-org\/example-repo\/compare\/1111111111111111111111111111111111111111\.\.\.2222222222222222222222222222222222222222\.diff"/);
+    assert.match(html, /href="https:\/\/github\.com\/example-org\/example-repo\/compare\/1111111111111111111111111111111111111111\.\.\.2222222222222222222222222222222222222222"/);
+    assert.doesNotMatch(html, /secret-token/);
+
+    context.selectNode("B");
+    html = element("selected-node-details").innerHTML;
+    assert.match(html, /No git refs recorded for this node/);
+    assert.match(html, /compare disabled: Missing base ref and head ref\./);
+    assert.match(html, /No changed files recorded for this node/);
+  });
+});
+
 test("visualizer diagnostics payload exposes attention, events, and read-only lock state", async () => {
   await withTempGraph(async (graphPath) => {
     const graph = await readGraph(graphPath);

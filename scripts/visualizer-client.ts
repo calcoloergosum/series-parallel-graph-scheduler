@@ -469,6 +469,83 @@ export function renderVisualizerHtml(): string {
       gap: 8px;
       margin: 10px 0;
     }
+    .inspector-section {
+      margin-top: 14px;
+      padding-top: 12px;
+      border-top: 1px solid var(--line);
+    }
+    .inspector-section h3 {
+      margin: 0 0 8px;
+      font-size: 14px;
+      letter-spacing: 0;
+    }
+    .git-action-row {
+      display: flex;
+      gap: 8px;
+      flex-wrap: wrap;
+      margin: 10px 0;
+    }
+    .git-action-link,
+    .git-action-disabled {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      min-height: 32px;
+      border-radius: 8px;
+      padding: 6px 10px;
+      font-size: 12px;
+      font-weight: 800;
+      text-decoration: none;
+    }
+    .git-action-link {
+      border: 1px solid var(--line);
+      color: var(--ink);
+      background: #fff;
+    }
+    .git-action-disabled {
+      border: 1px solid var(--line);
+      color: var(--muted);
+      background: #f1f4f8;
+      cursor: not-allowed;
+    }
+    .git-file-table-wrap {
+      max-height: 240px;
+      overflow: auto;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: #fff;
+    }
+    .git-file-table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 12px;
+    }
+    .git-file-table th,
+    .git-file-table td {
+      padding: 6px 8px;
+      border-bottom: 1px solid #edf1f5;
+      text-align: left;
+      vertical-align: top;
+    }
+    .git-file-table th {
+      position: sticky;
+      top: 0;
+      z-index: 1;
+      background: #f8fafc;
+      color: var(--muted);
+      font-size: 11px;
+      text-transform: uppercase;
+    }
+    .git-file-table td.number {
+      text-align: right;
+      white-space: nowrap;
+      font-variant-numeric: tabular-nums;
+    }
+    .git-file-path {
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      overflow-wrap: anywhere;
+      word-break: break-word;
+    }
     .modal-backdrop {
       position: fixed;
       inset: 0;
@@ -732,6 +809,18 @@ export function renderVisualizerHtml(): string {
     return value ? '<div class="meta">' + label + ': ' + escapeHtml(boundedText(value)) + '</div>' : "";
   }
 
+  function numericValue(value) {
+    return typeof value === "number" && Number.isFinite(value) ? value : undefined;
+  }
+
+  function additionsValue(value) {
+    return numericValue(value?.additions) ?? numericValue(value?.insertions);
+  }
+
+  function formatCount(value) {
+    return value === null || value === undefined ? "n/a" : String(value);
+  }
+
   function goalText(goal) {
     return typeof goal === "string" ? goal : goal?.text;
   }
@@ -862,6 +951,10 @@ export function renderVisualizerHtml(): string {
 
   function selectedEntry() {
     return graphNodeEntries().find((entry) => entry.id === selectedNodeId);
+  }
+
+  function selectedDetail() {
+    return (latestPayload?.nodes || []).find((node) => node.id === selectedNodeId);
   }
 
   function nodeIsReady(nodeId) {
@@ -1152,6 +1245,144 @@ export function renderVisualizerHtml(): string {
     }).join("");
   }
 
+  function refLabel(ref) {
+    if (!ref) {
+      return "";
+    }
+    return [ref.name, ref.commit ? ref.commit.slice(0, 12) : ""].filter(Boolean).join(" @ ");
+  }
+
+  function compareToken(ref) {
+    const value = ref?.commit || ref?.name;
+    if (!value) {
+      return "";
+    }
+    return String(value)
+      .replace(/^refs\\/heads\\//, "")
+      .replace(/^refs\\/remotes\\/origin\\//, "")
+      .replace(/^refs\\/remotes\\/[^/]+\\//, "");
+  }
+
+  function githubProjectUrl(remote) {
+    const text = String(remote || "").trim();
+    const httpsMatch = text.match(/^https?:\\/\\/(?:[^/@]+@)?github\\.com\\/([^/\\s]+)\\/([^/\\s]+?)(?:\\.git)?\\/?$/i);
+    const sshMatch = text.match(/^git@github\\.com:([^/\\s]+)\\/([^/\\s]+?)(?:\\.git)?$/i)
+      || text.match(/^ssh:\\/\\/git@github\\.com\\/([^/\\s]+)\\/([^/\\s]+?)(?:\\.git)?\\/?$/i);
+    const match = httpsMatch || sshMatch;
+    if (!match) {
+      return "";
+    }
+    return "https://github.com/" + encodeURIComponent(match[1]) + "/" + encodeURIComponent(match[2].replace(/\\.git$/i, ""));
+  }
+
+  function gitActionAvailability(detail) {
+    const refs = detail?.refs || {};
+    const footprint = detail?.gitFootprint || refs.gitFootprint || {};
+    const baseRef = footprint.baseRef || refs.baseRef;
+    const headRef = footprint.headRef || refs.outputRef || refs.integrationRef || refs.workRef;
+    const base = compareToken(baseRef);
+    const head = compareToken(headRef);
+    const projectUrl = githubProjectUrl(detail?.workspace?.remote);
+    const missing = [];
+    if (!base) {
+      missing.push("base ref");
+    }
+    if (!head) {
+      missing.push("head ref");
+    }
+    if (missing.length) {
+      return { disabledReason: "Missing " + missing.join(" and ") + "." };
+    }
+    if (!detail?.workspace?.remote) {
+      return { disabledReason: "Missing git remote metadata." };
+    }
+    if (!projectUrl) {
+      return { disabledReason: "Compare links require a GitHub remote." };
+    }
+    const range = encodeURIComponent(base) + "..." + encodeURIComponent(head);
+    const compareUrl = projectUrl + "/compare/" + range;
+    return {
+      compareUrl,
+      diffUrl: compareUrl + ".diff"
+    };
+  }
+
+  function renderGitActionLinks(detail) {
+    const availability = gitActionAvailability(detail);
+    if (availability.compareUrl && availability.diffUrl) {
+      return '<div class="git-action-row">' +
+        '<a class="git-action-link" target="_blank" rel="noreferrer" href="' + escapeHtml(availability.diffUrl) + '">Open diff</a>' +
+        '<a class="git-action-link" target="_blank" rel="noreferrer" href="' + escapeHtml(availability.compareUrl) + '">Compare</a>' +
+        '</div>';
+    }
+    const reason = availability.disabledReason || "Compare metadata is incomplete.";
+    return '<div class="git-action-row">' +
+      '<span class="git-action-disabled" aria-disabled="true" title="' + escapeHtml(reason) + '">Open diff</span>' +
+      '<span class="git-action-disabled" aria-disabled="true" title="' + escapeHtml(reason) + '">Compare</span>' +
+      '</div>' +
+      '<div class="meta">compare disabled: ' + escapeHtml(reason) + '</div>';
+  }
+
+  function renderGitDiffStat(stat) {
+    if (!stat) {
+      return '<p class="meta">No diffstat totals recorded.</p>';
+    }
+    const additions = additionsValue(stat);
+    return '<div class="detail-grid">' +
+      metaLine("files", stat.filesChanged) +
+      metaLine("insertions", additions) +
+      metaLine("deletions", stat.deletions) +
+      metaLine("total", stat.totalChanges) +
+      metaLine("binary", stat.binaryFiles) +
+      '</div>';
+  }
+
+  function renderChangedFiles(files) {
+    if (!files?.length) {
+      return '<p class="meta">No changed files recorded for this node.</p>';
+    }
+    const rows = files.map((file) => {
+      const additions = additionsValue(file);
+      const path = file.oldPath && file.oldPath !== file.path ? file.oldPath + " -> " + file.path : file.path;
+      const changeType = file.changeType || (file.binary ? "binary" : "");
+      return '<tr>' +
+        '<td class="git-file-path">' + escapeHtml(path) + (changeType ? '<div class="meta">' + escapeHtml(changeType) + '</div>' : "") + '</td>' +
+        '<td class="number">' + escapeHtml(formatCount(additions)) + '</td>' +
+        '<td class="number">' + escapeHtml(formatCount(file.deletions)) + '</td>' +
+        '</tr>';
+    }).join("");
+    return '<div class="git-file-table-wrap">' +
+      '<table class="git-file-table" aria-label="Changed files">' +
+        '<thead><tr><th scope="col">Path</th><th scope="col">Ins</th><th scope="col">Del</th></tr></thead>' +
+        '<tbody>' + rows + '</tbody>' +
+      '</table>' +
+      '</div>';
+  }
+
+  function renderGitInspector(detail) {
+    const refs = detail?.refs || {};
+    const footprint = detail?.gitFootprint || refs.gitFootprint || {};
+    const hasRefs = refs.baseRef || refs.workRef || refs.outputRef || refs.integrationRef || footprint.baseRef || footprint.headRef;
+    const refLines = hasRefs
+      ? metaLine("base", refLabel(footprint.baseRef || refs.baseRef)) +
+        metaLine("work", refLabel(refs.workRef)) +
+        metaLine("head", refLabel(footprint.headRef || refs.outputRef || refs.integrationRef)) +
+        metaLine("source", footprint.source) +
+        metaLine("collected", footprint.collectedAt)
+      : '<p class="meta">No git refs recorded for this node.</p>';
+    const stat = detail?.gitDiffStat || footprint.diffStat;
+    const files = detail?.changedFiles || footprint.files || [];
+    return '<section class="inspector-section" aria-label="Git inspector">' +
+      '<h3>Git Refs</h3>' +
+      refLines +
+      renderGitActionLinks(detail || {}) +
+      '<h3>Diffstat</h3>' +
+      renderGitDiffStat(stat) +
+      '<h3>Changed Files</h3>' +
+      renderChangedFiles(files) +
+      '</section>';
+  }
+
   function renderFilterSummary(visibleReady, visibleWorking, visibleWorkers) {
     const query = filters.query ? ' / search "' + filters.query + '"' : "";
     const message = "Showing " + visibleReady.length + " ready, " + visibleWorking.length + " active, " + visibleWorkers.length + " workers" + query + ".";
@@ -1163,13 +1394,15 @@ export function renderVisualizerHtml(): string {
     const details = document.getElementById("selected-node-details");
     const summary = document.getElementById("selected-worker-summary");
     const entry = selectedEntry();
-    if (!entry) {
+    const detail = selectedDetail();
+    if (!entry && !detail) {
       details.innerHTML = '<p>Select a node to inspect it.</p>';
       summary.textContent = "No node selected.";
       document.getElementById("start-selected-worker").disabled = true;
       return;
     }
-    const { id, node } = entry;
+    const id = detail?.id || entry.id;
+    const node = detail || entry.node;
     const ready = nodeIsReady(id);
     document.getElementById("start-selected-worker").disabled = !ready;
     summary.textContent = ready ? "Selected: " + id + " is ready." : "Selected: " + id + " is " + (node.status || "pending") + ".";
@@ -1193,7 +1426,8 @@ export function renderVisualizerHtml(): string {
       metaLine("run", node.lease?.runId || node.runId) +
       metaLine("question", node.question) +
       metaLine("answer", node.answer) +
-      '<section><h3>History</h3><p>' + escapeHtml(history || "No history recorded for this node.") + '</p><p class="meta">Newest first from the events payload.</p></section>';
+      renderGitInspector(detail || node) +
+      '<section class="inspector-section"><h3>History</h3><p>' + escapeHtml(history || "No history recorded for this node.") + '</p><p class="meta">Newest first from the events payload.</p></section>';
   }
 
   function payloadEvents() {
