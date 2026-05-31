@@ -19,23 +19,41 @@
         "graphVersion": 1,
         "title": "Audit Log Plan",
         "description": "Generated from a CLI goal.",
-        "totalNodes": 1,
+        "totalNodes": 2,
         "root": "ROOT",
         "counts": {
-          "pending": 1
+          "pending": 2
         }
       },
       "graph": {
         "graphVersion": 1,
         "title": "Audit Log Plan",
         "description": "Generated from a CLI goal.",
+        "statusModel": [
+          "pending",
+          "claimed",
+          "running",
+          "blocked",
+          "review",
+          "failed",
+          "done"
+        ],
+        "scheduler": {
+          "stateFile": "plan.graph.json",
+          "htmlView": "plan.html",
+          "reportsDir": "reports",
+          "leaseSeconds": 1800
+        },
         "graph": {
           "root": "ROOT",
           "nodes": {
             "ROOT": {
               "title": "Audit Log Plan",
-              "kind": "task",
+              "kind": "series",
               "status": "pending",
+              "children": [
+                "PLAN"
+              ],
               "description": "Ship a searchable audit log",
               "goal": {
                 "text": "Ship a searchable audit log",
@@ -49,8 +67,56 @@
                   "source": "cli"
                 }
               ]
+            },
+            "PLAN": {
+              "title": "Plan and execute goal",
+              "kind": "task",
+              "status": "pending",
+              "description": "Ship a searchable audit log",
+              "goal": {
+                "text": "Ship a searchable audit log",
+                "source": "parent",
+                "createdAt": "<iso-date>"
+              },
+              "deliverables": [
+                "A validated series-parallel graph decomposition or completed implementation for the goal."
+              ],
+              "acceptanceCriteria": [
+                "The goal is either decomposed into scheduler-ready child work or completed with reportable evidence."
+              ],
+              "history": [
+                {
+                  "at": "<iso-date>",
+                  "event": "created",
+                  "source": "goal-graph-factory"
+                }
+              ]
             }
           }
+        },
+        "document": {
+          "pageTitle": "Audit Log Plan",
+          "meta": [
+            {
+              "label": "Goal",
+              "value": "Ship a searchable audit log"
+            },
+            {
+              "label": "Initial node",
+              "value": "PLAN"
+            }
+          ],
+          "intro": [
+            "Ship a searchable audit log"
+          ],
+          "sections": [
+            {
+              "heading": "Generated Graph",
+              "paragraphs": [
+                "This graph was generated from a single operator goal and starts with one claimable planning or execution task."
+              ]
+            }
+          ]
         }
       }
     },
@@ -71,23 +137,41 @@
         "graphVersion": 1,
         "title": "Create a release checklist",
         "description": "Generated from a CLI goal.",
-        "totalNodes": 1,
+        "totalNodes": 2,
         "root": "ROOT",
         "counts": {
-          "pending": 1
+          "pending": 2
         }
       },
       "graph": {
         "graphVersion": 1,
         "title": "Create a release checklist",
         "description": "Generated from a CLI goal.",
+        "statusModel": [
+          "pending",
+          "claimed",
+          "running",
+          "blocked",
+          "review",
+          "failed",
+          "done"
+        ],
+        "scheduler": {
+          "stateFile": "plan.graph.json",
+          "htmlView": "plan.html",
+          "reportsDir": "reports",
+          "leaseSeconds": 1800
+        },
         "graph": {
           "root": "ROOT",
           "nodes": {
             "ROOT": {
               "title": "Create a release checklist",
-              "kind": "task",
+              "kind": "series",
               "status": "pending",
+              "children": [
+                "PLAN"
+              ],
               "description": "Create a release checklist",
               "goal": {
                 "text": "Create a release checklist",
@@ -101,8 +185,56 @@
                   "source": "cli"
                 }
               ]
+            },
+            "PLAN": {
+              "title": "Plan and execute goal",
+              "kind": "task",
+              "status": "pending",
+              "description": "Create a release checklist",
+              "goal": {
+                "text": "Create a release checklist",
+                "source": "parent",
+                "createdAt": "<iso-date>"
+              },
+              "deliverables": [
+                "A validated series-parallel graph decomposition or completed implementation for the goal."
+              ],
+              "acceptanceCriteria": [
+                "The goal is either decomposed into scheduler-ready child work or completed with reportable evidence."
+              ],
+              "history": [
+                {
+                  "at": "<iso-date>",
+                  "event": "created",
+                  "source": "goal-graph-factory"
+                }
+              ]
             }
           }
+        },
+        "document": {
+          "pageTitle": "Create a release checklist",
+          "meta": [
+            {
+              "label": "Goal",
+              "value": "Create a release checklist"
+            },
+            {
+              "label": "Initial node",
+              "value": "PLAN"
+            }
+          ],
+          "intro": [
+            "Create a release checklist"
+          ],
+          "sections": [
+            {
+              "heading": "Generated Graph",
+              "paragraphs": [
+                "This graph was generated from a single operator goal and starts with one claimable planning or execution task."
+              ]
+            }
+          ]
         }
       }
     },

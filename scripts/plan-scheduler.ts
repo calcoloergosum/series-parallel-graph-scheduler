@@ -154,6 +154,7 @@ export {
   isLocalVisualizerHost,
   visualizerHostSecurityWarning
 };
+export { goalGraphInitialNodeId, goalGraphVersion } from "./goal-graph.js";
 export { formatCliError, printCliError } from "./cli-errors.js";
 
 const { scriptDir, rootDir, isBuiltOutput } = runtimePathsFromModuleUrl(import.meta.url);

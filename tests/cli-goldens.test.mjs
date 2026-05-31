@@ -1,5 +1,5 @@
 import test from "node:test";
-import { answerNode, assert, assertCliFails, assertCliGolden, assertReadableGraphValidationOutput, blockNode, buildVisualizerPayload, buildWorkerPrompt, captureSchedulerCli, claimNode, completeNode, createServer, depthPriorityGraph, diagnoseGraph, dirname, execFileAsync, existsSync, fixtureGraph, graphValidationCases, join, listReadyLeafNodes, mkdir, mkdtemp, parseArgs, parseChildrenArgs, readGraph, renderCliHelp, renderVisualizerHtml, rendererDocumentFixture, rendererScriptPath, resolveWorkerIsolation, rm, schedulerScriptPath, symlink, tmpdir, utimes, withTempGraph, writeFile } from "./helpers/plan-scheduler-harness.mjs";
+import { answerNode, assert, assertCliFails, assertCliGolden, assertReadableGraphValidationOutput, blockNode, buildGoalGraph, buildVisualizerPayload, buildWorkerPrompt, captureSchedulerCli, claimNode, completeNode, createServer, createVisualizerServer, depthPriorityGraph, diagnoseGraph, dirname, execFileAsync, existsSync, fixtureGraph, graphValidationCases, join, listReadyLeafNodes, mkdir, mkdtemp, parseArgs, parseChildrenArgs, readGraph, renderCliHelp, renderVisualizerHtml, rendererDocumentFixture, rendererScriptPath, resolveWorkerIsolation, rm, schedulerScriptPath, symlink, tmpdir, utimes, validatePlanGraphFileResult, withTempGraph, writeFile } from "./helpers/plan-scheduler-harness.mjs";
 
 test("answer records operator response and makes a blocked node ready", async () => {
   await withTempGraph(async (graphPath) => {
@@ -385,9 +385,34 @@ test("CLI validates numeric arguments before dispatch", async () => {
   });
 });
 
+test("goal graph factory creates a deterministic valid root graph", () => {
+  const graph = buildGoalGraph("Ship a searchable audit log", {
+    title: "Audit Log Plan",
+    createdAt: "2026-05-31T00:00:00.000Z"
+  });
+  const validation = validatePlanGraphFileResult(graph);
+
+  assert.deepEqual(validation.errors, []);
+  assert.equal(graph.graphVersion, 1);
+  assert.equal(graph.title, "Audit Log Plan");
+  assert.deepEqual(graph.statusModel, ["pending", "claimed", "running", "blocked", "review", "failed", "done"]);
+  assert.deepEqual(graph.scheduler, {
+    stateFile: "plan.graph.json",
+    htmlView: "plan.html",
+    reportsDir: "reports",
+    leaseSeconds: 1800
+  });
+  assert.equal(graph.graph.root, "ROOT");
+  assert.deepEqual(graph.graph.nodes.ROOT.children, ["PLAN"]);
+  assert.equal(graph.graph.nodes.ROOT.goal.text, "Ship a searchable audit log");
+  assert.equal(graph.graph.nodes.PLAN.goal.text, "Ship a searchable audit log");
+  assert.equal(graph.document.pageTitle, "Audit Log Plan");
+});
+
 test("CLI plan creates a valid graph and rejects unsafe inputs", async () => {
   const dir = await mkdtemp(join(tmpdir(), "plan-cli-"));
   let outsideDir;
+  let visualizer;
   try {
     const graphPath = join(dir, "nested", "plan.graph.json");
     const cli = await execFileAsync(process.execPath, [
@@ -404,13 +429,33 @@ test("CLI plan creates a valid graph and rejects unsafe inputs", async () => {
     assert.equal(result.graphPath, graphPath);
     assert.equal(result.written, true);
     assert.equal(result.dryRun, false);
-    assert.equal(result.summary.totalNodes, 1);
+    assert.equal(result.summary.totalNodes, 2);
+    assert.equal(result.summary.root, "ROOT");
+    assert.deepEqual(result.summary.counts, { pending: 2 });
     assert.equal(result.graph.graph.nodes.ROOT.goal.text, "Ship a searchable audit log");
+    assert.equal(result.graph.graph.nodes.PLAN.goal.text, "Ship a searchable audit log");
 
     const graph = await readGraph(graphPath);
     assert.equal(graph.title, "Audit Log Plan");
     assert.equal(graph.graph.root, "ROOT");
-    assert.deepEqual(listReadyLeafNodes(graph).map((node) => node.id), ["ROOT"]);
+    assert.deepEqual(listReadyLeafNodes(graph).map((node) => node.id), ["PLAN"]);
+    assert.equal(graph.scheduler.htmlView, "plan.html");
+    assert.equal(graph.scheduler.reportsDir, "reports");
+    assert.equal(graph.scheduler.htmlView.includes(".."), false);
+    assert.equal(graph.scheduler.reportsDir.includes(".."), false);
+
+    const payload = await buildVisualizerPayload(graphPath);
+    assert.equal(payload.nodes.find((node) => node.id === "ROOT").goal.text, "Ship a searchable audit log");
+    assert.equal(payload.nodes.find((node) => node.id === "PLAN").goal.text, "Ship a searchable audit log");
+
+    const summaryCli = await execFileAsync(process.execPath, [schedulerScriptPath, "summary", "--graph", graphPath]);
+    assert.equal(JSON.parse(summaryCli.stdout).totalNodes, 2);
+    const readyCli = await execFileAsync(process.execPath, [schedulerScriptPath, "ready", "--graph", graphPath]);
+    assert.deepEqual(JSON.parse(readyCli.stdout).map((node) => node.id), ["PLAN"]);
+    await execFileAsync(process.execPath, [rendererScriptPath, "--graph", graphPath]);
+    assert.equal(existsSync(join(dirname(graphPath), "plan.html")), true);
+    visualizer = await createVisualizerServer({ graphPath, port: 0 });
+    assert.equal((await (await fetch(`${visualizer.url}/api/summary`)).json()).totalNodes, 2);
 
     const dryRunDir = join(dir, "dry-run");
     const dryRunPath = join(dryRunDir, "plan.graph.json");
@@ -456,6 +501,7 @@ test("CLI plan creates a valid graph and rejects unsafe inputs", async () => {
       /Unsafe graph output path: parent is a symbolic link:/
     );
   } finally {
+    await visualizer?.close();
     await rm(dir, { recursive: true, force: true });
     if (outsideDir) {
       await rm(outsideDir, { recursive: true, force: true });

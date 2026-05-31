@@ -20,9 +20,12 @@ import type {
   SlackNotificationResult,
   VisualizerServerHandle
 } from "./contracts.js";
+import { buildGoalGraph } from "./goal-graph.js";
 import { numericArgumentRanges, parseNumericArgument } from "./numeric-args.js";
 import { exportOperationalEvents, operationalEvents } from "./operational-events.js";
 import { errorMessage, safeFilePart } from "./shared-utils.js";
+
+export { buildGoalGraph } from "./goal-graph.js";
 
 export interface DecomposeChildArg {
   id: string;
@@ -446,7 +449,7 @@ export async function dispatchCliCommand(options: CliDispatchOptions): Promise<v
   if (command === "plan") {
     const goal = requiredTrimmedOptionString(args, "goal", "plan");
     const graphPath = resolvePlanGraphOutputPath(options.rootDir, args, goal);
-    const graph = buildGoalGraph(goal, optionString(args, "title"));
+    const graph = buildGoalGraph(goal, { title: optionString(args, "title") });
     const validation = validatePlanGraphFileResult(graph);
     if (validation.errors.length > 0) {
       throw new Error(`Generated graph failed validation: ${formatGraphValidationIssues(validation.errors)}`);
@@ -726,40 +729,6 @@ function parseChildJson(child: unknown, index: number): DecomposeChildArg {
   return result;
 }
 
-export function buildGoalGraph(goal: string, title?: string): PlanGraphFile {
-  const normalizedGoal = goal.trim();
-  const normalizedTitle = title?.trim() || defaultGoalTitle(normalizedGoal);
-  const createdAt = new Date().toISOString();
-  return {
-    graphVersion: 1,
-    title: normalizedTitle,
-    description: "Generated from a CLI goal.",
-    graph: {
-      root: "ROOT",
-      nodes: {
-        ROOT: {
-          title: normalizedTitle,
-          kind: "task",
-          status: "pending",
-          description: normalizedGoal,
-          goal: {
-            text: normalizedGoal,
-            source: "operator",
-            createdAt
-          },
-          history: [
-            {
-              at: createdAt,
-              event: "goal-planned",
-              source: "cli"
-            }
-          ]
-        }
-      }
-    }
-  };
-}
-
 export function resolvePlanGraphOutputPath(rootDir: string, args: ParsedArgs, goal: string): string {
   const explicitGraphPath = optionString(args, "graph");
   if (explicitGraphPath !== undefined) {
@@ -841,10 +810,6 @@ function outputPathSegments(targetDir: string): string[] {
     segments.push(currentPath);
   }
   return segments;
-}
-
-function defaultGoalTitle(goal: string): string {
-  return goal.length <= 80 ? goal : `${goal.slice(0, 77)}...`;
 }
 
 function goalTimestamp(): string {

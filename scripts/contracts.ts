@@ -783,6 +783,7 @@ export interface VisualizerNodeDetail {
   kind: NodeKind;
   status: NodeStatus;
   description?: string;
+  goal?: string | NodeGoalMetadata;
   children: NodeId[];
   deliverables: string[];
   acceptanceCriteria: string[];
