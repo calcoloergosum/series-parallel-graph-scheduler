@@ -3,7 +3,8 @@
 This runbook covers operational recovery for a local series-parallel graph
 scheduler run. The graph file is the source of truth; prefer read-only
 diagnosis before mutating state, and keep important graph files under version
-control or backed up before broad resets.
+control or backed up before broad resets. For a compact cross-area failure
+table, see [`docs/failure-mode-matrix.md`](failure-mode-matrix.md).
 
 Examples use `./plan-improve.graph.json` as a graph-relative path from the
 repository root. Replace it with the graph you are operating.
@@ -299,6 +300,53 @@ Recovery:
   changed by the Codex run`, then either leave the newer state alone or reset
   deliberately.
 
+## Planner Failures And Preview Rejections
+
+Symptoms:
+
+- Worker planner mode is enabled and the worker stops before running Codex.
+- Recent events include `planner-failed` or `planner-preview-rejected`.
+- Node status is `blocked` by default, or `failed` when planner
+  `failurePolicy` is `fail`.
+- The report starts with `Planner failure:` or `Planner preflight:`.
+
+Diagnosis:
+
+```bash
+node scripts/plan-scheduler.mjs diagnostics --graph ./plan-improve.graph.json
+node scripts/plan-scheduler.mjs events --graph ./plan-improve.graph.json --node TEN36 --limit 20
+sed -n '1,260p' reports/TEN36-run-example.md
+```
+
+`planner-failed` means the planner runtime failed or returned output that did
+not pass scheduler validation. No child nodes from that planner response should
+exist, and the original node should still be a leaf. `planner-preview-rejected`
+means the planner produced a valid preview while `mode: "ask-approval"` was in
+effect; the scheduler wrote a report and blocked the node instead of applying
+the preview automatically.
+
+Recovery:
+
+- For invalid planner output, inspect validation paths in the report. If the
+  same leaf should be retried, reset it:
+
+  ```bash
+  node scripts/plan-scheduler.mjs reset --graph ./plan-improve.graph.json --node TEN36 --reason "retry after planner validation failure"
+  ```
+
+- For an approved preview, manually decompose the still-leaf node using the
+  child ids and titles from the report. Use the node's lease session and run id
+  if it is still leased:
+
+  ```bash
+  node scripts/plan-scheduler.mjs decompose --graph ./plan-improve.graph.json --node TEN36 --session codex-A --run run_20260531_000000_TEN36_example --kind series --child TEN36_A="First child" --child TEN36_B="Second child"
+  ```
+
+- If the preview or failure is obsolete, discard it with `reset --node TEN36`.
+  If a broader branch was based on the bad plan, use `reset-subtree` for that
+  branch. If an upstream output changed and later series work must be rerun, use
+  `reset-reachable` from the upstream node.
+
 ## Blocked Nodes
 
 Symptoms:
@@ -485,6 +533,45 @@ REF=refs/heads/spg/node/TEN36/run_20260527_000000_TEN36_abc123
 git --git-dir "$BARE" show-ref --verify "$REF"
 git --git-dir "$BARE" log --oneline --decorate -10 "$REF"
 ```
+
+### Git Diffstat Warnings
+
+Symptoms:
+
+- A completed node has `gitFootprintWarning`.
+- A `done`, `output-ref-recorded`, or `parent-ref-published` history event has
+  `diffStatCollected: false`.
+- The visualizer shows refs but no changed-file table for a completed node.
+
+These warnings are controlled metadata failures, not task failures. The
+scheduler keeps the successful `done` or parent publication result and omits
+only the diffstat/changed-file summary.
+
+Diagnosis:
+
+```bash
+node scripts/plan-scheduler.mjs events --graph "$GRAPH" --node "$NODE" --limit 20
+node -e '
+const fs = require("node:fs");
+const graph = JSON.parse(fs.readFileSync(process.argv[1], "utf8"));
+const node = graph.graph.nodes[process.argv[2]];
+console.log(JSON.stringify({
+  status: node.status,
+  baseRef: node.baseRef,
+  outputRef: node.outputRef,
+  gitFootprintWarning: node.gitFootprintWarning
+}, null, 2));
+' "$GRAPH" "$NODE"
+```
+
+Recovery:
+
+- If the node is correctly completed, leave it done. Fix missing refs or the
+  bare repository only if operators need the diffstat for review.
+- If the output ref is wrong or missing, inspect the report and choose the
+  narrowest reset scope. Use `reset --node` for a leaf retry, `reset-subtree`
+  for a contained composition branch, or `reset-reachable` when downstream
+  series work depends on the corrected output.
 
 ### Blocked Parallel Merge Buffers
 

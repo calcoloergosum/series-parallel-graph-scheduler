@@ -36,7 +36,7 @@ import {
 } from "./git-runtime.js";
 import { nodeIsolationDetails } from "./graph-traversal.js";
 import { numericArgumentRanges, parseNumericArgument } from "./numeric-args.js";
-import { operationalEvents } from "./operational-events.js";
+import { operationalEvents, type OperationalEventName } from "./operational-events.js";
 import { buildPlannerRuntimeRequest, plannerResponseToDecomposeMutation } from "./planner-runtime.js";
 import { runtimePathsFromModuleUrl } from "./runtime-paths.js";
 import { errorMessage, redactSecretText, safeFilePart, sleep } from "./shared-utils.js";
@@ -94,6 +94,7 @@ export interface WorkerRuntime extends WorkerPromptRuntime {
     session?: string;
     runId?: string;
     refMetadata?: WorkerRunRefMetadata;
+    extraHistoryEvents?: Array<{ event: OperationalEventName; details?: Record<string, unknown> }>;
   }): Promise<NodeMutationResult>;
   blockNode(graphPath: string, options: {
     nodeId?: string;
@@ -102,6 +103,7 @@ export interface WorkerRuntime extends WorkerPromptRuntime {
     report?: string;
     session?: string;
     runId?: string;
+    extraHistoryEvents?: Array<{ event: OperationalEventName; details?: Record<string, unknown> }>;
   }): Promise<NodeMutationResult>;
   decomposeNode(graphPath: string, options: {
     nodeId?: string;
@@ -436,10 +438,20 @@ async function planWorkerNode(
     allowedKinds: settings.allowedKinds,
     planner: graph.scheduler?.workerPlanner?.planner || node.planner
   });
-  const result = await planner.plan(request);
-  const decompose = plannerResponseToDecomposeMutation(result.response, graph, claim.nodeId, {
-    allowedKinds: request.allowedKinds
-  });
+  let result: PlannerRuntimeResponse;
+  try {
+    result = await planner.plan(request);
+  } catch (error) {
+    throw attachPlannerRequestId(error, request.requestId);
+  }
+  let decompose: ReturnType<typeof plannerResponseToDecomposeMutation>;
+  try {
+    decompose = plannerResponseToDecomposeMutation(result.response, graph, claim.nodeId, {
+      allowedKinds: request.allowedKinds
+    });
+  } catch (error) {
+    throw attachPlannerRequestId(error, result.requestId || request.requestId);
+  }
   return {
     ...result,
     validation: result.validation || { valid: true, errors: [] },
@@ -469,7 +481,17 @@ async function blockForPlannerApproval(
     runId: claim.runId,
     report: reportPath,
     reason: `planner proposed ${plan.response.kind} decomposition`,
-    question: plannerApprovalQuestion(claim, plan)
+    question: plannerApprovalQuestion(claim, plan),
+    extraHistoryEvents: [{
+      event: operationalEvents.plannerPreviewRejected,
+      details: {
+        requestId: plan.requestId,
+        proposedKind: plan.response.kind,
+        childIds: plan.decompose?.children.map((child) => child.id) || [],
+        reason: "planner approval required",
+        report: reportPath
+      }
+    }]
   });
   return {
     ...result,
@@ -510,7 +532,13 @@ async function handlePlannerFailure(
       session,
       runId: claim.runId,
       reason,
-      report: reportPath
+      report: reportPath,
+      extraHistoryEvents: [plannerFailureHistoryEvent({
+        reason,
+        reportPath,
+        failurePolicy,
+        requestId: requestIdFromPlannerError(error)
+      })]
     });
     return {
       ...result,
@@ -531,7 +559,13 @@ async function handlePlannerFailure(
     runId: claim.runId,
     report: reportPath,
     reason,
-    question: `Planner failed before executing ${claim.nodeId}. Inspect ${reportPath}, then reset or fail the node.`
+    question: `Planner failed before executing ${claim.nodeId}. Inspect ${reportPath}, then reset or fail the node.`,
+    extraHistoryEvents: [plannerFailureHistoryEvent({
+      reason,
+      reportPath,
+      failurePolicy,
+      requestId: requestIdFromPlannerError(error)
+    })]
   });
   return {
     ...result,
@@ -545,6 +579,41 @@ async function handlePlannerFailure(
       report: reportPath
     })
   };
+}
+
+function plannerFailureHistoryEvent({
+  reason,
+  reportPath,
+  failurePolicy,
+  requestId
+}: {
+  reason: string;
+  reportPath: string;
+  failurePolicy: WorkerPlannerFailurePolicy;
+  requestId?: string;
+}): { event: OperationalEventName; details: Record<string, unknown> } {
+  return {
+    event: operationalEvents.plannerFailed,
+    details: {
+      requestId,
+      failurePolicy,
+      reason,
+      report: reportPath
+    }
+  };
+}
+
+function attachPlannerRequestId(error: unknown, requestId: string): unknown {
+  if (typeof error === "object" && error !== null && !("requestId" in error)) {
+    (error as { requestId?: string }).requestId = requestId;
+  }
+  return error;
+}
+
+function requestIdFromPlannerError(error: unknown): string | undefined {
+  return typeof error === "object" && error !== null && typeof (error as { requestId?: unknown }).requestId === "string"
+    ? (error as { requestId: string }).requestId
+    : undefined;
 }
 
 function resolveWorkerPlannerSettings(graph: PlanGraphFile, options: RunWorkerOptions): WorkerPlannerSettings {

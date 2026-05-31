@@ -365,7 +365,7 @@ Mutation semantics are public behavior:
   sibling branches. Selecting the root resets every root-reachable node.
   Selecting a node that is not reachable from `graph.root` resets only that
   node's child-reachable subtree.
-- `decompose` replaces a claimed or running leaf with a `series` or `parallel` subtree and creates child nodes from `--child` or `--child-json`.
+- `decompose` replaces a claimed, running, or blocked leaf with a `series` or `parallel` subtree and creates child nodes from `--child` or `--child-json`.
 - `decompose --child ID=Title` and `--child ID:Title` create task/pending children.
 - `decompose --child-json` accepts an array of objects with string `id` and `title`; optional `kind`, `status`, string-array `children`, and additional child metadata are preserved on created child nodes.
 - Mutation ownership rules for preserving unknown metadata and documenting cleared fields are maintained in [Mutation Ownership](mutation-ownership.md).
@@ -384,7 +384,7 @@ Status transitions are defined by command. Worker-owned commands require matchin
 | `reset` | operator | leaf | any known status; custom statuses are also reset | `pending` | clears lease without owner credentials |
 | `reset-subtree` | operator | selected node and child-reachable descendants | any known status; custom statuses are also reset | `pending` | clears leases in the reset set without owner credentials |
 | `reset-reachable` | operator | selected node, descendants, and later execution-reachable series work | any known status; custom statuses are also reset | `pending` | clears leases in the reset set without owner credentials |
-| `decompose` | worker | leaf | `claimed`, `running` | selected node returns to `pending` as a `series`/`parallel` parent | requires owner if leased; clears lease and creates children |
+| `decompose` | worker | leaf | `claimed`, `running`, `blocked` | selected node returns to `pending` as a `series`/`parallel` parent | requires owner if leased; clears lease and creates children |
 | `reconcile` | system | non-leaf whose child subtrees are all `done`; composition buffers publish parent refs before downstream readiness | any non-`done` status except parked blocked/review/failed buffers until reset | `done`, `blocked`, or `review` | does not inspect leases |
 | `release-expired` | system | nodes with expired leases | `claimed`, `running` | `pending` | clears only expired `claimed`/`running` leases |
 
@@ -394,6 +394,8 @@ events use `claimed`, `running`, `renewed`, `done`, `blocked`, `answered`,
 Git isolation graph history events use `clone-prepared`, `branch-created`,
 `output-ref-recorded`, `merge-attempted`, `merge-conflicted`, and
 `parent-ref-published`.
+Planner preflight graph history events use `planner-failed` and
+`planner-preview-rejected`.
 Worker-manager events use `worker-started` and `worker-stopped`. Lock
 diagnostic events reserve `lock-acquired`, `lock-released`,
 `lock-stale-reaped`, and `lock-timeout`. Event names should not be renamed once

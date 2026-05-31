@@ -322,6 +322,8 @@ order from a node history or the flattened `events` export. New mutation entries
 Git isolation also reserves `clone-prepared`, `branch-created`,
 `output-ref-recorded`, `merge-attempted`, `merge-conflicted`, and
 `parent-ref-published` for ref and merge audit trails.
+Planner preflight reserves `planner-failed` and `planner-preview-rejected` for
+failed planner output and approval-gated decomposition previews.
 
 The visualizer worker manager uses `worker-started` and `worker-stopped` in
 worker log tails. Lock diagnostics reserve `lock-acquired`, `lock-released`,

@@ -1,5 +1,5 @@
 import test from "node:test";
-import { assert, assertCliFails, blockNode, buildNodeWorkBranchName, buildWorkerPrompt, claimNode, collectGitDiffStat, completeNode, createFixturePlannerRuntime, createRawWorkerManager, createRunClone, createSourceBranch, createWorkBranch, decomposeNode, depthPriorityGraph, dirname, escapeRegExp, execFileAsync, existsSync, failNode, fixtureGraph, formatWorkerReport, gitShow, join, knownTransitionStatuses, lastHistory, listReadyLeafNodes, mkdir, mkdtemp, normalizeWorkerReport, parallelWorkerIsolationGraph, parseCodexArgs, prepareBareRepository, prepareCompositionBareRepository, publishOutputRef, readFile, readGraph, readyIds, realpath, reconcileGraphStatus, recordWorkerRefMetadata, releaseExpiredLeases, renewNodeLease, resetSubtree, resolveNodeBaseRef, rm, runCodexPrompt, runGitCommand, runWorker, schedulerTransitionTable, setNodeStatus, startLeaseHeartbeat, startNode, tmpdir, waitFor, withLocalBareRemote, withTempGraph, writeCommittingWorkerRunner, writeFile, writeNoopWorkerRunner, writeWorkerIsolationGraph } from "./helpers/plan-scheduler-harness.mjs";
+import { assert, assertCliFails, blockNode, buildNodeWorkBranchName, buildWorkerPrompt, claimNode, collectGitDiffStat, completeNode, createFixturePlannerRuntime, createRawWorkerManager, createRunClone, createSourceBranch, createWorkBranch, decomposeNode, depthPriorityGraph, dirname, escapeRegExp, execFileAsync, existsSync, failNode, fixtureGraph, formatWorkerReport, gitShow, join, knownTransitionStatuses, lastHistory, listReadyLeafNodes, mkdir, mkdtemp, normalizeWorkerReport, operationalEvents, parallelWorkerIsolationGraph, parseCodexArgs, prepareBareRepository, prepareCompositionBareRepository, publishOutputRef, readFile, readGraph, readyIds, realpath, reconcileGraphStatus, recordWorkerRefMetadata, releaseExpiredLeases, renewNodeLease, resetSubtree, resolveNodeBaseRef, rm, runCodexPrompt, runGitCommand, runWorker, schedulerTransitionTable, setNodeStatus, startLeaseHeartbeat, startNode, tmpdir, waitFor, withLocalBareRemote, withTempGraph, writeCommittingWorkerRunner, writeFile, writeNoopWorkerRunner, writeWorkerIsolationGraph } from "./helpers/plan-scheduler-harness.mjs";
 
 test("worker report formatting includes auditable fields and stable volatile normalization", () => {
   const report = normalizeWorkerReport(formatWorkerReport({
@@ -2016,9 +2016,25 @@ test("worker planner preflight ask-approval blocks valid decomposition proposals
     assert.equal(updated.graph.nodes.A.children, undefined);
     assert.equal(updated.graph.nodes.A.status, "blocked");
     assert.match(updated.graph.nodes.A.question, /Planner proposed series decomposition/);
+    const previewEvent = updated.graph.nodes.A.history.find((event) => event.event === operationalEvents.plannerPreviewRejected);
+    assert.equal(previewEvent.status, "blocked");
+    assert.equal(previewEvent.proposedKind, "series");
+    assert.deepEqual(previewEvent.childIds, ["A_APPROVED"]);
+    assert.match(previewEvent.requestId, /^worker-plan-A-run_/);
     const report = await readFile(join(dir, updated.graph.nodes.A.report), "utf8");
     assert.match(report, /Planner preflight: A/);
     assert.match(report, /A_APPROVED/);
+
+    await decomposeNode(graphPath, {
+      nodeId: "A",
+      session: "codex-planner-approval",
+      runId: result.results[0].runId,
+      kind: "series",
+      children: [{ id: "A_APPROVED", title: "Approved child" }]
+    });
+    const decomposed = await readGraph(graphPath);
+    assert.equal(decomposed.graph.nodes.A.status, "pending");
+    assert.deepEqual(decomposed.graph.nodes.A.children, ["A_APPROVED"]);
   });
 });
 
@@ -2036,7 +2052,14 @@ test("worker planner preflight fails invalid planner output by policy", async ()
       async plan(request) {
         return {
           requestId: request.requestId,
-          response: { kind: "series", title: "Invalid missing children" }
+          response: {
+            kind: "series",
+            title: "Invalid duplicate child",
+            children: [
+              { id: "A_INVALID", title: "First proposed child" },
+              { id: "A_INVALID", title: "Duplicate proposed child" }
+            ]
+          }
         };
       }
     };
@@ -2056,8 +2079,15 @@ test("worker planner preflight fails invalid planner output by policy", async ()
     const updated = await readGraph(graphPath);
     assert.equal(updated.graph.nodes.A.status, "failed");
     assert.match(updated.graph.nodes.A.failureReason, /planner failed: Invalid planner response/);
+    assert.equal(updated.graph.nodes.A.children, undefined);
+    assert.equal(Object.hasOwn(updated.graph.nodes, "A_INVALID"), false);
+    const plannerFailedEvent = updated.graph.nodes.A.history.find((event) => event.event === operationalEvents.plannerFailed);
+    assert.equal(plannerFailedEvent.status, "failed");
+    assert.equal(plannerFailedEvent.failurePolicy, "fail");
+    assert.match(plannerFailedEvent.requestId, /^worker-plan-A-run_/);
+    assert.match(plannerFailedEvent.reason, /Invalid planner response/);
     const report = await readFile(join(dir, updated.graph.nodes.A.report), "utf8");
-    assert.match(report, /missing-children/);
+    assert.match(report, /duplicate-child-id/);
   });
 });
 
@@ -2086,6 +2116,10 @@ test("worker planner preflight blocks planner failures by default", async () => 
     const updated = await readGraph(graphPath);
     assert.equal(updated.graph.nodes.A.status, "blocked");
     assert.match(updated.graph.nodes.A.blockedReason, /planner failed: worker planner mode auto-decompose requires an injected planner runtime/);
+    const plannerFailedEvent = updated.graph.nodes.A.history.find((event) => event.event === operationalEvents.plannerFailed);
+    assert.equal(plannerFailedEvent.status, "blocked");
+    assert.equal(plannerFailedEvent.failurePolicy, "block");
+    assert.match(plannerFailedEvent.reason, /requires an injected planner runtime/);
     const report = await readFile(join(dir, updated.graph.nodes.A.report), "utf8");
     assert.match(report, /Planner failure: A/);
   });

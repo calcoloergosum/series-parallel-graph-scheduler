@@ -28,6 +28,8 @@ export const operationalEvents = {
   mergeAttempted: "merge-attempted",
   mergeConflicted: "merge-conflicted",
   parentRefPublished: "parent-ref-published",
+  plannerFailed: "planner-failed",
+  plannerPreviewRejected: "planner-preview-rejected",
   workerStarted: "worker-started",
   workerStopped: "worker-stopped",
   lockAcquired: "lock-acquired",
@@ -153,6 +155,18 @@ export const operationalEventTaxonomy = [
     producer: "graph-history",
     stableFields: ["at", "event", "parentId", "kind", "integrationRef", "outputRef", "commit", "result", "diffStatCollected", "diffStat"],
     description: "A composition parent published the output ref used by downstream isolated work."
+  },
+  {
+    name: operationalEvents.plannerFailed,
+    producer: "graph-history",
+    stableFields: ["at", "event", "previousStatus", "status", "session", "runId", "requestId", "failurePolicy", "reason", "report"],
+    description: "Worker planner preflight failed validation or runtime execution and was converted to a controlled blocked or failed node."
+  },
+  {
+    name: operationalEvents.plannerPreviewRejected,
+    producer: "graph-history",
+    stableFields: ["at", "event", "previousStatus", "status", "session", "runId", "requestId", "proposedKind", "childIds", "reason", "report"],
+    description: "Worker planner preflight produced a valid decomposition preview, but automatic application was rejected pending operator approval."
   },
   {
     name: operationalEvents.workerStarted,

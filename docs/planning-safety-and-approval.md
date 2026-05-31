@@ -55,6 +55,9 @@ mutation and the worker does not execute Codex for that parent. `mode:
 instead of mutating children, so an operator can approve, reset, or fail it.
 `failurePolicy: "block"` is the default for planner errors; `failurePolicy:
 "fail"` marks the node failed with the planner report attached.
+Both paths append `planner-failed` history before the worker continues. Approval
+mode appends `planner-preview-rejected` when a valid preview is intentionally
+held for manual review instead of being applied.
 
 Regenerate creates a replacement proposal, not an implicit edit to accepted
 state. If regeneration happens while a draft is open, the UI should show the

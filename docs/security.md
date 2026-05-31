@@ -82,7 +82,7 @@ The CLI mutates work through these commands:
 - `block`: marks work blocked, stores an operator question/reason, regenerates HTML, and may notify Slack.
 - `answer`: stores an operator answer, clears the lease, returns the leaf to pending, regenerates HTML, and may notify Slack.
 - `fail`: marks work failed, records reason/report, clears the lease, regenerates HTML, and may notify Slack.
-- `decompose`: replaces a claimed/running leaf with child nodes, clears the lease, reconciles the graph, regenerates HTML, and may notify Slack.
+- `decompose`: replaces a claimed/running/blocked leaf with child nodes, clears the lease, reconciles the graph, regenerates HTML, and may notify Slack.
 - `worker`: loops over `claim`, `start`, lease renewal, report writing, `done`, and `fail` while spawning the configured Codex command.
 - `reconcile`: marks completed internal subtrees done.
 - `release-expired`: clears expired leases and returns affected work to pending.

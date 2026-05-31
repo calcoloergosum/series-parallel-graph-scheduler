@@ -32,7 +32,7 @@ This section is generated from `schedulerTransitionTable` in `scripts/node-mutat
 | `answer` | operator | blocked leaf | `blocked` | `pending` | does not require owner credentials; clears any lease | `answerNode` |
 | `block` | worker | leaf | `claimed`, `running` | `blocked` | requires matching session or run id when the node is leased; preserves any lease | `blockNode` |
 | `claim` | worker | ready leaf; claim also releases expired claimed/running leases before selecting work | `pending`; custom non-busy, non-terminal leaf statuses | `claimed` | creates a new lease; no prior owner required | `claimNode` |
-| `decompose` | worker | leaf | `claimed`, `running` | `pending` | requires matching session or run id when the node is leased; clears any lease and creates child nodes | `decomposeNode` |
+| `decompose` | worker | leaf | `claimed`, `running`, `blocked` | `pending` | requires matching session or run id when the node is leased; clears any lease and creates child nodes | `decomposeNode` |
 | `done` | worker | leaf | `claimed`, `running`, `blocked`, `review` | `done` | requires matching session or run id when the node is leased; clears any lease | `completeNode` |
 | `fail` | worker | leaf | `claimed`, `running`, `blocked`, `review` | `failed` | requires matching session or run id when the node is leased; clears any lease | `failNode` |
 | `reconcile` | system | non-leaf whose child subtrees are all done | `pending`, `claimed`, `running`, `blocked`, `review`, `failed` | `done` | does not inspect or require leases | `reconcileGraphStatus` |

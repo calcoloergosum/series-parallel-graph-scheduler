@@ -75,6 +75,7 @@ export interface BlockNodeOptions extends OwnedNodeOptions {
   question?: string;
   reason?: string;
   report?: string;
+  extraHistoryEvents?: ExtraNodeHistoryEvent[];
 }
 
 export interface AnswerNodeOptions {
@@ -87,6 +88,7 @@ export interface FailNodeOptions extends OwnedNodeOptions {
   reason?: string;
   report?: string;
   refMetadata?: WorkerRunRefMetadata;
+  extraHistoryEvents?: ExtraNodeHistoryEvent[];
 }
 
 export interface RenewNodeLeaseOptions extends OwnedNodeOptions {
@@ -141,6 +143,12 @@ interface UpdateNodeStatusOptions {
   owner?: LeaseOwner;
   validate?: (graph: PlanGraphFile, node: GraphNode) => void;
   patch?: (node: GraphNode, graph: PlanGraphFile) => Record<string, unknown> | void | Promise<Record<string, unknown> | void>;
+  extraHistoryEvents?: ExtraNodeHistoryEvent[];
+}
+
+export interface ExtraNodeHistoryEvent {
+  event: OperationalEventName;
+  details?: Record<string, unknown>;
 }
 
 export type SchedulerTransitionActor = "worker" | "operator" | "system";
@@ -248,7 +256,7 @@ export const schedulerTransitionTable = {
     actor: "worker",
     implementation: "decomposeNode",
     scope: "leaf",
-    allowedFrom: ["claimed", "running"],
+    allowedFrom: ["claimed", "running", "blocked"],
     to: "pending",
     lease: "requires matching session or run id when the node is leased; clears any lease and creates child nodes"
   },
@@ -431,12 +439,13 @@ export async function completeNode(
 
 export async function blockNode(
   graphPath: string,
-  { nodeId, question, reason, report, session, runId }: BlockNodeOptions = {}
+  { nodeId, question, reason, report, session, runId, extraHistoryEvents }: BlockNodeOptions = {}
 ): Promise<NodeMutationResult> {
   return updateNodeStatus(graphPath, {
     nodeId,
     status: "blocked",
     owner: { session, runId },
+    extraHistoryEvents,
     validate: (graph, node) => {
       assertLeafNode(graph, nodeId);
       assertStatus(node, schedulerTransitionTable.block.allowedFrom, "block");
@@ -499,12 +508,13 @@ export async function answerNode(
 
 export async function failNode(
   graphPath: string,
-  { nodeId, reason, report, session, runId, refMetadata }: FailNodeOptions = {}
+  { nodeId, reason, report, session, runId, refMetadata, extraHistoryEvents }: FailNodeOptions = {}
 ): Promise<NodeMutationResult> {
   return updateNodeStatus(graphPath, {
     nodeId,
     status: "failed",
     owner: { session, runId },
+    extraHistoryEvents,
     validate: (graph, node) => {
       assertLeafNode(graph, nodeId);
       assertStatus(node, schedulerTransitionTable.fail.allowedFrom, "fail");
@@ -890,7 +900,10 @@ export async function decomposeNode(
   });
 }
 
-async function updateNodeStatus(graphPath: string, { nodeId, status, owner, validate, patch }: UpdateNodeStatusOptions): Promise<NodeMutationResult> {
+async function updateNodeStatus(
+  graphPath: string,
+  { nodeId, status, owner, validate, patch, extraHistoryEvents }: UpdateNodeStatusOptions
+): Promise<NodeMutationResult> {
   if (!nodeId) {
     throw new Error("Missing node id");
   }
@@ -910,6 +923,15 @@ async function updateNodeStatus(graphPath: string, { nodeId, status, owner, vali
       runId: owner?.runId,
       ...patchDetails
     });
+    for (const extraEvent of extraHistoryEvents || []) {
+      appendHistory(node, extraEvent.event, {
+        previousStatus,
+        status,
+        session: owner?.session,
+        runId: owner?.runId,
+        ...extraEvent.details
+      });
+    }
     await reconcileCompletedSubtrees(graph, graphPath);
     graph.graphVersion = (graph.graphVersion || 0) + 1;
     await writeGraphAtomic(graph, graphPath);
