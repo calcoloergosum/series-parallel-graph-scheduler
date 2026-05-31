@@ -270,11 +270,58 @@ export interface PlannerRequest {
   goal: string;
   nodeId?: NodeId;
   node?: GraphNode;
+  parentContext?: PlannerParentContext;
+  currentGraphSummary?: GraphSummary;
+  outputSchema?: PlannerOutputSchemaDescriptor;
   allowedKinds?: PlannerOutputKind[];
   contextRefs?: NodeContextRefMetadata[];
   outputContract?: NodeOutputContract;
   planner?: NodePlannerMetadata;
   [metadata: string]: unknown;
+}
+
+export interface PlannerParentContext {
+  nodeId: NodeId;
+  title?: string;
+  kind?: NodeKind;
+  status?: NodeStatus;
+  description?: string;
+  deliverables?: string[];
+  acceptanceCriteria?: string[];
+  goal?: string | NodeGoalMetadata;
+  contextRefs?: NodeContextRefMetadata[];
+  outputContract?: NodeOutputContract;
+  parentIds?: NodeId[];
+  [metadata: string]: unknown;
+}
+
+export interface PlannerOutputSchemaDescriptor {
+  schemaRef?: string;
+  description?: string;
+  responseKinds?: PlannerOutputKind[];
+  requiredFields?: string[];
+  schema?: JsonObject;
+  [metadata: string]: unknown;
+}
+
+export interface PlannerRuntimeRequest extends PlannerRequest {
+  requestId: string;
+  currentGraphSummary: GraphSummary;
+  outputSchema: PlannerOutputSchemaDescriptor;
+}
+
+export interface PlannerRuntimeResponse {
+  requestId: string;
+  response: PlannerResponse;
+  rawText?: string;
+  prompt?: string;
+  planner?: NodePlannerMetadata;
+  validation?: PlannerValidationResult;
+  [metadata: string]: unknown;
+}
+
+export interface PlannerRuntime {
+  plan(request: PlannerRuntimeRequest): Promise<PlannerRuntimeResponse>;
 }
 
 export interface PlannerProposalBase {

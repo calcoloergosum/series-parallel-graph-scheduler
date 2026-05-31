@@ -1,5 +1,5 @@
 import test from "node:test";
-import { addUnknownMetadata, answerNode, assert, assertUnknownMetadata, attachReadyPriorityFields, blockNode, buildReachableParentMap, buildReadyPrioritySelections, buildStableRootPathMap, buildVisualizerPayload, buildWorkerPrompt, checkSchedulerTransitionReference, claimNode, compareReadyPriorityCandidates, completeNode, completedDeepReadinessGraph, concurrentMutationGraph, countSharedParentsWithCurrentTask, decomposeNode, deepReadinessGraph, depthPriorityGraph, diagnoseGraph, dirname, escapeRegExp, execFileAsync, failNode, knownTransitionStatuses, lastHistory, leafOnlyChildCountPriorityGraph, listReadyLeafNodes, listWorkingNodes, lockArtifacts, mutationOwnershipDocsPath, nestedResetReachabilityGraph, readGraph, readyIds, reconcileGraphStatus, releaseExpiredLeases, renewNodeLease, resetNode, resetReachable, resetSubtree, schedulerScriptPath, schedulerTransitionTable, setNodeStatus, sharedParentPriorityGraph, startNode, stressScriptPath, validatePlanGraphFileResult, withTempGraph, writeFile } from "./helpers/plan-scheduler-harness.mjs";
+import { addUnknownMetadata, answerNode, assert, assertUnknownMetadata, attachReadyPriorityFields, blockNode, buildPlannerPrompt, buildPlannerRuntimeRequest, buildReachableParentMap, buildReadyPrioritySelections, buildStableRootPathMap, buildVisualizerPayload, buildWorkerPrompt, checkSchedulerTransitionReference, claimNode, compareReadyPriorityCandidates, completeNode, completedDeepReadinessGraph, concurrentMutationGraph, countSharedParentsWithCurrentTask, createFixturePlannerRuntime, decomposeNode, deepReadinessGraph, depthPriorityGraph, diagnoseGraph, dirname, escapeRegExp, execFileAsync, failNode, knownTransitionStatuses, lastHistory, leafOnlyChildCountPriorityGraph, listReadyLeafNodes, listWorkingNodes, lockArtifacts, mutationOwnershipDocsPath, nestedResetReachabilityGraph, planNodeDecomposition, readGraph, readyIds, reconcileGraphStatus, releaseExpiredLeases, renewNodeLease, resetNode, resetReachable, resetSubtree, schedulerScriptPath, schedulerTransitionTable, setNodeStatus, sharedParentPriorityGraph, startNode, stressScriptPath, validatePlanGraphFileResult, withTempGraph, writeFile } from "./helpers/plan-scheduler-harness.mjs";
 
 function priorityCandidate(id, depth, childCount, sharedParentCountWithCurrentTask) {
   return {
@@ -1732,6 +1732,54 @@ test("decompose replaces a leaf with a child subgraph", async () => {
     await completeNode(graphPath, { nodeId: "A1", session: "codex-A1" });
     graph = await readGraph(graphPath);
     assert.deepEqual(listReadyLeafNodes(graph).map((node) => node.id), ["A2"]);
+  });
+});
+
+test("planner adapter builds decomposition requests without network access", async () => {
+  await withTempGraph(async (graphPath) => {
+    const graph = await readGraph(graphPath);
+    const request = buildPlannerRuntimeRequest(graph, "A", { requestId: "fixture-plan-A" });
+    const prompt = await buildPlannerPrompt(request, {
+      template: [
+        "Goal:",
+        "{{goal}}",
+        "Parent:",
+        "{{parentContextJson}}",
+        "Summary:",
+        "{{graphSummaryJson}}",
+        "Schema:",
+        "{{outputSchemaJson}}"
+      ].join("\n")
+    });
+
+    assert.match(prompt, /Goal:\nBootstrap/);
+    assert.match(prompt, /"nodeId": "A"/);
+    assert.match(prompt, /"totalNodes": 6/);
+    assert.match(prompt, /docs\/planner-output-schema\.md/);
+
+    const planner = createFixturePlannerRuntime({
+      "fixture-plan-A": {
+        kind: "series",
+        title: "Planned bootstrap split",
+        childIdPolicy: "planner-deterministic",
+        children: [
+          { id: "A1", kind: "task", title: "Prepare bootstrap contract" },
+          { id: "A2", kind: "task", title: "Implement bootstrap work" }
+        ]
+      }
+    });
+
+    const result = await planNodeDecomposition(graphPath, {
+      nodeId: "A",
+      planner,
+      requestId: "fixture-plan-A"
+    });
+
+    assert.equal(result.requestId, "fixture-plan-A");
+    assert.equal(result.response.requestId, "fixture-plan-A");
+    assert.equal(result.response.kind, "series");
+    assert.deepEqual(result.response.children.map((child) => child.id), ["A1", "A2"]);
+    assert.equal((await readGraph(graphPath)).graphVersion, graph.graphVersion);
   });
 });
 

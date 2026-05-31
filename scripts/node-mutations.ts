@@ -13,10 +13,14 @@ import {
   type NodeId,
   type NodeIntegrationInputRefMetadata,
   type NodeKind,
+  type NodePlannerMetadata,
   type NodeMutationResult,
   type NodeStatus,
   type NodeWorkspaceMetadata,
   type PlanGraphFile,
+  type PlannerOutputKind,
+  type PlannerRuntime,
+  type PlannerRuntimeResponse,
   type ReconcileGraphResult,
   type ReleaseExpiredLeasesResult,
   type RenewLeaseResult,
@@ -41,6 +45,7 @@ import {
   redactOperationalEventDetails,
   type OperationalEventName
 } from "./operational-events.js";
+import { buildPlannerRuntimeRequest } from "./planner-runtime.js";
 import { errorMessage, safeFilePart } from "./shared-utils.js";
 
 export interface ClaimNodeOptions {
@@ -110,6 +115,14 @@ export interface DecomposeChildDefinition {
 export interface DecomposeNodeOptions extends OwnedNodeOptions {
   kind?: NodeKind;
   children?: DecomposeChildDefinition[];
+}
+
+export interface PlanNodeDecompositionOptions extends OwnedNodeOptions {
+  planner: PlannerRuntime;
+  requestId?: string;
+  goal?: string;
+  allowedKinds?: PlannerOutputKind[];
+  plannerMetadata?: NodePlannerMetadata;
 }
 
 interface LeaseOwner {
@@ -760,6 +773,28 @@ export async function publishResolvedIntegration(
     await writeGraphAtomic(graph, graphPath);
     return { nodeId, status: node.status, title: node.title, summary: summarizeGraph(graph) };
   });
+}
+
+export async function planNodeDecomposition(
+  graphPath: string,
+  { nodeId, planner, requestId, goal, allowedKinds, plannerMetadata }: PlanNodeDecompositionOptions
+): Promise<PlannerRuntimeResponse> {
+  if (!nodeId) {
+    throw new Error("Missing node id");
+  }
+
+  const graph = await readGraph(graphPath);
+  const node = getNode(graph, nodeId);
+  if (!isLeaf(graph, nodeId)) {
+    throw new Error(`Cannot plan decomposition for non-leaf node: ${nodeId}`);
+  }
+  const request = buildPlannerRuntimeRequest(graph, nodeId, {
+    requestId,
+    goal,
+    allowedKinds,
+    planner: plannerMetadata || node.planner
+  });
+  return planner.plan(request);
 }
 
 export async function decomposeNode(

@@ -112,6 +112,7 @@ export {
   schedulerTransitionTable,
   startNode
 } from "./node-mutations.js";
+export { planNodeDecomposition } from "./node-mutations.js";
 export {
   exportOperationalEvents,
   operationalEvents,
@@ -130,6 +131,16 @@ export {
   redactGitRemote,
   runGitCommand
 } from "./git-runtime.js";
+export {
+  buildPlannerParentContext,
+  buildPlannerPrompt,
+  buildPlannerRuntimeRequest,
+  createFixturePlannerRuntime,
+  createPromptPlannerRuntime,
+  defaultPlannerOutputSchema,
+  parsePlannerResponse,
+  renderPlannerPrompt
+} from "./planner-runtime.js";
 export { buildSlackNotificationText, sendSlackNotification } from "./notification.js";
 export {
   finalizeWorkerRun,

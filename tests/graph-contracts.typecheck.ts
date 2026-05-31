@@ -15,8 +15,13 @@ import {
   type ParsedArgs,
   type PlanGraphFile,
   type PlannerChildProposal,
+  type PlannerOutputSchemaDescriptor,
+  type PlannerParentContext,
   type PlannerRequest,
   type PlannerResponse,
+  type PlannerRuntime,
+  type PlannerRuntimeRequest,
+  type PlannerRuntimeResponse,
   type PlannerValidationError,
   type PlannerValidationResult,
   type PublicWorker,
@@ -198,6 +203,38 @@ const _plannerValidationResult: PlannerValidationResult = {
   valid: false,
   errors: [plannerValidationError],
   warnings: []
+};
+const plannerParentContext: PlannerParentContext = {
+  nodeId: "A",
+  title: "Task",
+  kind: "task",
+  status: "pending",
+  parentIds: ["ROOT"]
+};
+const plannerOutputSchema: PlannerOutputSchemaDescriptor = {
+  schemaRef: "docs/planner-output-schema.md",
+  description: "Planner response JSON schema",
+  responseKinds: ["task", "series", "parallel"],
+  requiredFields: ["kind", "title"],
+  schema: { type: "object", required: ["kind", "title"] }
+};
+const plannerRuntimeRequest: PlannerRuntimeRequest = {
+  ...plannerRequest,
+  requestId: "plan-runtime-request",
+  parentContext: plannerParentContext,
+  currentGraphSummary: { graphVersion: 1, totalNodes: 2, root: "ROOT", counts: { pending: 2 } },
+  outputSchema: plannerOutputSchema
+};
+const plannerRuntimeResponse: PlannerRuntimeResponse = {
+  requestId: plannerRuntimeRequest.requestId,
+  response: _plannerResponse,
+  prompt: "Planner prompt",
+  rawText: JSON.stringify(_plannerResponse)
+};
+const plannerRuntime: PlannerRuntime = {
+  async plan(request) {
+    return { ...plannerRuntimeResponse, requestId: request.requestId };
+  }
 };
 
 const graph = {
@@ -497,6 +534,11 @@ const payload: VisualizerPayload = {
 
 void args;
 void vendorJson;
+void plannerParentContext;
+void plannerOutputSchema;
+void plannerRuntimeRequest;
+void plannerRuntimeResponse;
+void plannerRuntime;
 void payload;
 void invalidChildrenNode;
 void invalidLease;
