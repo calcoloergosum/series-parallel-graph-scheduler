@@ -139,6 +139,9 @@ export {
   createPromptPlannerRuntime,
   defaultPlannerOutputSchema,
   parsePlannerResponse,
+  plannerResponseToDecomposeMutation,
+  validatePlannerResponse,
+  PlannerResponseValidationError,
   renderPlannerPrompt
 } from "./planner-runtime.js";
 export { buildSlackNotificationText, sendSlackNotification } from "./notification.js";

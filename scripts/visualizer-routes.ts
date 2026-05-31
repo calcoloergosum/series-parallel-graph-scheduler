@@ -797,6 +797,9 @@ function childDefinitionsBodyField(body: Record<string, unknown>, field: string)
       if (!Array.isArray(child.children) || !child.children.every((item) => typeof item === "string")) {
         throw new RequestValidationError(`${field}[${index}].children must be an array of strings`);
       }
+      child.children.forEach((childId, childIndex) => {
+        assertSafeChildId(childId, `${field}[${index}].children[${childIndex}]`);
+      });
       normalized.children = child.children;
     }
     return normalized;
@@ -813,6 +816,9 @@ function requiredChildString(
   if (!value) {
     throw new RequestValidationError(`Missing ${field}[${index}].${key}`);
   }
+  if (key === "id") {
+    assertSafeChildId(value, `${field}[${index}].${key}`);
+  }
   return value;
 }
 
@@ -822,4 +828,10 @@ function childString(child: Record<string, unknown>, key: string, field: string,
     throw new RequestValidationError(`${field}[${index}].${key} must be a string`);
   }
   return value;
+}
+
+function assertSafeChildId(id: string, path: string): void {
+  if (!/^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/.test(id) || id.includes("..")) {
+    throw new RequestValidationError(`${path} contains unsafe characters: ${id}`);
+  }
 }

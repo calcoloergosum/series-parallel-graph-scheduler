@@ -28,6 +28,7 @@ import {
   type ResetSubtreeResult,
   type WorkerRunRefMetadata
 } from "./contracts.js";
+import { validatePlanGraphFileResult } from "./contracts.js";
 
 import { defaultGraphPath, readGraph, withGraphLock, writeGraphAtomic, writeReportFile } from "./graph-io.js";
 import {
@@ -45,7 +46,7 @@ import {
   redactOperationalEventDetails,
   type OperationalEventName
 } from "./operational-events.js";
-import { buildPlannerRuntimeRequest } from "./planner-runtime.js";
+import { buildPlannerRuntimeRequest, plannerResponseToDecomposeMutation } from "./planner-runtime.js";
 import { errorMessage, safeFilePart } from "./shared-utils.js";
 
 export interface ClaimNodeOptions {
@@ -794,7 +795,15 @@ export async function planNodeDecomposition(
     allowedKinds,
     planner: plannerMetadata || node.planner
   });
-  return planner.plan(request);
+  const result = await planner.plan(request);
+  const decompose = plannerResponseToDecomposeMutation(result.response, graph, nodeId, {
+    allowedKinds: request.allowedKinds
+  });
+  return {
+    ...result,
+    validation: result.validation || { valid: true, errors: [] },
+    ...(decompose ? { decompose } : {})
+  };
 }
 
 export async function decomposeNode(
@@ -815,6 +824,11 @@ export async function decomposeNode(
     assertLeaseOwner(node, { session, runId });
 
     const normalizedChildren = normalizeChildDefinitions(children);
+    for (const child of normalizedChildren) {
+      if (graph.graph.nodes[child.id]) {
+        throw new Error(`Child node already exists: ${child.id}`);
+      }
+    }
 
     const previousStatus = node.status || "pending";
     const previousKind = node.kind;
@@ -838,9 +852,6 @@ export async function decomposeNode(
     });
 
     for (const child of normalizedChildren) {
-      if (graph.graph.nodes[child.id]) {
-        throw new Error(`Child node already exists: ${child.id}`);
-      }
       const { id: _id, ...childNode } = child;
       graph.graph.nodes[child.id] = {
         ...childNode
@@ -850,6 +861,7 @@ export async function decomposeNode(
       }
     }
 
+    assertValidGraphAfterMutation(graph);
     await reconcileCompletedSubtrees(graph, graphPath);
     graph.graphVersion = (graph.graphVersion || 0) + 1;
     await writeGraphAtomic(graph, graphPath);
@@ -1954,18 +1966,30 @@ function normalizeChildDefinitions(children: DecomposeChildDefinition[]): Decomp
   const normalized: DecomposeChildDefinition[] = [];
   const seen = new Set<NodeId>();
 
-  for (const child of children) {
+  for (const [index, child] of children.entries()) {
     if (!child || typeof child !== "object") {
       throw new Error("Each child must be an object");
     }
     if (!child.id || !child.title) {
       throw new Error("Each child requires id and title");
     }
+    assertSafeChildId(child.id, `children[${index}].id`);
     if (seen.has(child.id)) {
       throw new Error(`Duplicate child id in decomposition: ${child.id}`);
     }
     seen.add(child.id);
     const { id, title, kind, status, children: childIds, ...metadata } = child;
+    if (childIds !== undefined) {
+      if (!Array.isArray(childIds)) {
+        throw new Error(`Child children must be an array: ${child.id}`);
+      }
+      childIds.forEach((childId, childIndex) => {
+        if (typeof childId !== "string" || childId.trim().length === 0) {
+          throw new Error(`Child child id must be a non-empty string: ${child.id}.children[${childIndex}]`);
+        }
+        assertSafeChildId(childId, `${child.id}.children[${childIndex}]`);
+      });
+    }
     normalized.push({
       ...metadata,
       id: child.id,
@@ -1977,6 +2001,19 @@ function normalizeChildDefinitions(children: DecomposeChildDefinition[]): Decomp
   }
 
   return normalized;
+}
+
+function assertSafeChildId(id: string, path: string): void {
+  if (!/^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/.test(id) || id.includes("..")) {
+    throw new Error(`Unsafe child id at ${path}: ${id}`);
+  }
+}
+
+function assertValidGraphAfterMutation(graph: PlanGraphFile): void {
+  const validation = validatePlanGraphFileResult(graph);
+  if (validation.errors.length > 0) {
+    throw new Error(`Invalid graph after mutation: ${validation.errors.map((issue) => `${issue.path} ${issue.message}`).join("; ")}`);
+  }
 }
 
 function appendHistory(node: GraphNode, event: OperationalEventName, details: Record<string, unknown> = {}): void {

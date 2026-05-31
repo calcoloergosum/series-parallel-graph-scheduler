@@ -317,6 +317,7 @@ export interface PlannerRuntimeResponse {
   prompt?: string;
   planner?: NodePlannerMetadata;
   validation?: PlannerValidationResult;
+  decompose?: PlannerDecomposeMutation;
   [metadata: string]: unknown;
 }
 
@@ -360,6 +361,18 @@ export interface PlannerCompositeResponse extends PlannerResponseBase {
 }
 
 export type PlannerResponse = PlannerTaskResponse | PlannerCompositeResponse;
+
+export interface PlannerDecomposeChildSpec extends PlannerProposalBase {
+  id: NodeId;
+  kind?: PlannerOutputKind;
+  status?: NodeStatus;
+  children?: NodeId[];
+}
+
+export interface PlannerDecomposeMutation {
+  kind: "series" | "parallel";
+  children: PlannerDecomposeChildSpec[];
+}
 
 export interface PlannerValidationError {
   path: string;

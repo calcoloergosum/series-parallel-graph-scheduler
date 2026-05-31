@@ -1,5 +1,5 @@
 import test from "node:test";
-import { addUnknownMetadata, answerNode, assert, assertUnknownMetadata, attachReadyPriorityFields, blockNode, buildPlannerPrompt, buildPlannerRuntimeRequest, buildReachableParentMap, buildReadyPrioritySelections, buildStableRootPathMap, buildVisualizerPayload, buildWorkerPrompt, checkSchedulerTransitionReference, claimNode, compareReadyPriorityCandidates, completeNode, completedDeepReadinessGraph, concurrentMutationGraph, countSharedParentsWithCurrentTask, createFixturePlannerRuntime, decomposeNode, deepReadinessGraph, depthPriorityGraph, diagnoseGraph, dirname, escapeRegExp, execFileAsync, failNode, knownTransitionStatuses, lastHistory, leafOnlyChildCountPriorityGraph, listReadyLeafNodes, listWorkingNodes, lockArtifacts, mutationOwnershipDocsPath, nestedResetReachabilityGraph, planNodeDecomposition, readGraph, readyIds, reconcileGraphStatus, releaseExpiredLeases, renewNodeLease, resetNode, resetReachable, resetSubtree, schedulerScriptPath, schedulerTransitionTable, setNodeStatus, sharedParentPriorityGraph, startNode, stressScriptPath, validatePlanGraphFileResult, withTempGraph, writeFile } from "./helpers/plan-scheduler-harness.mjs";
+import { addUnknownMetadata, answerNode, assert, assertUnknownMetadata, attachReadyPriorityFields, blockNode, buildPlannerPrompt, buildPlannerRuntimeRequest, buildReachableParentMap, buildReadyPrioritySelections, buildStableRootPathMap, buildVisualizerPayload, buildWorkerPrompt, checkSchedulerTransitionReference, claimNode, compareReadyPriorityCandidates, completeNode, completedDeepReadinessGraph, concurrentMutationGraph, countSharedParentsWithCurrentTask, createFixturePlannerRuntime, createPromptPlannerRuntime, decomposeNode, deepReadinessGraph, depthPriorityGraph, diagnoseGraph, dirname, escapeRegExp, execFileAsync, failNode, knownTransitionStatuses, lastHistory, leafOnlyChildCountPriorityGraph, listReadyLeafNodes, listWorkingNodes, lockArtifacts, mutationOwnershipDocsPath, nestedResetReachabilityGraph, parsePlannerResponse, planNodeDecomposition, plannerResponseToDecomposeMutation, readGraph, readyIds, reconcileGraphStatus, releaseExpiredLeases, renewNodeLease, resetNode, resetReachable, resetSubtree, schedulerScriptPath, schedulerTransitionTable, setNodeStatus, sharedParentPriorityGraph, startNode, stressScriptPath, validatePlanGraphFileResult, validatePlannerResponse, withTempGraph, writeFile } from "./helpers/plan-scheduler-harness.mjs";
 
 function priorityCandidate(id, depth, childCount, sharedParentCountWithCurrentTask) {
   return {
@@ -1779,7 +1779,150 @@ test("planner adapter builds decomposition requests without network access", asy
     assert.equal(result.response.requestId, "fixture-plan-A");
     assert.equal(result.response.kind, "series");
     assert.deepEqual(result.response.children.map((child) => child.id), ["A1", "A2"]);
+    assert.deepEqual(result.decompose.children.map((child) => child.id), ["A1", "A2"]);
+    assert.equal(result.decompose.kind, "series");
     assert.equal((await readGraph(graphPath)).graphVersion, graph.graphVersion);
+  });
+});
+
+test("planner response validation rejects malformed JSON without raw payload storage", async () => {
+  assert.throws(
+    () => parsePlannerResponse("not-json"),
+    (error) => {
+      assert.equal(error.name, "PlannerResponseValidationError");
+      assert.equal(error.validation.valid, false);
+      assert.equal(error.validation.errors[0].code, "malformed-json");
+      assert.ok(!("rawText" in error));
+      return true;
+    }
+  );
+
+  await withTempGraph(async (graphPath) => {
+    const before = await readGraph(graphPath);
+    const planner = createPromptPlannerRuntime({
+      templatePath: "prompts/planner-decompose-task.md",
+      adapter: {
+        async complete() {
+          return "not-json";
+        }
+      }
+    });
+
+    await assert.rejects(
+      planNodeDecomposition(graphPath, {
+        nodeId: "A",
+        planner,
+        requestId: "bad-json-plan"
+      }),
+      (error) => {
+        assert.equal(error.name, "PlannerResponseValidationError");
+        assert.equal(error.validation.errors[0].code, "malformed-json");
+        assert.doesNotMatch(error.message, /not-json/);
+        return true;
+      }
+    );
+
+    assert.equal((await readGraph(graphPath)).graphVersion, before.graphVersion);
+  });
+});
+
+test("planner response validation rejects unsafe decomposition proposals before mutation", async () => {
+  const cases = [
+    {
+      name: "unknown kind",
+      response: { kind: "gate", title: "Bad kind" },
+      code: "unknown-kind",
+      path: "$.kind"
+    },
+    {
+      name: "duplicate ids",
+      response: {
+        kind: "parallel",
+        title: "Duplicate children",
+        children: [
+          { id: "A1", title: "First" },
+          { id: "A1", title: "Second" }
+        ]
+      },
+      code: "duplicate-child-id",
+      path: "$.children[1].id"
+    },
+    {
+      name: "missing children",
+      response: { kind: "series", title: "Missing children" },
+      code: "missing-children",
+      path: "$.children"
+    },
+    {
+      name: "unsafe ids",
+      response: {
+        kind: "series",
+        title: "Unsafe children",
+        children: [{ id: "../A1", title: "Unsafe" }]
+      },
+      code: "unsafe-id",
+      path: "$.children[0].id"
+    }
+  ];
+
+  for (const testCase of cases) {
+    await withTempGraph(async (graphPath) => {
+      const before = await readGraph(graphPath);
+      const planner = {
+        async plan(request) {
+          return {
+            requestId: request.requestId,
+            response: testCase.response
+          };
+        }
+      };
+
+      await assert.rejects(
+        planNodeDecomposition(graphPath, {
+          nodeId: "A",
+          planner,
+          requestId: `bad-${testCase.name.replaceAll(" ", "-")}`
+        }),
+        (error) => {
+          assert.equal(error.name, "PlannerResponseValidationError", testCase.name);
+          assert.ok(error.validation.errors.some((issue) => issue.code === testCase.code && issue.path === testCase.path), testCase.name);
+          return true;
+        }
+      );
+      assert.equal((await readGraph(graphPath)).graphVersion, before.graphVersion, testCase.name);
+    });
+  }
+});
+
+test("valid planner output materializes existing decompose child specs", async () => {
+  await withTempGraph(async (graphPath) => {
+    const graph = await readGraph(graphPath);
+    const response = {
+      kind: "series",
+      title: "Generated ids",
+      children: [
+        {
+          idHint: "contract",
+          kind: "task",
+          title: "Define contract",
+          description: "Write the scheduler contract.",
+          acceptanceCriteria: ["The contract is documented."]
+        },
+        {
+          title: "Implement behavior",
+          deliverables: ["Runtime validation"]
+        }
+      ]
+    };
+
+    const validation = validatePlannerResponse(response, { graph, parentId: "A" });
+    assert.equal(validation.valid, true);
+
+    const decompose = plannerResponseToDecomposeMutation(response, graph, "A");
+    assert.deepEqual(decompose.children.map((child) => child.id), ["A_CONTRACT", "A_IMPLEMENT_BEHAVIOR"]);
+    assert.equal(decompose.children[0].kind, "task");
+    assert.equal(decompose.children[0].description, "Write the scheduler contract.");
+    assert.deepEqual(decompose.children[0].acceptanceCriteria, ["The contract is documented."]);
   });
 });
 
