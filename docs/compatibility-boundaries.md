@@ -99,6 +99,65 @@ CLI graph path resolution is stable:
 
 Changes that rename commands, remove flags, change flag meanings, remove package binaries, change npm-script entry-point behavior, or change environment variable meanings are breaking changes.
 
+### Goal-Driven Mode Compatibility Note
+
+Goal-driven planning is an opt-in mode layered on top of the existing graph
+executor. Existing static graph workflows do not need graph changes, and
+`plan.graph.json` remains a supported source of truth for operators that prefer
+to author or maintain the graph directly.
+
+The goal-driven contract separates graph creation from graph execution:
+
+- `plan --goal "..."` is the graph-creation command. It accepts a root goal,
+  asks the planner to produce an initial series-parallel graph, validates the
+  result with the existing graph validator, and writes a graph JSON file.
+- `worker`, `claim`, `start`, `done`, `block`, `fail`, `decompose`,
+  `reconcile`, `release-expired`, `serve`, and the read-only inspection
+  commands execute, inspect, recover, or mutate an existing graph file. They do
+  not create a new graph from `--goal`.
+
+When `plan --goal` is used without an explicit graph output path, it writes the
+generated graph under `runs/goals/<timestamp>-<safe-goal-slug>/plan.graph.json`
+relative to the package root. The timestamp makes repeated planning runs
+non-destructive; the slug is only an operator hint and must use the same safe
+path-token policy as reports and isolated worker paths. If the operator wants
+the generated graph to be the default graph for later commands, they must pass
+`--graph plan.graph.json` to the planning command intentionally.
+
+For the `plan` command only, `--graph PATH` names the graph file to create. This
+does not change existing graph-selection semantics for the already documented
+scheduler commands: for those commands, `--graph` still selects the input graph,
+then `PLAN_GRAPH`, then `plan.graph.json`. A later renderer still follows its
+separate `--graph`, positional graph path, `PLAN_GRAPH`, then
+`plan.graph.json` resolution order.
+
+Generated graph replay is ordinary static graph execution. After graph
+creation, operators run existing commands against the generated file:
+
+```bash
+node scripts/plan-scheduler.mjs plan --goal "Ship a searchable audit log"
+node scripts/plan-scheduler.mjs summary --graph runs/goals/20260531T000000Z-ship-a-searchable-audit-log/plan.graph.json
+node scripts/plan-scheduler.mjs worker --graph runs/goals/20260531T000000Z-ship-a-searchable-audit-log/plan.graph.json --session codex-A --once
+```
+
+Resume behavior also uses the generated graph file as the durable source of
+truth. If a worker stops, an operator resumes by passing the same generated
+graph path to `worker`, `serve`, `ready`, `diagnostics`, or recovery commands.
+The original `--goal` text is planner input, not a resume handle. Re-running
+`plan --goal` creates a new planning artifact by default and must not overwrite
+an existing graph unless a future explicit overwrite flag says so.
+
+| Mode | Opt-in signal | Graph path meaning | Default path | Creates graph? | Executes graph? | Resume or replay |
+| --- | --- | --- | --- | --- | --- | --- |
+| Static graph mode | Any existing scheduler command without `--goal` | `--graph` selects the input graph; fallback is `PLAN_GRAPH`, then `plan.graph.json` | `plan.graph.json` from the package root | No | Yes, for mutating and worker commands | Re-run the same command with the same graph path |
+| Goal planning mode | `plan --goal "..."` | `--graph` names the graph file to create for this command only | `runs/goals/<timestamp>-<safe-goal-slug>/plan.graph.json` | Yes | No, unless a future explicit plan-then-run flag invokes `worker` after a successful write | Resume by using the written graph path with existing commands |
+| Generated graph replay mode | Existing scheduler command with `--graph <generated-plan.graph.json>` | `--graph` selects the generated graph as input | None beyond the existing scheduler fallback if omitted | No | Yes | Re-run `worker`, `serve`, `diagnostics`, or recovery commands with the same generated graph path |
+
+Goal-driven behavior must remain additive. Introducing `--goal` must not make
+existing `--graph` commands plan implicitly, change the default graph selection
+for static workflows, or require existing `plan.graph.json` files to adopt
+planner metadata.
+
 ## JSON Output Shapes
 
 Commands that currently print JSON should continue to print a single JSON value to stdout:
