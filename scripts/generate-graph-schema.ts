@@ -89,6 +89,9 @@ export function buildPlanGraphJsonSchema(): Record<string, unknown> {
             ]
           },
           planner: { "$ref": "#/$defs/plannerMetadata" },
+          plannerDecision: { type: "string" },
+          decompositionReason: { type: "string" },
+          rationale: { type: "string" },
           contextRefs: {
             type: "array",
             items: { "$ref": "#/$defs/contextRef" }
@@ -326,7 +329,10 @@ export function buildPlanGraphJsonSchema(): Record<string, unknown> {
           version: { type: "string" },
           promptRef: { type: "string" },
           requestId: { type: "string" },
-          plannedAt: { "$ref": "#/$defs/timestamp" }
+          plannedAt: { "$ref": "#/$defs/timestamp" },
+          decision: { type: "string" },
+          rationale: { type: "string" },
+          decompositionReason: { type: "string" }
         }
       },
       contextRef: {

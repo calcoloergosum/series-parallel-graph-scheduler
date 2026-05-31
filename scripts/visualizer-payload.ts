@@ -75,6 +75,13 @@ function normalizeVisualizerNode(
     status: node.status || "pending",
     description: node.description,
     goal: node.goal,
+    goalText: goalTextForNode(node.goal),
+    planner: node.planner,
+    plannerDecision: plannerDecisionForNode(node),
+    decompositionReason: decompositionReasonForNode(node),
+    contextRefs: Array.isArray(node.contextRefs) ? [...node.contextRefs] : undefined,
+    outputContract: node.outputContract,
+    resultSummary: node.resultSummary,
     children: Array.isArray(node.children) ? [...node.children] : [],
     deliverables: Array.isArray(node.deliverables) ? [...node.deliverables] : [],
     acceptanceCriteria: Array.isArray(node.acceptanceCriteria) ? [...node.acceptanceCriteria] : [],
@@ -109,6 +116,48 @@ function normalizeVisualizerNode(
     historyLimit,
     actions
   }));
+}
+
+function goalTextForNode(goal: GraphNode["goal"]): string | undefined {
+  if (typeof goal === "string" && goal.trim()) {
+    return goal;
+  }
+  if (goal && typeof goal === "object" && typeof goal.text === "string" && goal.text.trim()) {
+    return goal.text;
+  }
+  return undefined;
+}
+
+function plannerDecisionForNode(node: GraphNode): string | undefined {
+  return firstString(
+    node.plannerDecision,
+    stringMetadata(node, "decision"),
+    node.planner?.decision,
+    node.planner?.rationale
+  );
+}
+
+function decompositionReasonForNode(node: GraphNode): string | undefined {
+  return firstString(
+    node.decompositionReason,
+    stringMetadata(node, "decomposeReason"),
+    node.planner?.decompositionReason,
+    node.rationale
+  );
+}
+
+function firstString(...values: unknown[]): string | undefined {
+  for (const value of values) {
+    if (typeof value === "string" && value.trim()) {
+      return value;
+    }
+  }
+  return undefined;
+}
+
+function stringMetadata(node: GraphNode, key: string): string | undefined {
+  const value = node[key];
+  return typeof value === "string" ? value : undefined;
 }
 
 function historyTail(history: GraphHistoryEntry[], limit: number): GraphHistoryEntry[] {

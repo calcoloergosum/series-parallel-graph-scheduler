@@ -143,6 +143,15 @@
         "planner": {
           "$ref": "#/$defs/plannerMetadata"
         },
+        "plannerDecision": {
+          "type": "string"
+        },
+        "decompositionReason": {
+          "type": "string"
+        },
+        "rationale": {
+          "type": "string"
+        },
         "contextRefs": {
           "type": "array",
           "items": {
@@ -649,6 +658,15 @@
         },
         "plannedAt": {
           "$ref": "#/$defs/timestamp"
+        },
+        "decision": {
+          "type": "string"
+        },
+        "rationale": {
+          "type": "string"
+        },
+        "decompositionReason": {
+          "type": "string"
         }
       }
     },

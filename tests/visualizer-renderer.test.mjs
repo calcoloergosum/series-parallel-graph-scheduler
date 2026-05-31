@@ -1208,6 +1208,26 @@ test("visualizer builds graph payload and real-time HTML shell", async () => {
     await claimNode(graphPath, { session: "codex-A", nodeId: "A" });
     const graph = await readGraph(graphPath);
     graph.graph.nodes.A.description = "Bootstrap the workspace";
+    graph.graph.nodes.A.goal = { text: "Ship planner metadata", source: "planner" };
+    graph.graph.nodes.A.planner = {
+      name: "codex-planner",
+      model: "gpt-5",
+      requestId: "plan-A",
+      decision: "Split the task after setup completes.",
+      plannedAt: "2026-05-27T00:00:00.000Z"
+    };
+    graph.graph.nodes.A.decompositionReason = "Workspace bootstrap needs separate verification.";
+    graph.graph.nodes.A.contextRefs = [{ type: "file", ref: "docs/planner-output-schema.md", title: "Planner schema" }];
+    graph.graph.nodes.A.outputContract = {
+      format: "markdown",
+      requiredArtifacts: ["report"],
+      acceptanceCriteria: ["Planner metadata is visible."]
+    };
+    graph.graph.nodes.A.resultSummary = {
+      status: "partial",
+      summary: "Bootstrap metadata was prepared.",
+      artifacts: ["reports/A.md"]
+    };
     graph.graph.nodes.A.deliverables = ["Workspace ready"];
     graph.graph.nodes.A.acceptanceCriteria = ["Tests can run"];
     graph.graph.nodes.A.baseRef = { name: "refs/remotes/origin/main" };
@@ -1236,6 +1256,13 @@ test("visualizer builds graph payload and real-time HTML shell", async () => {
     assert.equal(detail.kind, "task");
     assert.equal(detail.status, "claimed");
     assert.equal(detail.description, "Bootstrap the workspace");
+    assert.equal(detail.goalText, "Ship planner metadata");
+    assert.equal(detail.planner.name, "codex-planner");
+    assert.equal(detail.plannerDecision, "Split the task after setup completes.");
+    assert.equal(detail.decompositionReason, "Workspace bootstrap needs separate verification.");
+    assert.deepEqual(detail.contextRefs, [{ type: "file", ref: "docs/planner-output-schema.md", title: "Planner schema" }]);
+    assert.deepEqual(detail.outputContract.requiredArtifacts, ["report"]);
+    assert.equal(detail.resultSummary.summary, "Bootstrap metadata was prepared.");
     assert.deepEqual(detail.children, []);
     assert.deepEqual(detail.deliverables, ["Workspace ready"]);
     assert.deepEqual(detail.acceptanceCriteria, ["Tests can run"]);
@@ -1251,6 +1278,12 @@ test("visualizer builds graph payload and real-time HTML shell", async () => {
     assert.equal(detail.history[0].at, "2026-05-27T00:00:02.000Z");
     assert.equal(detail.history.at(-1).remote, "https://[REDACTED]@example.com/org/repo.git");
     assert.deepEqual(payload.ready.map((node) => node.id), []);
+    const missingPlannerDetail = payload.nodes.find((node) => node.id === "B");
+    assert.equal(missingPlannerDetail.goalText, undefined);
+    assert.equal(missingPlannerDetail.plannerDecision, undefined);
+    assert.equal(missingPlannerDetail.decompositionReason, undefined);
+    assert.equal(missingPlannerDetail.outputContract, undefined);
+    assert.equal(missingPlannerDetail.resultSummary, undefined);
     assert.deepEqual(payload.working.map((node) => node.id), ["A"]);
     assert.equal(payload.working[0].session, "codex-A");
     assert.equal(payload.working[0].isolation.cloneCwd, "/tmp/spg/workspaces/codex-A/A/run-a");
@@ -1541,6 +1574,66 @@ test("visualizer browser renderers escape graph text and worker logs", () => {
   assert.doesNotMatch(renderedHtml, /output\(\)/);
   assert.doesNotMatch(renderedHtml, /<script\b/);
   assert.doesNotMatch(renderedHtml, /<img\b/);
+});
+
+test("selected-node inspector renders planner metadata as text", () => {
+  const { context, element } = runVisualizerClientScript();
+  const hostileGoal = "Goal <img src=x onerror=alert(1)>";
+  const hostileDecision = "Use <script>decision()</script> safely.";
+  const hostileReason = "Reason <img src=x onerror=alert(2)>";
+
+  context.render({
+    summary: { graphVersion: 1, totalNodes: 1, counts: { pending: 1 } },
+    graphSvg: '<svg class="sp-graph"></svg>',
+    nodes: [{
+      id: "A",
+      title: "Planner metadata",
+      kind: "task",
+      status: "pending",
+      goal: { text: hostileGoal, source: "planner" },
+      goalText: hostileGoal,
+      planner: { name: "codex-planner", decision: hostileDecision },
+      plannerDecision: hostileDecision,
+      decompositionReason: hostileReason,
+      contextRefs: [{ type: "file", ref: "docs/<script>.md", title: "Schema <img>" }],
+      outputContract: {
+        format: "markdown",
+        requiredArtifacts: ["report <script>"],
+        acceptanceCriteria: ["No <img> injection"]
+      },
+      resultSummary: {
+        status: "partial",
+        summary: "Result <script>summary()</script>",
+        artifacts: ["reports/<img>.md"]
+      },
+      children: [],
+      deliverables: [],
+      acceptanceCriteria: [],
+      refs: {},
+      timestamps: {},
+      history: [],
+      historyCount: 0,
+      historyLimit: 10,
+      actions: []
+    }],
+    ready: [{ id: "A", title: "Planner metadata", status: "pending" }],
+    working: [],
+    workerManager: { defaults: { cwd: "", sessionPrefix: "codex", codexCommand: "codex" }, workers: [] },
+    attention: {},
+    diagnostics: {},
+    recentEvents: []
+  });
+  context.selectNode("A");
+
+  const inspector = element("selected-node-details");
+  assert.match(inspector.textContent, /goal: Goal <img src=x onerror=alert\(1\)>/);
+  assert.match(inspector.textContent, /decision: Use <script>decision\(\)<\/script> safely\./);
+  assert.match(inspector.textContent, /decomposition reason: Reason <img src=x onerror=alert\(2\)>/);
+  assert.match(inspector.textContent, /context: Schema <img> \/ file \/ docs\/<script>\.md/);
+  assert.match(inspector.textContent, /output contract: format: markdown/);
+  assert.match(inspector.textContent, /result: status: partial/);
+  assert.doesNotMatch(inspector.innerHTML, /<script\b/);
+  assert.doesNotMatch(inspector.innerHTML, /<img\b/);
 });
 
 test("planar layout places series before parallel branches before final gate", () => {

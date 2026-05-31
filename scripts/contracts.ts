@@ -228,6 +228,9 @@ export interface NodePlannerMetadata {
   promptRef?: string;
   requestId?: string;
   plannedAt?: IsoDateString;
+  decision?: string;
+  rationale?: string;
+  decompositionReason?: string;
   [metadata: string]: unknown;
 }
 
@@ -308,6 +311,9 @@ export interface GraphNode {
   acceptanceCriteria?: string[];
   goal?: string | NodeGoalMetadata;
   planner?: NodePlannerMetadata;
+  plannerDecision?: string;
+  decompositionReason?: string;
+  rationale?: string;
   contextRefs?: NodeContextRefMetadata[];
   resultSummary?: NodeResultSummary;
   outputContract?: NodeOutputContract;
@@ -924,6 +930,13 @@ export interface VisualizerNodeDetail {
   status: NodeStatus;
   description?: string;
   goal?: string | NodeGoalMetadata;
+  goalText?: string;
+  planner?: NodePlannerMetadata;
+  plannerDecision?: string;
+  decompositionReason?: string;
+  contextRefs?: NodeContextRefMetadata[];
+  outputContract?: NodeOutputContract;
+  resultSummary?: NodeResultSummary;
   children: NodeId[];
   deliverables: string[];
   acceptanceCriteria: string[];
