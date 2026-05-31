@@ -830,11 +830,16 @@ export async function planNodeDecomposition(
   const decompose = plannerResponseToDecomposeMutation(result.response, graph, nodeId, {
     allowedKinds: request.allowedKinds
   });
-  return {
+  return sanitizePublicPlannerResult({
     ...result,
     validation: result.validation || { valid: true, errors: [] },
     ...(decompose ? { decompose } : {})
-  };
+  });
+}
+
+function sanitizePublicPlannerResult(result: PlannerRuntimeResponse): PlannerRuntimeResponse {
+  const { rawText: _rawText, prompt: _prompt, ...safeResult } = result;
+  return redactOperationalEventDetails(safeResult as Record<string, unknown>) as unknown as PlannerRuntimeResponse;
 }
 
 export async function decomposeNode(

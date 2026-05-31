@@ -55,6 +55,7 @@ export const {
   blockNode,
   buildGraphGitFootprintSummary,
   buildGoalGraph,
+  buildGoalGraphFromPlannerResponse,
   buildPlannerPrompt,
   buildPlannerRuntimeRequest,
   buildRelevantContext,

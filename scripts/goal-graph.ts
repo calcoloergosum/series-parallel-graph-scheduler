@@ -10,7 +10,11 @@ import type {
   PlannerResponse,
   PlannerRuntimeResponse
 } from "./contracts.js";
-import { PlannerResponseValidationError, validatePlannerResponse } from "./planner-runtime.js";
+import {
+  materializePlannerChildId,
+  PlannerResponseValidationError,
+  validatePlannerResponse
+} from "./planner-runtime.js";
 
 export const goalGraphVersion = 1;
 export const goalGraphInitialNodeId = "PLAN";
@@ -23,6 +27,10 @@ export interface BuildGoalGraphOptions {
   plannerResult?: PlannerRuntimeResponse;
   planner?: NodePlannerMetadata;
   allowedKinds?: PlannerOutputKind[];
+}
+
+export interface BuildGoalGraphFromPlannerResponseOptions extends BuildGoalGraphOptions {
+  plannerResponseParentId?: NodeId;
 }
 
 export function buildGoalGraph(goal: string, options: BuildGoalGraphOptions | string = {}): PlanGraphFile {
@@ -108,7 +116,7 @@ export function buildGoalGraph(goal: string, options: BuildGoalGraphOptions | st
 export function buildGoalGraphFromPlannerResponse(
   goal: string,
   response: PlannerResponse | undefined,
-  options: BuildGoalGraphOptions | string = {}
+  options: BuildGoalGraphFromPlannerResponseOptions | string = {}
 ): PlanGraphFile {
   if (!response) {
     throw new Error("Missing planner response for goal graph");
@@ -119,12 +127,14 @@ export function buildGoalGraphFromPlannerResponse(
   const normalizedTitle = normalizedOptions.title?.trim() || response.title.trim() || defaultGoalTitle(normalizedGoal);
   const createdAt = normalizedOptions.createdAt ?? new Date().toISOString();
   const planner = plannerMetadataForResponse(response, normalizedOptions, createdAt);
+  const parentId = normalizedOptions.plannerResponseParentId || "ROOT";
   const baseGraph = baseGoalGraphShell(normalizedTitle, normalizedGoal, createdAt);
   const plannerValidation = validatePlannerResponse(response, {
     graph: baseGraph,
-    parentId: "ROOT",
+    parentId,
     allowedKinds: normalizedOptions.allowedKinds,
-    allowNestedChildren: true
+    allowNestedChildren: true,
+    recursive: true
   });
   if (!plannerValidation.valid) {
     throw new PlannerResponseValidationError(plannerValidation);
@@ -139,7 +149,7 @@ export function buildGoalGraphFromPlannerResponse(
   const rootChildren = response.kind === "task"
     ? [goalGraphInitialNodeId]
     : materializePlannerChildren(response.children, {
-      parentId: "ROOT",
+      parentId,
       existingIds,
       usedIds,
       nodes: materializedNodes,
@@ -170,7 +180,6 @@ export function buildGoalGraphFromPlannerResponse(
 
   if (response.kind === "task") {
     nodes[goalGraphInitialNodeId] = nodeFromPlannerProposal(response, {
-      id: goalGraphInitialNodeId,
       kind: "task",
       goal: normalizedGoal,
       createdAt,
@@ -186,7 +195,7 @@ export function buildGoalGraphFromPlannerResponse(
   const graph: PlanGraphFile = {
     graphVersion: goalGraphVersion,
     title: normalizedTitle,
-    description: "Generated from a CLI goal.",
+    description: response.description || "Generated from a CLI goal.",
     statusModel: [...knownNodeStatuses],
     scheduler: {
       stateFile: "plan.graph.json",
@@ -205,11 +214,16 @@ export function buildGoalGraphFromPlannerResponse(
 
   const graphValidation = validatePlanGraphFileResult(graph);
   if (graphValidation.errors.length > 0) {
-    throw new Error(`Generated planner graph failed validation: ${graphValidation.errors.map((issue) => `${issue.path} ${issue.message}`).join("; ")}`);
+    throw new Error(`Generated planner graph failed validation: ${formatGraphValidationIssues(graphValidation.errors)}`);
   }
 
   if (normalizedOptions.includeDocument !== false) {
-    graph.document = buildGoalDocument(normalizedTitle, normalizedGoal, rootChildren);
+    graph.document = buildGoalDocument(
+      normalizedTitle,
+      normalizedGoal,
+      rootChildren,
+      "This graph was generated from a single operator goal and starts with a validated series-parallel decomposition."
+    );
   }
 
   return graph;
@@ -230,14 +244,16 @@ function materializePlannerChildren(
   context: MaterializePlannerChildContext
 ): NodeId[] {
   return children.map((child, index) => {
-    const id = materializePlannerChildId(child, index, context);
+    const id = materializePlannerChildId(child, index, context.usedIds, context.parentId);
+    if (!id) {
+      throw new Error(`Unable to materialize child id at $.children[${index}]`);
+    }
     if (context.existingIds.has(id) || context.nodes[id]) {
       throw new Error(`Planner child id collision after validation: ${id}`);
     }
     context.usedIds.add(id);
     const kind = plannerChildNodeKind(child);
     const node = nodeFromPlannerProposal(child, {
-      id,
       kind,
       goal: context.goal,
       createdAt: context.createdAt,
@@ -264,31 +280,6 @@ function plannerChildNodeKind(child: PlannerChildProposal): PlannerOutputKind {
   return "task";
 }
 
-function materializePlannerChildId(
-  child: PlannerChildProposal,
-  index: number,
-  context: MaterializePlannerChildContext
-): NodeId {
-  if (typeof child.id === "string" && child.id.trim()) {
-    const id = child.id.trim();
-    if (!isSafePlannerId(id)) {
-      throw new Error(`Unsafe planner child id after validation: ${id}`);
-    }
-    return id;
-  }
-  const parentPrefix = slugIdPart(context.parentId) || "NODE";
-  const childBase = slugIdPart(child.idHint || child.title) || `CHILD_${index + 1}`;
-  const base = `${parentPrefix}_${childBase}`.slice(0, 96).replaceAll(/_+$/g, "");
-  let candidate = base || `${parentPrefix}_CHILD_${index + 1}`;
-  let suffix = 2;
-  while (context.usedIds.has(candidate)) {
-    const suffixText = `_${suffix}`;
-    candidate = `${base.slice(0, Math.max(1, 128 - suffixText.length))}${suffixText}`;
-    suffix += 1;
-  }
-  return candidate;
-}
-
 function collectExplicitPlannerChildIds(children: PlannerChildProposal[]): Set<NodeId> {
   const ids = new Set<NodeId>();
   for (const child of children) {
@@ -307,7 +298,6 @@ function collectExplicitPlannerChildIds(children: PlannerChildProposal[]): Set<N
 function nodeFromPlannerProposal(
   proposal: PlannerChildProposal | PlannerResponse,
   options: {
-    id: NodeId;
     kind: PlannerOutputKind;
     goal: string;
     createdAt: string;
@@ -411,19 +401,12 @@ function baseGoalGraphShell(title: string, goal: string, createdAt: string): Pla
   };
 }
 
-function slugIdPart(value: string | undefined): string {
-  return (value || "")
-    .trim()
-    .toUpperCase()
-    .replaceAll(/[^A-Z0-9]+/g, "_")
-    .replaceAll(/^_+|_+$/g, "");
-}
-
-function isSafePlannerId(id: string): boolean {
-  return /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/.test(id) && !id.includes("..");
-}
-
-function buildGoalDocument(title: string, goal: string, initialNodeIds: NodeId[] = [goalGraphInitialNodeId]): NonNullable<PlanGraphFile["document"]> {
+function buildGoalDocument(
+  title: string,
+  goal: string,
+  initialNodeIds: NodeId[] = [goalGraphInitialNodeId],
+  generatedGraphDescription = "This graph was generated from a single operator goal and starts with one claimable planning or execution task."
+): NonNullable<PlanGraphFile["document"]> {
   return {
     pageTitle: title,
     meta: [
@@ -437,7 +420,7 @@ function buildGoalDocument(title: string, goal: string, initialNodeIds: NodeId[]
       {
         heading: "Generated Graph",
         paragraphs: [
-          "This graph was generated from a single operator goal and starts with one claimable planning or execution task."
+          generatedGraphDescription
         ]
       }
     ]
@@ -446,4 +429,8 @@ function buildGoalDocument(title: string, goal: string, initialNodeIds: NodeId[]
 
 function defaultGoalTitle(goal: string): string {
   return goal.length <= 80 ? goal : `${goal.slice(0, 77)}...`;
+}
+
+function formatGraphValidationIssues(errors: { path: string; message: string }[]): string {
+  return errors.map((issue) => `${issue.path} ${issue.message}`).join("; ");
 }

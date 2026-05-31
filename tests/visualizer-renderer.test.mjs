@@ -1259,10 +1259,14 @@ test("visualizer builds graph payload and real-time HTML shell", async () => {
       model: "gpt-5",
       requestId: "plan-A",
       decision: "Split the task after setup completes.",
+      rawText: "raw planner <script>output()</script>",
+      prompt: "planner prompt <script>prompt()</script>",
       plannedAt: "2026-05-27T00:00:00.000Z"
     };
     graph.graph.nodes.A.decompositionReason = "Workspace bootstrap needs separate verification.";
-    graph.graph.nodes.A.contextRefs = [{ type: "file", ref: "docs/planner-output-schema.md", title: "Planner schema" }];
+    graph.graph.nodes.A.contextRefs = [{ type: "file", ref: "docs/<script>-planner-output-schema.md", title: "Planner schema <img>" }];
+    graph.graph.nodes.A.rawText = "node raw planner <script>raw()</script>";
+    graph.graph.nodes.A.prompt = "node planner prompt <script>nodePrompt()</script>";
     graph.graph.nodes.A.outputContract = {
       format: "markdown",
       requiredArtifacts: ["report"],
@@ -1289,7 +1293,9 @@ test("visualizer builds graph payload and real-time HTML shell", async () => {
       cloneCwd: "/tmp/spg/workspaces/codex-A/A/run-a",
       bareRepo: "/tmp/spg/git/cache/repo.git",
       baseRef: "refs/remotes/origin/main",
-      remote: "https://user:secret-token@example.com/org/repo.git"
+      remote: "https://user:secret-token@example.com/org/repo.git",
+      rawText: "event raw planner <script>eventRaw()</script>",
+      prompt: "event prompt <script>eventPrompt()</script>"
     }));
     await writeFile(graphPath, `${JSON.stringify(graph, null, 2)}\n`, "utf8");
     const payload = await buildVisualizerPayload(graphPath);
@@ -1305,7 +1311,11 @@ test("visualizer builds graph payload and real-time HTML shell", async () => {
     assert.equal(detail.planner.name, "codex-planner");
     assert.equal(detail.plannerDecision, "Split the task after setup completes.");
     assert.equal(detail.decompositionReason, "Workspace bootstrap needs separate verification.");
-    assert.deepEqual(detail.contextRefs, [{ type: "file", ref: "docs/planner-output-schema.md", title: "Planner schema" }]);
+    assert.equal(detail.planner.rawText, "[REDACTED: planner text]");
+    assert.equal(detail.planner.prompt, "[REDACTED: planner text]");
+    assert.equal(detail.rawText, undefined);
+    assert.equal(detail.prompt, undefined);
+    assert.deepEqual(detail.contextRefs, [{ type: "file", ref: "docs/<script>-planner-output-schema.md", title: "Planner schema <img>" }]);
     assert.deepEqual(detail.outputContract.requiredArtifacts, ["report"]);
     assert.equal(detail.resultSummary.summary, "Bootstrap metadata was prepared.");
     assert.deepEqual(detail.children, []);
@@ -1322,6 +1332,10 @@ test("visualizer builds graph payload and real-time HTML shell", async () => {
     assert.equal(detail.history.length, 10);
     assert.equal(detail.history[0].at, "2026-05-27T00:00:02.000Z");
     assert.equal(detail.history.at(-1).remote, "https://[REDACTED]@example.com/org/repo.git");
+    assert.equal(detail.history.at(-1).rawText, "[REDACTED: planner text]");
+    assert.equal(detail.history.at(-1).prompt, "[REDACTED: planner text]");
+    assert.equal(payload.graph.graph.nodes.A.rawText, "[REDACTED: planner text]");
+    assert.equal(payload.graph.graph.nodes.A.prompt, "[REDACTED: planner text]");
     assert.deepEqual(payload.ready.map((node) => node.id), []);
     const missingPlannerDetail = payload.nodes.find((node) => node.id === "B");
     assert.equal(missingPlannerDetail.goalText, undefined);
@@ -1337,6 +1351,9 @@ test("visualizer builds graph payload and real-time HTML shell", async () => {
     assert.equal(payload.diagnostics.lock.exists, false);
     assert.equal(payload.recentEvents.length, 12);
     assert.equal(payload.recentEvents[0].event, "clone-prepared");
+    assert.equal(payload.recentEvents[0].details.rawText, "[REDACTED: planner text]");
+    assert.equal(payload.recentEvents[0].details.prompt, "[REDACTED: planner text]");
+    assert.doesNotMatch(JSON.stringify(payload), /raw planner <script>|planner prompt <script>|node planner prompt <script>|event prompt <script>/);
     assert.deepEqual(payload.workerManager.workers, []);
     assert.match(payload.graphSvg, /<svg class="sp-graph"/);
   });

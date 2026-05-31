@@ -53,6 +53,7 @@ export interface ValidatePlannerResponseOptions {
   parentId?: NodeId;
   allowedKinds?: PlannerOutputKind[];
   allowNestedChildren?: boolean;
+  recursive?: boolean;
 }
 
 export class PlannerResponseValidationError extends Error {
@@ -326,7 +327,7 @@ export function validatePlannerResponse(
     validatePlannerChildren(response.children, errors, {
       graph: options.graph,
       parentId: options.parentId || "NODE",
-      allowNestedChildren: options.allowNestedChildren ?? true
+      allowNestedChildren: nestedChildrenAllowed(options)
     });
   }
 
@@ -343,7 +344,8 @@ export function plannerResponseToDecomposeMutation(
     ...options,
     graph,
     parentId,
-    allowNestedChildren: options.allowNestedChildren ?? false
+    allowNestedChildren: false,
+    recursive: false
   });
   if (!validation.valid) {
     throw new PlannerResponseValidationError(validation);
@@ -418,6 +420,16 @@ function isPlannerOutputKind(value: unknown): value is PlannerOutputKind {
   return value === "task" || value === "series" || value === "parallel";
 }
 
+function nestedChildrenAllowed(options: ValidatePlannerResponseOptions): boolean {
+  if (options.allowNestedChildren !== undefined) {
+    return options.allowNestedChildren;
+  }
+  if (options.recursive !== undefined) {
+    return options.recursive;
+  }
+  return options.graph !== undefined;
+}
+
 interface ValidatePlannerChildrenContext {
   graph?: PlanGraphFile;
   parentId: NodeId;
@@ -484,14 +496,7 @@ function collectExplicitPlannerChildIds(
           });
         } else {
           const firstPath = context.explicitIdPaths.get(id);
-          if (firstPath) {
-            errors.push({
-              path: `${childPath}.id`,
-              code: "duplicate-child-id",
-              message: `Duplicate child id: ${id} (first seen at ${firstPath}).`,
-              severity: "error"
-            });
-          } else {
+          if (!firstPath) {
             context.explicitIdPaths.set(id, `${childPath}.id`);
           }
         }
@@ -555,7 +560,7 @@ function validatePlannerChildTree(
       errors.push({
         path: `${childPath}.children`,
         code: "invalid-children",
-        message: "Planner child children must be an array of child proposals.",
+        message: "Planner child proposal children must be an array.",
         severity: "error"
       });
     }
@@ -589,7 +594,7 @@ function validatePlannerChildTree(
         errors.push({
           path: `${childPath}.children`,
           code: "unsupported-nested-children",
-          message: "Nested planner child proposals are not supported for node decomposition.",
+          message: "Nested planner child proposals are not supported for this planner response.",
           severity: "error"
         });
       } else {
@@ -630,7 +635,7 @@ function materializePlannerChildren(
   return materialized;
 }
 
-function materializePlannerChildId(
+export function materializePlannerChildId(
   child: PlannerChildProposal,
   index: number,
   usedIds: ReadonlySet<NodeId>,
