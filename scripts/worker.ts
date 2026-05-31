@@ -38,7 +38,7 @@ import {
   redactGitRemote,
   validateGitRemote
 } from "./git-runtime.js";
-import { nodeIsolationDetails } from "./graph-traversal.js";
+import { buildRelevantContext, nodeIsolationDetails } from "./graph-traversal.js";
 import { numericArgumentRanges, parseNumericArgument } from "./numeric-args.js";
 import { operationalEvents, type OperationalEventName } from "./operational-events.js";
 import {
@@ -227,6 +227,7 @@ export async function buildWorkerPrompt(
     nodeKind: node.kind || "task",
     nodeStatus: node.status || "pending",
     nodeJson: JSON.stringify(node, null, 2),
+    relevantContextJson: JSON.stringify(buildRelevantContext(graph, nodeId), null, 2),
     readyJson: JSON.stringify(ready, null, 2),
     summaryJson: JSON.stringify(runtime.summarizeGraph(graph), null, 2)
   };

@@ -254,7 +254,57 @@ export interface NodeResultSummary {
   status?: "done" | "partial" | "blocked" | "failed" | (string & {});
   summary: string;
   artifacts?: string[];
+  report?: string;
+  outputRef?: string;
   completedAt?: IsoDateString;
+  updatedAt?: IsoDateString;
+  [metadata: string]: unknown;
+}
+
+export type NodeContextRelation =
+  | "self"
+  | "root"
+  | "parent"
+  | "series-predecessor"
+  | "completed-sibling"
+  | "explicit-ref"
+  | (string & {});
+
+export interface NodeContextSummary {
+  nodeId: NodeId;
+  relation: NodeContextRelation;
+  title?: string;
+  kind: NodeKind;
+  status: NodeStatus;
+  summary?: string;
+  resultSummary?: NodeResultSummary;
+  report?: string;
+  outputRef?: string;
+  artifacts?: string[];
+  completedAt?: IsoDateString;
+  truncated?: boolean;
+  [metadata: string]: unknown;
+}
+
+export interface DynamicContextSelectionMetadata {
+  maxItems: number;
+  maxSummaryChars: number;
+  includedRelations: NodeContextRelation[];
+  omittedNodeIds?: NodeId[];
+  reportBodyPolicy: "paths-and-summaries-only";
+  [metadata: string]: unknown;
+}
+
+export interface DynamicContextPayload {
+  nodeId: NodeId;
+  self: NodeContextSummary;
+  root?: NodeContextSummary;
+  parents: NodeContextSummary[];
+  seriesPredecessors: NodeContextSummary[];
+  completedSiblings: NodeContextSummary[];
+  explicitRefs?: NodeContextRefMetadata[];
+  reports: NodeContextSummary[];
+  selection: DynamicContextSelectionMetadata;
   [metadata: string]: unknown;
 }
 
@@ -353,6 +403,7 @@ export interface PlannerRequest {
   nodeId?: NodeId;
   node?: GraphNode;
   parentContext?: PlannerParentContext;
+  relevantContext?: DynamicContextPayload;
   currentGraphSummary?: GraphSummary;
   outputSchema?: PlannerOutputSchemaDescriptor;
   allowedKinds?: PlannerOutputKind[];
@@ -373,6 +424,7 @@ export interface PlannerParentContext {
   goal?: string | NodeGoalMetadata;
   contextRefs?: NodeContextRefMetadata[];
   outputContract?: NodeOutputContract;
+  relevantContext?: DynamicContextPayload;
   parentIds?: NodeId[];
   [metadata: string]: unknown;
 }
@@ -1561,7 +1613,10 @@ function validateResultSummary(resultSummary: unknown, path: string, errors: Gra
   validateOptionalString(resultSummary.status, `${path}.status`, "Expected resultSummary status string", errors);
   validateRequiredString(resultSummary.summary, `${path}.summary`, "Expected resultSummary summary string", errors);
   validateOptionalStringArray(resultSummary.artifacts, `${path}.artifacts`, "Expected resultSummary artifact strings", errors);
+  validateOptionalString(resultSummary.report, `${path}.report`, "Expected resultSummary report string", errors);
+  validateOptionalString(resultSummary.outputRef, `${path}.outputRef`, "Expected resultSummary outputRef string", errors);
   validateTimestampField(resultSummary.completedAt, `${path}.completedAt`, errors);
+  validateTimestampField(resultSummary.updatedAt, `${path}.updatedAt`, errors);
 }
 
 function validateGitFootprint(gitFootprint: unknown, path: string, errors: GraphValidationIssue[]): void {

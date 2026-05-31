@@ -82,6 +82,7 @@ export {
 } from "./graph-io.js";
 export {
   attachReadyPriorityFields,
+  buildRelevantContext,
   buildReachableDepthMap,
   buildReachableParentMap,
   buildStableRootPathMap,

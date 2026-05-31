@@ -762,7 +762,16 @@
             "type": "string"
           }
         },
+        "report": {
+          "type": "string"
+        },
+        "outputRef": {
+          "type": "string"
+        },
         "completedAt": {
+          "$ref": "#/$defs/timestamp"
+        },
+        "updatedAt": {
           "$ref": "#/$defs/timestamp"
         }
       }

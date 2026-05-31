@@ -375,7 +375,10 @@ export function buildPlanGraphJsonSchema(): Record<string, unknown> {
             type: "array",
             items: { type: "string" }
           },
-          completedAt: { "$ref": "#/$defs/timestamp" }
+          report: { type: "string" },
+          outputRef: { type: "string" },
+          completedAt: { "$ref": "#/$defs/timestamp" },
+          updatedAt: { "$ref": "#/$defs/timestamp" }
         }
       },
       outputContract: {

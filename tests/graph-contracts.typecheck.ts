@@ -3,6 +3,7 @@ import {
   isKnownNodeKind,
   isKnownNodeStatus,
   type CliCommand,
+  type DynamicContextPayload,
   type GitDiffStatMetadata,
   type GitFileFootprintMetadata,
   type GraphDiagnostics,
@@ -12,6 +13,7 @@ import {
   type JsonObject,
   type JsonValue,
   type NodeOutputContract,
+  type NodeContextSummary,
   type NodeStatus,
   type OperationalEventExportEntry,
   type ParsedArgs,
@@ -177,12 +179,44 @@ const plannerOutputContract: NodeOutputContract = {
   requiredArtifacts: ["report", "test evidence"],
   schemaRef: "docs/planner-output-schema.md"
 };
+const completedContextSummary: NodeContextSummary = {
+  nodeId: "PREV",
+  relation: "series-predecessor",
+  title: "Prior step",
+  kind: "task",
+  status: "done",
+  summary: "Prior step produced the contract.",
+  report: "reports/PREV.md",
+  artifacts: ["docs/contract.md"],
+  completedAt: "2026-05-31T00:00:00.000Z"
+};
+const dynamicContext: DynamicContextPayload = {
+  nodeId: "A",
+  self: {
+    nodeId: "A",
+    relation: "self",
+    title: "Task",
+    kind: "task",
+    status: "pending"
+  },
+  parents: [],
+  seriesPredecessors: [completedContextSummary],
+  completedSiblings: [],
+  reports: [completedContextSummary],
+  selection: {
+    maxItems: 12,
+    maxSummaryChars: 400,
+    includedRelations: ["self", "series-predecessor"],
+    reportBodyPolicy: "paths-and-summaries-only"
+  }
+};
 const plannerRequest: PlannerRequest = {
   requestId: "plan-contract-request",
   mode: "decompose",
   goal: "Define planner contracts",
   nodeId: "A",
   node: extraMetadataNode,
+  relevantContext: dynamicContext,
   allowedKinds: ["task", "series", "parallel"],
   contextRefs: [{ type: "node", ref: "A", nodeId: "A" }],
   outputContract: plannerOutputContract,
@@ -220,6 +254,7 @@ const plannerParentContext: PlannerParentContext = {
   title: "Task",
   kind: "task",
   status: "pending",
+  relevantContext: dynamicContext,
   parentIds: ["ROOT"]
 };
 const plannerOutputSchema: PlannerOutputSchemaDescriptor = {

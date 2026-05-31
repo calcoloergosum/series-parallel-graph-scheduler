@@ -1,11 +1,14 @@
 import type {
   DiagnosticRemediation,
+  DynamicContextPayload,
   DiagnosticNode,
   GraphDiagnostics,
   GraphHistoryEntry,
   GraphLockDiagnostics,
   GraphNode,
   GraphSummary,
+  NodeContextRelation,
+  NodeContextSummary,
   NodeBaseRefMetadata,
   NodeBaseRefSource,
   NodeId,
@@ -35,9 +38,17 @@ export interface ReadyPrioritySelection {
   priority: ReadyPriorityCandidate;
 }
 
+export interface BuildRelevantContextOptions {
+  maxItems?: number;
+  maxSummaryChars?: number;
+}
+
 interface InternalReadyPriorityCandidate extends ReadyPriorityCandidate {
   parentSet: Set<NodeId>;
 }
+
+const defaultRelevantContextMaxItems = 12;
+const defaultRelevantContextMaxSummaryChars = 400;
 
 export function compareReadyPriorityCandidates(left: ReadyPriorityCandidate, right: ReadyPriorityCandidate): number {
   return left.depth - right.depth
@@ -93,6 +104,134 @@ export function summarizeGraph(graph: PlanGraphFile): GraphSummary {
     root: graph.graph.root,
     counts
   };
+}
+
+export function buildRelevantContext(
+  graph: PlanGraphFile,
+  nodeId: NodeId,
+  options: BuildRelevantContextOptions = {}
+): DynamicContextPayload {
+  const maxItems = Math.max(1, options.maxItems ?? defaultRelevantContextMaxItems);
+  const maxSummaryChars = Math.max(80, options.maxSummaryChars ?? defaultRelevantContextMaxSummaryChars);
+  const path = buildStableRootPathMap(graph)[nodeId] || [nodeId];
+  const selected = new Map<NodeId, NodeContextSummary>();
+  const omittedNodeIds: NodeId[] = [];
+
+  const select = (candidateId: NodeId, relation: NodeContextRelation): NodeContextSummary | undefined => {
+    const candidate = contextSummaryForNode(graph, candidateId, relation, maxSummaryChars);
+    if (!candidate) {
+      return undefined;
+    }
+    if (!selected.has(candidateId)) {
+      if (selected.size >= maxItems) {
+        omittedNodeIds.push(candidateId);
+      } else {
+        selected.set(candidateId, candidate);
+      }
+    }
+    return selected.get(candidateId) || candidate;
+  };
+
+  const self = select(nodeId, "self") || contextSummaryForNode(graph, nodeId, "self", maxSummaryChars)!;
+  const root = graph.graph.root && graph.graph.root !== nodeId ? select(graph.graph.root, "root") : undefined;
+  const parents = path.slice(0, -1)
+    .filter((parentId) => parentId !== graph.graph.root)
+    .map((parentId) => select(parentId, "parent"))
+    .filter((summary): summary is NodeContextSummary => Boolean(summary));
+  const seriesPredecessors: NodeContextSummary[] = [];
+  const completedSiblings: NodeContextSummary[] = [];
+
+  for (let index = 0; index < path.length - 1; index += 1) {
+    const parentId = path[index];
+    const pathChildId = path[index + 1];
+    const parent = graph.graph.nodes[parentId];
+    const children = Array.isArray(parent?.children) ? parent.children : [];
+    const childIndex = children.indexOf(pathChildId);
+    if (childIndex < 0) {
+      continue;
+    }
+
+    if (parent.kind === "series") {
+      for (const predecessorId of children.slice(0, childIndex)) {
+        if (isSubtreeDone(graph, predecessorId)) {
+          const summary = select(predecessorId, "series-predecessor");
+          if (summary && !seriesPredecessors.some((entry) => entry.nodeId === summary.nodeId)) {
+            seriesPredecessors.push(summary);
+          }
+        }
+      }
+    }
+
+    if (index === path.length - 2) {
+      for (const siblingId of children) {
+        if (siblingId !== nodeId && isSubtreeDone(graph, siblingId)) {
+          const summary = select(siblingId, parent.kind === "series" && children.indexOf(siblingId) < childIndex ? "series-predecessor" : "completed-sibling");
+          if (summary && !completedSiblings.some((entry) => entry.nodeId === summary.nodeId)) {
+            completedSiblings.push(summary);
+          }
+        }
+      }
+    }
+  }
+
+  const reports = [...selected.values()].filter((summary) => summary.report || summary.resultSummary?.report);
+
+  return {
+    nodeId,
+    self,
+    ...(root ? { root } : {}),
+    parents,
+    seriesPredecessors,
+    completedSiblings,
+    explicitRefs: graph.graph.nodes[nodeId]?.contextRefs,
+    reports,
+    selection: {
+      maxItems,
+      maxSummaryChars,
+      includedRelations: ["self", "root", "parent", "series-predecessor", "completed-sibling", "explicit-ref"],
+      ...(omittedNodeIds.length > 0 ? { omittedNodeIds } : {}),
+      reportBodyPolicy: "paths-and-summaries-only"
+    }
+  };
+}
+
+function contextSummaryForNode(
+  graph: PlanGraphFile,
+  nodeId: NodeId,
+  relation: NodeContextRelation,
+  maxSummaryChars: number
+): NodeContextSummary | undefined {
+  const node = graph.graph.nodes[nodeId];
+  if (!node) {
+    return undefined;
+  }
+  const summaryText = typeof node.resultSummary?.summary === "string"
+    ? truncateSummary(node.resultSummary.summary, maxSummaryChars)
+    : undefined;
+  const truncated = Boolean(node.resultSummary?.summary && summaryText !== node.resultSummary.summary);
+  const outputRefName = typeof node.outputRef?.name === "string" ? node.outputRef.name : undefined;
+  return {
+    nodeId,
+    relation,
+    title: node.title,
+    kind: node.kind || "task",
+    status: node.status || "pending",
+    ...(summaryText ? { summary: summaryText } : {}),
+    ...(node.resultSummary ? { resultSummary: { ...node.resultSummary, summary: summaryText || node.resultSummary.summary } } : {}),
+    ...(node.report ? { report: node.report } : {}),
+    ...(outputRefName ? { outputRef: outputRefName } : {}),
+    ...(node.resultSummary?.artifacts ? { artifacts: [...node.resultSummary.artifacts] } : {}),
+    ...(node.completedAt || node.resultSummary?.completedAt ? { completedAt: node.resultSummary?.completedAt || node.completedAt } : {}),
+    ...(truncated ? { truncated } : {})
+  };
+}
+
+function truncateSummary(value: string, maxChars: number): string {
+  const trimmed = value.trim();
+  if (trimmed.length <= maxChars) {
+    return trimmed;
+  }
+  return `${trimmed.slice(0, Math.max(1, maxChars - 15)).trimEnd()} [truncated]`;
 }
 
 export function buildReachableParentMap(graph: PlanGraphFile, startId: NodeId = graph.graph.root): ReachableParentMap {

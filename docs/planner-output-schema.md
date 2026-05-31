@@ -31,6 +31,13 @@ existing node/context the planner needs. The request may contain graph excerpts,
 but the response must not echo a complete graph patch as an instruction to
 write state directly.
 
+Dynamic context selection is defined in
+[`dynamic-context-flow.md`](dynamic-context-flow.md). The request-level
+`relevantContext` field is the canonical bounded context payload; it includes
+root and parent summaries, completed series predecessors, completed siblings,
+explicit context references, and report paths/summaries without embedding report
+bodies.
+
 ```json
 {
   "requestId": "plan-20260531T010000Z-root",
@@ -44,6 +51,45 @@ write state directly.
       "title": "Security assumptions"
     }
   ],
+  "relevantContext": {
+    "nodeId": "AUDIT_UI",
+    "self": {
+      "nodeId": "AUDIT_UI",
+      "relation": "self",
+      "title": "Implement audit log search UI",
+      "kind": "task",
+      "status": "pending"
+    },
+    "parents": [],
+    "seriesPredecessors": [
+      {
+        "nodeId": "AUDIT_CONTRACT",
+        "relation": "series-predecessor",
+        "title": "Define audit search data contract",
+        "kind": "task",
+        "status": "done",
+        "summary": "Filter fields and pagination behavior are documented.",
+        "report": "reports/AUDIT_CONTRACT.md"
+      }
+    ],
+    "completedSiblings": [],
+    "reports": [
+      {
+        "nodeId": "AUDIT_CONTRACT",
+        "relation": "series-predecessor",
+        "kind": "task",
+        "status": "done",
+        "summary": "Filter fields and pagination behavior are documented.",
+        "report": "reports/AUDIT_CONTRACT.md"
+      }
+    ],
+    "selection": {
+      "maxItems": 12,
+      "maxSummaryChars": 400,
+      "includedRelations": ["self", "root", "parent", "series-predecessor", "completed-sibling", "explicit-ref"],
+      "reportBodyPolicy": "paths-and-summaries-only"
+    }
+  },
   "outputContract": {
     "format": "markdown",
     "requiredArtifacts": ["implementation summary", "test evidence"]

@@ -1,5 +1,5 @@
 import test from "node:test";
-import { addUnknownMetadata, answerNode, assert, assertUnknownMetadata, attachReadyPriorityFields, blockNode, buildPlannerPrompt, buildPlannerRuntimeRequest, buildReachableParentMap, buildReadyPrioritySelections, buildStableRootPathMap, buildVisualizerPayload, buildWorkerPrompt, checkSchedulerTransitionReference, claimNode, compareReadyPriorityCandidates, completeNode, completedDeepReadinessGraph, concurrentMutationGraph, countSharedParentsWithCurrentTask, createFixturePlannerRuntime, createPromptPlannerRuntime, decomposeNode, deepReadinessGraph, depthPriorityGraph, diagnoseGraph, dirname, escapeRegExp, execFileAsync, failNode, knownTransitionStatuses, lastHistory, leafOnlyChildCountPriorityGraph, listReadyLeafNodes, listWorkingNodes, lockArtifacts, mutationOwnershipDocsPath, nestedResetReachabilityGraph, parsePlannerResponse, planNodeDecomposition, plannerResponseToDecomposeMutation, readGraph, readyIds, reconcileGraphStatus, releaseExpiredLeases, renewNodeLease, resetNode, resetReachable, resetSubtree, schedulerScriptPath, schedulerTransitionTable, setNodeStatus, sharedParentPriorityGraph, startNode, stressScriptPath, validatePlanGraphFileResult, validatePlannerResponse, withTempGraph, writeFile } from "./helpers/plan-scheduler-harness.mjs";
+import { addUnknownMetadata, answerNode, assert, assertUnknownMetadata, attachReadyPriorityFields, blockNode, buildPlannerPrompt, buildPlannerRuntimeRequest, buildReachableParentMap, buildReadyPrioritySelections, buildRelevantContext, buildStableRootPathMap, buildVisualizerPayload, buildWorkerPrompt, checkSchedulerTransitionReference, claimNode, compareReadyPriorityCandidates, completeNode, completedDeepReadinessGraph, concurrentMutationGraph, countSharedParentsWithCurrentTask, createFixturePlannerRuntime, createPromptPlannerRuntime, decomposeNode, deepReadinessGraph, depthPriorityGraph, diagnoseGraph, dirname, escapeRegExp, execFileAsync, failNode, knownTransitionStatuses, lastHistory, leafOnlyChildCountPriorityGraph, listReadyLeafNodes, listWorkingNodes, lockArtifacts, mutationOwnershipDocsPath, nestedResetReachabilityGraph, parsePlannerResponse, planNodeDecomposition, plannerResponseToDecomposeMutation, readGraph, readyIds, reconcileGraphStatus, releaseExpiredLeases, renewNodeLease, resetNode, resetReachable, resetSubtree, schedulerScriptPath, schedulerTransitionTable, setNodeStatus, sharedParentPriorityGraph, startNode, stressScriptPath, validatePlanGraphFileResult, validatePlannerResponse, withTempGraph, writeFile } from "./helpers/plan-scheduler-harness.mjs";
 
 function priorityCandidate(id, depth, childCount, sharedParentCountWithCurrentTask) {
   return {
@@ -1814,7 +1814,20 @@ test("planner request context helper preserves nested series-parallel metadata w
       root: "ROOT",
       nodes: {
         ROOT: { title: "Root", kind: "series", status: "pending", children: ["DISCOVERY", "FANOUT"] },
-        DISCOVERY: { title: "Discovery", kind: "task", status: "done" },
+        DISCOVERY: {
+          title: "Discovery",
+          kind: "task",
+          status: "done",
+          report: "reports/discovery.md",
+          completedAt: "2026-05-31T00:01:00.000Z",
+          resultSummary: {
+            status: "done",
+            summary: "Discovery identified the API contract.",
+            artifacts: ["docs/api-contract.md"],
+            report: "reports/discovery.md",
+            completedAt: "2026-05-31T00:01:00.000Z"
+          }
+        },
         FANOUT: { title: "Fanout", kind: "parallel", status: "pending", children: ["API", "WEB"] },
         API: {
           title: "API work",
@@ -1835,11 +1848,12 @@ test("planner request context helper preserves nested series-parallel metadata w
             acceptanceCriteria: ["Summarize API changes"]
           }
         },
-        WEB: { title: "Web work", kind: "task", status: "pending" }
+        WEB: { title: "Web work", kind: "task", status: "pending", report: "reports/web-unfinished.md" }
       }
     }
   };
 
+  const relevantContext = buildRelevantContext(graph, "API");
   const request = buildPlannerRuntimeRequest(graph, "API", {
     requestId: "unit-plan-api",
     allowedKinds: ["task", "series"],
@@ -1856,6 +1870,16 @@ test("planner request context helper preserves nested series-parallel metadata w
   assert.deepEqual(request.contextRefs, graph.graph.nodes.API.contextRefs);
   assert.deepEqual(request.outputContract, graph.graph.nodes.API.outputContract);
   assert.deepEqual(request.parentContext.outputContract, graph.graph.nodes.API.outputContract);
+  assert.equal(relevantContext.self.nodeId, "API");
+  assert.equal(relevantContext.root.nodeId, "ROOT");
+  assert.deepEqual(relevantContext.parents.map((entry) => entry.nodeId), ["FANOUT"]);
+  assert.deepEqual(relevantContext.seriesPredecessors.map((entry) => entry.nodeId), ["DISCOVERY"]);
+  assert.equal(relevantContext.seriesPredecessors[0].summary, "Discovery identified the API contract.");
+  assert.deepEqual(relevantContext.completedSiblings, []);
+  assert.deepEqual(relevantContext.reports.map((entry) => entry.nodeId), ["DISCOVERY"]);
+  assert.equal(relevantContext.selection.reportBodyPolicy, "paths-and-summaries-only");
+  assert.deepEqual(request.relevantContext.seriesPredecessors.map((entry) => entry.nodeId), ["DISCOVERY"]);
+  assert.deepEqual(request.parentContext.relevantContext.seriesPredecessors.map((entry) => entry.nodeId), ["DISCOVERY"]);
   assert.deepEqual(request.planner, { name: "override-planner", model: "fixture-model" });
 });
 
@@ -1928,11 +1952,12 @@ test("default planner prompt renders required variables and decision guidance", 
     assert.match(prompt, /Post-result re-planning example:/);
     assert.match(prompt, /Goal:\nBootstrap/);
     assert.match(prompt, /Parent context:\n\{\n {2}"nodeId": "A"/);
+    assert.match(prompt, /Relevant completed context:\n\{\n {2}"nodeId": "A"/);
     assert.match(prompt, /Current graph summary:\n\{\n {2}"graphVersion": 1,/);
     assert.match(prompt, /"totalNodes": 6/);
     assert.match(prompt, /"schemaRef": "docs\/planner-output-schema\.md"/);
     assert.match(prompt, /Full request:\n\{\n {2}"requestId": "render-plan-A"/);
-    assert.doesNotMatch(prompt, /\{\{(?:goal|parentContextJson|graphSummaryJson|outputSchemaJson|requestJson)\}\}/);
+    assert.doesNotMatch(prompt, /\{\{(?:goal|parentContextJson|relevantContextJson|graphSummaryJson|outputSchemaJson|requestJson)\}\}/);
   });
 });
 

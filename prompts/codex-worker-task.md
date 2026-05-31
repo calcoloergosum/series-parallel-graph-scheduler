@@ -29,6 +29,11 @@ Current graph summary:
 {{summaryJson}}
 ```
 
+Relevant completed context:
+```json
+{{relevantContextJson}}
+```
+
 Ready leaves at prompt creation:
 ```json
 {{readyJson}}

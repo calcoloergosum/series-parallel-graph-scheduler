@@ -873,7 +873,10 @@ export function renderVisualizerHtml(): string {
       result.status ? "status: " + result.status : "",
       result.summary,
       joinList(result.artifacts) ? "artifacts: " + joinList(result.artifacts) : "",
-      result.completedAt ? "completed: " + result.completedAt : ""
+      result.report ? "report: " + result.report : "",
+      result.outputRef ? "output ref: " + result.outputRef : "",
+      result.completedAt ? "completed: " + result.completedAt : "",
+      result.updatedAt ? "updated: " + result.updatedAt : ""
     ].filter(Boolean).join("\\n");
   }
 

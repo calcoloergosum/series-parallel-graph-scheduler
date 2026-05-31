@@ -115,6 +115,9 @@ Goal:
 Parent context:
 {{parentContextJson}}
 
+Relevant completed context:
+{{relevantContextJson}}
+
 Current graph summary:
 {{graphSummaryJson}}
 

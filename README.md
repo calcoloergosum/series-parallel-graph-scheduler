@@ -25,6 +25,8 @@ planning approval and failure boundaries in
 [`docs/planning-safety-and-approval.md`](docs/planning-safety-and-approval.md)
 and acceptance workflows in
 [`docs/goal-driven-acceptance-contract.md`](docs/goal-driven-acceptance-contract.md).
+Dynamic predecessor, sibling, and report-summary context rules are in
+[`docs/dynamic-context-flow.md`](docs/dynamic-context-flow.md).
 
 ## Quickstart
 
@@ -786,6 +788,8 @@ dry-run package manifest for that checklist.
   mutations.
 - `docs/output-safety-audit.md`: output escaping and report-safety audit.
 - `docs/runbook.md`: troubleshooting and recovery steps for operators.
+- `docs/dynamic-context-flow.md`: bounded predecessor, sibling, and report
+  summary context for workers and planners.
 - `docs/technical-debt.md`: maintainability debt register and complexity
   guardrails.
 - `docs/worker-isolation-remote-cache.md`: Git-isolated worker remote and cache

@@ -22,7 +22,7 @@ import type {
   PlannerValidationResult
 } from "./contracts.js";
 import { isRecord } from "./contracts.js";
-import { summarizeGraph } from "./graph-traversal.js";
+import { buildRelevantContext, summarizeGraph } from "./graph-traversal.js";
 
 export interface BuildPlannerRuntimeRequestOptions {
   requestId?: string;
@@ -118,6 +118,7 @@ export function buildPlannerRuntimeRequest(
   const goal = options.goal || goalTextForNode(node, nodeId);
   const allowedKinds = options.allowedKinds || ["task", "series", "parallel"];
   const requestId = options.requestId || `plan-${nodeId}-${graph.graphVersion || 0}`;
+  const relevantContext = buildRelevantContext(graph, nodeId);
 
   return {
     requestId,
@@ -125,7 +126,8 @@ export function buildPlannerRuntimeRequest(
     goal,
     nodeId,
     node,
-    parentContext: buildPlannerParentContext(graph, nodeId, node),
+    parentContext: buildPlannerParentContext(graph, nodeId, node, relevantContext),
+    relevantContext,
     currentGraphSummary: summarizeGraph(graph),
     outputSchema: defaultPlannerOutputSchema,
     allowedKinds,
@@ -138,7 +140,8 @@ export function buildPlannerRuntimeRequest(
 export function buildPlannerParentContext(
   graph: PlanGraphFile,
   nodeId: NodeId,
-  node: GraphNode = graph.graph.nodes[nodeId] || {}
+  node: GraphNode = graph.graph.nodes[nodeId] || {},
+  relevantContext = buildRelevantContext(graph, nodeId)
 ): PlannerParentContext {
   return {
     nodeId,
@@ -151,6 +154,7 @@ export function buildPlannerParentContext(
     goal: node.goal,
     contextRefs: node.contextRefs,
     outputContract: node.outputContract,
+    relevantContext,
     parentIds: parentIdsForNode(graph, nodeId)
   };
 }
@@ -168,6 +172,7 @@ export function renderPlannerPrompt(template: string, request: PlannerRuntimeReq
     goal: request.goal,
     requestJson: JSON.stringify(request, null, 2),
     parentContextJson: JSON.stringify(request.parentContext || null, null, 2),
+    relevantContextJson: JSON.stringify(request.relevantContext || request.parentContext?.relevantContext || null, null, 2),
     graphSummaryJson: JSON.stringify(request.currentGraphSummary, null, 2),
     outputSchemaJson: JSON.stringify(request.outputSchema, null, 2)
   };
