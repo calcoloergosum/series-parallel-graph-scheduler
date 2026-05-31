@@ -1415,13 +1415,15 @@ export async function finalizeWorkerRun(
         noOp,
         ...(published.autoCommitted ? { autoCommitted: true } : {})
       };
-      await collectWorkerGitFootprint(currentRefMetadata);
     } catch (error) {
       finalizedRun = {
         ...run,
         code: 1,
         error: `worker output publication failed: ${errorMessage(error)}`
       };
+    }
+    if (finalizedRun.code === 0) {
+      await collectWorkerGitFootprint(currentRefMetadata);
     }
   }
   const reportBody = formatWorkerReport({
@@ -1507,25 +1509,30 @@ async function collectWorkerGitFootprint(refMetadata: WorkerRunRefMetadata): Pro
     return;
   }
 
-  const collected = await collectGitDiffStat({
-    cloneCwd,
-    baseRef: refMetadata.baseRef?.commit || baseRef,
-    baseRefName: baseRef,
-    headRef: outputRef
-  });
-  if (!collected.ok) {
-    refMetadata.gitFootprintWarning = collected.warning;
-    return;
-  }
+  try {
+    const collected = await collectGitDiffStat({
+      cloneCwd,
+      baseRef: refMetadata.baseRef?.commit || baseRef,
+      baseRefName: baseRef,
+      headRef: outputRef
+    });
+    if (!collected.ok) {
+      refMetadata.gitFootprintWarning = collected.warning;
+      return;
+    }
 
-  refMetadata.gitFootprint = collected.footprint;
-  refMetadata.outputRef = {
-    ...existingOutputRef,
-    name: outputRef,
-    diffStat: collected.diffStat,
-    files: collected.files,
-    collectedAt: collected.footprint.collectedAt
-  };
+    refMetadata.gitFootprint = collected.footprint;
+    refMetadata.outputRef = {
+      ...existingOutputRef,
+      name: outputRef,
+      diffStat: collected.diffStat,
+      files: collected.files,
+      collectedAt: collected.footprint.collectedAt
+    };
+    delete refMetadata.gitFootprintWarning;
+  } catch (error) {
+    refMetadata.gitFootprintWarning = `Git diffstat collection failed: ${errorMessage(error)}`;
+  }
 }
 
 async function failFinalizedWorkerRun(

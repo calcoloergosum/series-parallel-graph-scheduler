@@ -1523,6 +1523,61 @@ test("completeNode keeps successful completion when git footprint collection fai
   });
 });
 
+test("completeNode records a warning when git diffstat cannot start git", async () => {
+  await withLocalBareRemote(async ({ dir, sourcePath, remotePath }) => {
+    const graphDir = join(dir, "graph");
+    const graphPath = join(graphDir, "plan.graph.json");
+    const emptyBin = join(dir, "empty-bin");
+    await mkdir(graphDir);
+    await mkdir(emptyBin);
+    const outputRef = await createSourceBranch({
+      sourcePath,
+      remotePath,
+      branchName: "direct-complete-missing-git",
+      files: { "direct.txt": "done\n" },
+      message: "direct complete missing git"
+    });
+    const bareRepoPath = await prepareCompositionBareRepository({ graphDir, remotePath });
+    await writeFile(graphPath, `${JSON.stringify({
+      graphVersion: 1,
+      scheduler: { remote: remotePath, baseRef: "refs/heads/main" },
+      graph: {
+        root: "A",
+        nodes: {
+          A: {
+            title: "Direct complete with missing git",
+            kind: "task",
+            status: "running",
+            lease: { session: "codex-A", runId: "run-missing-git", claimedAt: "2026-05-31T00:00:00.000Z", expiresAt: "2999-01-01T00:00:00.000Z" },
+            baseRef: { name: "refs/heads/main" }
+          }
+        }
+      }
+    }, null, 2)}\n`, "utf8");
+
+    const originalPath = process.env.PATH;
+    process.env.PATH = emptyBin;
+    try {
+      await completeNode(graphPath, {
+        nodeId: "A",
+        session: "codex-A",
+        runId: "run-missing-git",
+        refMetadata: { bareRepo: bareRepoPath, outputRef }
+      });
+    } finally {
+      process.env.PATH = originalPath;
+    }
+
+    const completed = await readGraph(graphPath);
+    const node = completed.graph.nodes.A;
+    assert.equal(node.status, "done");
+    assert.equal(node.outputRef.name, outputRef.name);
+    assert.equal(node.outputRef.diffStat, undefined);
+    assert.match(node.gitFootprintWarning, /Git diffstat collection failed: .*command could not be started/);
+    assert.equal(lastHistory(node).diffStatCollected, false);
+  });
+});
+
 test("git runtime reports missing remote before running Git", async () => {
   const commands = [];
   await assert.rejects(
@@ -2580,6 +2635,52 @@ test("git-isolated one-shot worker runs in a clone and records an output ref", a
   });
 });
 
+test("git-isolated worker treats diffstat collection failure as a warning", async () => {
+  await withLocalBareRemote(async ({ dir, remotePath }) => {
+    const graphDir = join(dir, "graph");
+    const graphPath = join(graphDir, "plan.graph.json");
+    const fakeRunnerPath = join(dir, "fake-isolated-runner.mjs");
+    const fakeGitPath = join(dir, "fake-bin", "git");
+    await mkdir(graphDir);
+    await mkdir(dirname(fakeGitPath), { recursive: true });
+    await writeWorkerIsolationGraph(graphPath, remotePath);
+    await writeCommittingWorkerRunner(fakeRunnerPath);
+    await writeDiffstatFailingGitWrapper(fakeGitPath);
+
+    const originalPath = process.env.PATH;
+    process.env.PATH = `${dirname(fakeGitPath)}:${originalPath}`;
+    let result;
+    try {
+      result = await runWorker(graphPath, {
+        session: "iso-diffstat-warning",
+        once: true,
+        isolation: "git",
+        stream: false,
+        codexCommand: process.execPath,
+        codexArgs: [fakeRunnerPath]
+      });
+    } finally {
+      process.env.PATH = originalPath;
+    }
+
+    assert.equal(result.results[0].status, "done");
+    assert.equal(result.results[0].code, 0);
+    const graph = await readGraph(graphPath);
+    const node = graph.graph.nodes.A;
+    assert.equal(node.status, "done");
+    assert.equal(node.outputRef.name, node.workRef.name);
+    assert.match(node.outputRef.commit, /^[0-9a-f]{40}$/);
+    assert.equal(node.outputRef.diffStat, undefined);
+    assert.match(node.gitFootprintWarning, /Git diffstat collection failed: .*forced diffstat failure/);
+    assert.match(await gitShow(node.workspace.bareRepo, node.outputRef.name, "worker-output-A.txt"), /node=A/);
+
+    const report = await readFile(join(graphDir, node.report), "utf8");
+    assert.match(report, /- Exit code: 0/);
+    assert.match(report, /- Git footprint warning: .*forced diffstat failure/);
+    assert.doesNotMatch(report, /worker output publication failed/);
+  });
+});
+
 test("concurrent git-isolated workers use distinct clones, branches, and output refs", async () => {
   await withLocalBareRemote(async ({ dir, remotePath }) => {
     const graphDir = join(dir, "graph");
@@ -2997,4 +3098,32 @@ async function createFixtureBranch({
     name: `refs/heads/${branchName}`,
     commit: stdout.trim()
   };
+}
+
+async function writeDiffstatFailingGitWrapper(wrapperPath) {
+  const { stdout } = await execFileAsync("which", ["git"]);
+  const realGit = stdout.trim();
+  await writeFile(
+    wrapperPath,
+    [
+      "#!/usr/bin/env node",
+      "import { spawnSync } from 'node:child_process';",
+      `const realGit = ${JSON.stringify(realGit)};`,
+      "const args = process.argv.slice(2);",
+      "if (args.includes('diff') && (args.includes('--numstat') || args.includes('--name-status'))) {",
+      "  console.error('forced diffstat failure');",
+      "  process.exit(42);",
+      "}",
+      "const result = spawnSync(realGit, args, { encoding: 'utf8' });",
+      "if (result.stdout) process.stdout.write(result.stdout);",
+      "if (result.stderr) process.stderr.write(result.stderr);",
+      "if (result.error) {",
+      "  console.error(result.error.message);",
+      "  process.exit(127);",
+      "}",
+      "process.exit(result.status ?? 1);"
+    ].join("\n"),
+    "utf8"
+  );
+  await execFileAsync("chmod", ["755", wrapperPath]);
 }
