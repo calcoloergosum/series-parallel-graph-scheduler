@@ -2306,6 +2306,94 @@ test("worker CLI fixture planner mode auto-decomposes without network access", a
   });
 });
 
+test("worker CLI fixture planner mode auto-decomposes generated goal tasks", async () => {
+  const { dir, graphPath } = await copyGraphFixtureToTemp("valid-generated-goal.graph.json");
+  try {
+    const fixturePath = join(dir, "generated-planner-fixture.json");
+    await writeFile(fixturePath, JSON.stringify({
+      kind: "series",
+      title: "CLI generated goal split",
+      children: [
+        { id: "PLAN_CLI_DISCOVER", title: "Discover generated CLI path" },
+        { id: "PLAN_CLI_VERIFY", title: "Verify generated CLI path" }
+      ]
+    }, null, 2), "utf8");
+
+    const markerPath = join(dir, "generated-cli-fixture-codex-ran");
+    const fakeRunnerPath = join(dir, "fake-generated-cli-fixture-runner.mjs");
+    await writeFile(fakeRunnerPath, `import { writeFileSync } from 'node:fs'; writeFileSync(${JSON.stringify(markerPath)}, 'ran');\n`, "utf8");
+
+    const { stdout } = await execFileAsync(process.execPath, [
+      schedulerScriptPath,
+      "worker",
+      "--graph", graphPath,
+      "--session", "codex-cli-generated-fixture",
+      "--once",
+      "--quiet",
+      "--planner-mode", "auto-decompose",
+      "--planner-adapter", "fixture",
+      "--planner-fixture", "generated-planner-fixture.json",
+      "--planner-request-id-prefix", "cli-fixture-plan",
+      "--codex-command", process.execPath,
+      "--codex-arg", fakeRunnerPath
+    ]);
+
+    const result = JSON.parse(stdout);
+    assert.equal(result.results[0].nodeId, "PLAN");
+    assert.equal(result.results[0].note, "planner decomposed node as series");
+    assert.equal(existsSync(markerPath), false);
+    const updated = await readGraph(graphPath);
+    assert.equal(updated.graph.nodes.PLAN.kind, "series");
+    assert.equal(updated.graph.nodes.PLAN.status, "pending");
+    assert.deepEqual(updated.graph.nodes.PLAN.children, ["PLAN_CLI_DISCOVER", "PLAN_CLI_VERIFY"]);
+    assert.deepEqual(listReadyLeafNodes(updated).map((node) => node.id), ["PLAN_CLI_DISCOVER"]);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("worker CLI planner mode off preserves normal worker execution", async () => {
+  await withTempGraph(async (graphPath, dir) => {
+    const fakeRunnerPath = join(dir, "fake-planner-off-runner.mjs");
+    await writeFile(fakeRunnerPath, "console.log('planner off ran normal worker');\n", "utf8");
+
+    const { stdout } = await execFileAsync(process.execPath, [
+      schedulerScriptPath,
+      "worker",
+      "--graph", graphPath,
+      "--session", "codex-cli-planner-off",
+      "--once",
+      "--quiet",
+      "--planner-mode", "off",
+      "--codex-command", process.execPath,
+      "--codex-arg", fakeRunnerPath
+    ]);
+
+    const result = JSON.parse(stdout);
+    assert.equal(result.results[0].nodeId, "A");
+    assert.equal(result.results[0].status, "done");
+    const updated = await readGraph(graphPath);
+    assert.equal(updated.graph.nodes.A.status, "done");
+    assert.equal(updated.graph.nodes.A.children, undefined);
+    const report = await readFile(join(dir, updated.graph.nodes.A.report), "utf8");
+    assert.match(report, /planner off ran normal worker/);
+  });
+});
+
+test("worker CLI rejects invalid planner mode before claiming work", async () => {
+  await withTempGraph(async (graphPath) => {
+    await assertCliFails(
+      ["worker", "--graph", graphPath, "--planner-mode", "sometimes", "--once", "--quiet"],
+      /Invalid worker planner mode: expected off, auto-decompose, or ask-approval; received "sometimes"/
+    );
+
+    const updated = await readGraph(graphPath);
+    assert.equal(updated.graph.nodes.A.status, "pending");
+    assert.equal(updated.graph.nodes.A.lease, undefined);
+    assert.equal(updated.graph.nodes.A.history, undefined);
+  });
+});
+
 test("worker prompt planner adapter uses configured template boundary without provider coupling", async () => {
   await withTempGraph(async (graphPath, dir) => {
     const graph = await readGraph(graphPath);
