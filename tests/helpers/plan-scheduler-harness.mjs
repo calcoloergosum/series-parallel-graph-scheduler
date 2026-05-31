@@ -64,6 +64,7 @@ export const {
   buildWorkerPrompt,
   buildVisualizerPayload,
   claimNode,
+  collectGitDiffStat,
   compareReadyPriorityCandidates,
   completeNode,
   countSharedParentsWithCurrentTask,

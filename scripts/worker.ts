@@ -19,6 +19,7 @@ import type {
   WorkerOutcome
 } from "./contracts.js";
 import {
+  collectGitDiffStat,
   createWorkBranch,
   createRunClone,
   defaultBareRepositoryPath,
@@ -997,6 +998,7 @@ export async function finalizeWorkerRun(
         noOp,
         ...(published.autoCommitted ? { autoCommitted: true } : {})
       };
+      await collectWorkerGitFootprint(currentRefMetadata);
     } catch (error) {
       finalizedRun = {
         ...run,
@@ -1033,7 +1035,11 @@ export async function finalizeWorkerRun(
 
   if (finalizedRun.code === 0) {
     const completionRefMetadata = currentRefMetadata?.outputRef
-      ? { outputRef: currentRefMetadata.outputRef }
+      ? {
+          outputRef: currentRefMetadata.outputRef,
+          ...(currentRefMetadata.gitFootprint ? { gitFootprint: currentRefMetadata.gitFootprint } : {}),
+          ...(currentRefMetadata.gitFootprintWarning ? { gitFootprintWarning: currentRefMetadata.gitFootprintWarning } : {})
+        }
       : currentRefMetadata;
     try {
       const result = await runtime.completeNode(graphPath, {
@@ -1073,6 +1079,36 @@ export async function finalizeWorkerRun(
     reportPath,
     refMetadata: currentRefMetadata
   }, runtime);
+}
+
+async function collectWorkerGitFootprint(refMetadata: WorkerRunRefMetadata): Promise<void> {
+  const baseRef = refMetadata.baseRef?.name;
+  const existingOutputRef = refMetadata.outputRef;
+  const outputRef = existingOutputRef?.name;
+  const cloneCwd = refMetadata.cloneCwd;
+  if (!baseRef || !outputRef || !cloneCwd) {
+    return;
+  }
+
+  const collected = await collectGitDiffStat({
+    cloneCwd,
+    baseRef: refMetadata.baseRef?.commit || baseRef,
+    baseRefName: baseRef,
+    headRef: outputRef
+  });
+  if (!collected.ok) {
+    refMetadata.gitFootprintWarning = collected.warning;
+    return;
+  }
+
+  refMetadata.gitFootprint = collected.footprint;
+  refMetadata.outputRef = {
+    ...existingOutputRef,
+    name: outputRef,
+    diffStat: collected.diffStat,
+    files: collected.files,
+    collectedAt: collected.footprint.collectedAt
+  };
 }
 
 async function failFinalizedWorkerRun(
@@ -1181,6 +1217,19 @@ export function formatWorkerReport({
     if (refMetadata?.outputRef?.autoCommitted === true) {
       sections.push(`- Auto-committed workspace changes: true`);
     }
+    if (isolation?.gitFootprint?.diffStat) {
+      const diffStat = isolation.gitFootprint.diffStat;
+      sections.push(`- Files changed: ${reportInlineValue(diffStat.filesChanged)}`);
+      sections.push(`- Insertions: ${reportInlineValue(diffStat.additions)}`);
+      sections.push(`- Deletions: ${reportInlineValue(diffStat.deletions)}`);
+      const files = isolation.gitFootprint.files || [];
+      if (files.length > 0) {
+        sections.push(`- Changed paths: ${reportInlineValue(files.map((file) => file.path).join(", "))}`);
+      }
+    }
+    if (refMetadata?.gitFootprintWarning) {
+      sections.push(`- Git footprint warning: ${reportInlineValue(refMetadata.gitFootprintWarning)}`);
+    }
     if (isolation?.integrationRef) {
       sections.push(`- Integration ref: ${reportInlineValue(isolation.integrationRef)}`);
       sections.push(`- Integration status: ${reportInlineValue(isolation.integrationStatus || "unknown")}`);
@@ -1223,6 +1272,7 @@ function mergeReportIsolationDetails(
     ...(refMetadata.workRef?.name ? { workRef: refMetadata.workRef.name } : {}),
     ...(refMetadata.outputRef?.name ? { outputRef: refMetadata.outputRef.name } : {}),
     ...(refMetadata.outputRef?.commit ? { outputCommit: refMetadata.outputRef.commit } : {}),
+    ...(refMetadata.gitFootprint ? { gitFootprint: refMetadata.gitFootprint } : {}),
     ...(refMetadata.integrationResult ? { integrationStatus: refMetadata.integrationResult } : {})
   };
 }

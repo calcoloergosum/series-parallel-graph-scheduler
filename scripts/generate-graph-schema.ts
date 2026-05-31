@@ -117,6 +117,7 @@ export function buildPlanGraphJsonSchema(): Record<string, unknown> {
           outputRef: { "$ref": "#/$defs/namedRef" },
           integrationRef: { "$ref": "#/$defs/integrationRef" },
           gitFootprint: { "$ref": "#/$defs/gitFootprint" },
+          gitFootprintWarning: { type: "string" },
           workspace: { "$ref": "#/$defs/workspace" }
         },
         allOf: [

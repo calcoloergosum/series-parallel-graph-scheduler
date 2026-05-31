@@ -215,6 +215,9 @@
         "gitFootprint": {
           "$ref": "#/$defs/gitFootprint"
         },
+        "gitFootprintWarning": {
+          "type": "string"
+        },
         "workspace": {
           "$ref": "#/$defs/workspace"
         }

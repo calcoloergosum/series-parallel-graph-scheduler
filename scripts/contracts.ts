@@ -240,6 +240,8 @@ export interface WorkerRunRefMetadata {
   baseRef?: NodeBaseRefMetadata;
   workRef?: NodeWorkRefMetadata;
   outputRef?: NodeOutputRefMetadata;
+  gitFootprint?: NodeGitFootprintMetadata;
+  gitFootprintWarning?: string;
   integrationResult?: string;
   retained?: boolean;
   [metadata: string]: unknown;
@@ -277,6 +279,7 @@ export interface GraphNode {
   outputRef?: NodeOutputRefMetadata;
   integrationRef?: NodeIntegrationRefMetadata;
   gitFootprint?: NodeGitFootprintMetadata;
+  gitFootprintWarning?: string;
   workspace?: NodeWorkspaceMetadata;
   [metadata: string]: unknown;
 }
