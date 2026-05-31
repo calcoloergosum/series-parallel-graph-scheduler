@@ -170,6 +170,7 @@ export async function createVisualizerServer({
   const listenPort = parseNumericArgument(port, { flag: "--port", ...numericArgumentRanges.port, defaultValue: 8787 })!;
   const securityWarning = visualizerHostSecurityWarning(host, allowUnsafeWrites);
   const requiredWriteToken = normalizeWriteToken(writeToken);
+  let visualizerWriteDepth = 0;
   validateVisualizerWriteProtection(host, requiredWriteToken, allowUnsafeWrites);
 
   async function send(client: ServerResponse): Promise<void> {
@@ -184,6 +185,15 @@ export async function createVisualizerServer({
       } catch {
         clients.delete(client);
       }
+    }
+  }
+
+  async function runVisualizerWriteRoute<T>(operation: () => Promise<T>): Promise<T> {
+    visualizerWriteDepth += 1;
+    try {
+      return await operation();
+    } finally {
+      visualizerWriteDepth -= 1;
     }
   }
 
@@ -299,15 +309,18 @@ export async function createVisualizerServer({
           return;
         }
         const body = await readRequestJson(req);
-        const result = await runtime.claimNode(graphPath, {
-          session: optionalStringBodyField(body, "session"),
-          nodeId: optionalStringBodyField(body, "nodeId"),
-          leaseSeconds: numericBodyField(body, "leaseSeconds", numericArgumentRanges.leaseSeconds)
-            ?? numericBodyField(body, "lease", numericArgumentRanges.leaseSeconds),
-          resolveBaseRef: optionalBooleanBodyField(body, "resolveBaseRef")
+        const result = await runVisualizerWriteRoute(async () => {
+          const mutationResult = await runtime.claimNode(graphPath, {
+            session: optionalStringBodyField(body, "session"),
+            nodeId: optionalStringBodyField(body, "nodeId"),
+            leaseSeconds: numericBodyField(body, "leaseSeconds", numericArgumentRanges.leaseSeconds)
+              ?? numericBodyField(body, "lease", numericArgumentRanges.leaseSeconds),
+            resolveBaseRef: optionalBooleanBodyField(body, "resolveBaseRef")
+          });
+          await runtime.renderPlanAfterUpdate(graphPath);
+          await broadcast();
+          return mutationResult;
         });
-        await runtime.renderPlanAfterUpdate(graphPath);
-        await broadcast();
         res.writeHead(200, { "content-type": "application/json; charset=utf-8", "cache-control": "no-store" });
         res.end(JSON.stringify(result));
         return;
@@ -318,13 +331,16 @@ export async function createVisualizerServer({
           return;
         }
         const body = await readRequestJson(req);
-        const result = await runtime.startNode(graphPath, {
-          nodeId: stringBodyField(body, "nodeId"),
-          session: optionalStringBodyField(body, "session"),
-          runId: optionalRunIdBodyField(body)
+        const result = await runVisualizerWriteRoute(async () => {
+          const mutationResult = await runtime.startNode(graphPath, {
+            nodeId: stringBodyField(body, "nodeId"),
+            session: optionalStringBodyField(body, "session"),
+            runId: optionalRunIdBodyField(body)
+          });
+          await runtime.renderPlanAfterUpdate(graphPath);
+          await broadcast();
+          return mutationResult;
         });
-        await runtime.renderPlanAfterUpdate(graphPath);
-        await broadcast();
         res.writeHead(200, { "content-type": "application/json; charset=utf-8", "cache-control": "no-store" });
         res.end(JSON.stringify(result));
         return;
@@ -335,15 +351,18 @@ export async function createVisualizerServer({
           return;
         }
         const body = await readRequestJson(req);
-        const result = await runtime.renewNodeLease(graphPath, {
-          nodeId: stringBodyField(body, "nodeId"),
-          session: optionalStringBodyField(body, "session"),
-          runId: optionalRunIdBodyField(body),
-          leaseSeconds: numericBodyField(body, "leaseSeconds", numericArgumentRanges.leaseSeconds)
-            ?? numericBodyField(body, "lease", numericArgumentRanges.leaseSeconds)
+        const result = await runVisualizerWriteRoute(async () => {
+          const mutationResult = await runtime.renewNodeLease(graphPath, {
+            nodeId: stringBodyField(body, "nodeId"),
+            session: optionalStringBodyField(body, "session"),
+            runId: optionalRunIdBodyField(body),
+            leaseSeconds: numericBodyField(body, "leaseSeconds", numericArgumentRanges.leaseSeconds)
+              ?? numericBodyField(body, "lease", numericArgumentRanges.leaseSeconds)
+          });
+          await runtime.renderPlanAfterUpdate(graphPath);
+          await broadcast();
+          return mutationResult;
         });
-        await runtime.renderPlanAfterUpdate(graphPath);
-        await broadcast();
         res.writeHead(200, { "content-type": "application/json; charset=utf-8", "cache-control": "no-store" });
         res.end(JSON.stringify(result));
         return;
@@ -356,18 +375,21 @@ export async function createVisualizerServer({
         const body = await readRequestJson(req);
         const nodeId = stringBodyField(body, "nodeId");
         const report = optionalStringBodyField(body, "report");
-        await runtime.writeReportFile(graphPath, report, optionalBodyField(body, "reportBody") ?? optionalBodyField(body, "report-body"));
-        const result: NodeMutationResult & { slack?: SlackNotificationResult } = {
-          ...await runtime.completeNode(graphPath, {
-            nodeId,
-            report,
-            session: optionalStringBodyField(body, "session"),
-            runId: optionalRunIdBodyField(body)
-          })
-        };
-        await runtime.renderPlanAfterUpdate(graphPath);
-        result.slack = await runtime.sendSlackNotification(graphPath, operationalEvents.done, { nodeId, report });
-        await broadcast();
+        const result = await runVisualizerWriteRoute(async () => {
+          await runtime.writeReportFile(graphPath, report, optionalBodyField(body, "reportBody") ?? optionalBodyField(body, "report-body"));
+          const mutationResult: NodeMutationResult & { slack?: SlackNotificationResult } = {
+            ...await runtime.completeNode(graphPath, {
+              nodeId,
+              report,
+              session: optionalStringBodyField(body, "session"),
+              runId: optionalRunIdBodyField(body)
+            })
+          };
+          await runtime.renderPlanAfterUpdate(graphPath);
+          mutationResult.slack = await runtime.sendSlackNotification(graphPath, operationalEvents.done, { nodeId, report });
+          await broadcast();
+          return mutationResult;
+        });
         res.writeHead(200, { "content-type": "application/json; charset=utf-8", "cache-control": "no-store" });
         res.end(JSON.stringify(result));
         return;
@@ -381,18 +403,21 @@ export async function createVisualizerServer({
         const nodeId = stringBodyField(body, "nodeId");
         const question = optionalStringBodyField(body, "question");
         const reason = optionalStringBodyField(body, "reason");
-        const result: NodeMutationResult & { slack?: SlackNotificationResult } = {
-          ...await runtime.blockNode(graphPath, {
-            nodeId,
-            question,
-            reason,
-            session: optionalStringBodyField(body, "session"),
-            runId: optionalRunIdBodyField(body)
-          })
-        };
-        await runtime.renderPlanAfterUpdate(graphPath);
-        result.slack = await runtime.sendSlackNotification(graphPath, operationalEvents.blocked, { nodeId, question, reason });
-        await broadcast();
+        const result = await runVisualizerWriteRoute(async () => {
+          const mutationResult: NodeMutationResult & { slack?: SlackNotificationResult } = {
+            ...await runtime.blockNode(graphPath, {
+              nodeId,
+              question,
+              reason,
+              session: optionalStringBodyField(body, "session"),
+              runId: optionalRunIdBodyField(body)
+            })
+          };
+          await runtime.renderPlanAfterUpdate(graphPath);
+          mutationResult.slack = await runtime.sendSlackNotification(graphPath, operationalEvents.blocked, { nodeId, question, reason });
+          await broadcast();
+          return mutationResult;
+        });
         res.writeHead(200, { "content-type": "application/json; charset=utf-8", "cache-control": "no-store" });
         res.end(JSON.stringify(result));
         return;
@@ -405,16 +430,19 @@ export async function createVisualizerServer({
         const body = await readRequestJson(req);
         const nodeId = stringBodyField(body, "nodeId");
         const answer = stringBodyField(body, "answer");
-        const result: AnswerNodeResult & { slack?: SlackNotificationResult } = {
-          ...await runtime.answerNode(graphPath, {
-            nodeId,
-            answer,
-            responder: optionalStringBodyField(body, "responder")
-          })
-        };
-        await runtime.renderPlanAfterUpdate(graphPath);
-        result.slack = await runtime.sendSlackNotification(graphPath, operationalEvents.answered, { nodeId, answer });
-        await broadcast();
+        const result = await runVisualizerWriteRoute(async () => {
+          const mutationResult: AnswerNodeResult & { slack?: SlackNotificationResult } = {
+            ...await runtime.answerNode(graphPath, {
+              nodeId,
+              answer,
+              responder: optionalStringBodyField(body, "responder")
+            })
+          };
+          await runtime.renderPlanAfterUpdate(graphPath);
+          mutationResult.slack = await runtime.sendSlackNotification(graphPath, operationalEvents.answered, { nodeId, answer });
+          await broadcast();
+          return mutationResult;
+        });
         res.writeHead(200, { "content-type": "application/json; charset=utf-8", "cache-control": "no-store" });
         res.end(JSON.stringify(result));
         return;
@@ -428,18 +456,21 @@ export async function createVisualizerServer({
         const nodeId = stringBodyField(body, "nodeId");
         const reason = optionalStringBodyField(body, "reason");
         const report = optionalStringBodyField(body, "report");
-        const result: NodeMutationResult & { slack?: SlackNotificationResult } = {
-          ...await runtime.failNode(graphPath, {
-            nodeId,
-            reason,
-            report,
-            session: optionalStringBodyField(body, "session"),
-            runId: optionalRunIdBodyField(body)
-          })
-        };
-        await runtime.renderPlanAfterUpdate(graphPath);
-        result.slack = await runtime.sendSlackNotification(graphPath, operationalEvents.failed, { nodeId, reason, report });
-        await broadcast();
+        const result = await runVisualizerWriteRoute(async () => {
+          const mutationResult: NodeMutationResult & { slack?: SlackNotificationResult } = {
+            ...await runtime.failNode(graphPath, {
+              nodeId,
+              reason,
+              report,
+              session: optionalStringBodyField(body, "session"),
+              runId: optionalRunIdBodyField(body)
+            })
+          };
+          await runtime.renderPlanAfterUpdate(graphPath);
+          mutationResult.slack = await runtime.sendSlackNotification(graphPath, operationalEvents.failed, { nodeId, reason, report });
+          await broadcast();
+          return mutationResult;
+        });
         res.writeHead(200, { "content-type": "application/json; charset=utf-8", "cache-control": "no-store" });
         res.end(JSON.stringify(result));
         return;
@@ -450,12 +481,15 @@ export async function createVisualizerServer({
           return;
         }
         const body = await readRequestJson(req);
-        const result = await runtime.resetNode(graphPath, {
-          nodeId: stringBodyField(body, "nodeId"),
-          reason: optionalStringBodyField(body, "reason")
+        const result = await runVisualizerWriteRoute(async () => {
+          const mutationResult = await runtime.resetNode(graphPath, {
+            nodeId: stringBodyField(body, "nodeId"),
+            reason: optionalStringBodyField(body, "reason")
+          });
+          await runtime.renderPlanAfterUpdate(graphPath);
+          await broadcast();
+          return mutationResult;
         });
-        await runtime.renderPlanAfterUpdate(graphPath);
-        await broadcast();
         res.writeHead(200, { "content-type": "application/json; charset=utf-8", "cache-control": "no-store" });
         res.end(JSON.stringify(result));
         return;
@@ -466,12 +500,15 @@ export async function createVisualizerServer({
           return;
         }
         const body = await readRequestJson(req);
-        const result = await runtime.resetSubtree(graphPath, {
-          nodeId: stringBodyField(body, "nodeId"),
-          reason: optionalStringBodyField(body, "reason")
+        const result = await runVisualizerWriteRoute(async () => {
+          const mutationResult = await runtime.resetSubtree(graphPath, {
+            nodeId: stringBodyField(body, "nodeId"),
+            reason: optionalStringBodyField(body, "reason")
+          });
+          await runtime.renderPlanAfterUpdate(graphPath);
+          await broadcast();
+          return mutationResult;
         });
-        await runtime.renderPlanAfterUpdate(graphPath);
-        await broadcast();
         res.writeHead(200, { "content-type": "application/json; charset=utf-8", "cache-control": "no-store" });
         res.end(JSON.stringify(result));
         return;
@@ -482,12 +519,15 @@ export async function createVisualizerServer({
           return;
         }
         const body = await readRequestJson(req);
-        const result = await runtime.resetReachable(graphPath, {
-          nodeId: stringBodyField(body, "nodeId"),
-          reason: optionalStringBodyField(body, "reason")
+        const result = await runVisualizerWriteRoute(async () => {
+          const mutationResult = await runtime.resetReachable(graphPath, {
+            nodeId: stringBodyField(body, "nodeId"),
+            reason: optionalStringBodyField(body, "reason")
+          });
+          await runtime.renderPlanAfterUpdate(graphPath);
+          await broadcast();
+          return mutationResult;
         });
-        await runtime.renderPlanAfterUpdate(graphPath);
-        await broadcast();
         res.writeHead(200, { "content-type": "application/json; charset=utf-8", "cache-control": "no-store" });
         res.end(JSON.stringify(result));
         return;
@@ -499,18 +539,21 @@ export async function createVisualizerServer({
         }
         const body = await readRequestJson(req);
         const nodeId = stringBodyField(body, "nodeId");
-        const result: DecomposeNodeResult & { slack?: SlackNotificationResult } = {
-          ...await runtime.decomposeNode(graphPath, {
-            nodeId,
-            kind: optionalStringBodyField(body, "kind"),
-            children: childDefinitionsBodyField(body, "children"),
-            session: optionalStringBodyField(body, "session"),
-            runId: optionalRunIdBodyField(body)
-          })
-        };
-        await runtime.renderPlanAfterUpdate(graphPath);
-        result.slack = await runtime.sendSlackNotification(graphPath, operationalEvents.decomposed, { nodeId });
-        await broadcast();
+        const result = await runVisualizerWriteRoute(async () => {
+          const mutationResult: DecomposeNodeResult & { slack?: SlackNotificationResult } = {
+            ...await runtime.decomposeNode(graphPath, {
+              nodeId,
+              kind: optionalStringBodyField(body, "kind"),
+              children: childDefinitionsBodyField(body, "children"),
+              session: optionalStringBodyField(body, "session"),
+              runId: optionalRunIdBodyField(body)
+            })
+          };
+          await runtime.renderPlanAfterUpdate(graphPath);
+          mutationResult.slack = await runtime.sendSlackNotification(graphPath, operationalEvents.decomposed, { nodeId });
+          await broadcast();
+          return mutationResult;
+        });
         res.writeHead(200, { "content-type": "application/json; charset=utf-8", "cache-control": "no-store" });
         res.end(JSON.stringify(result));
         return;
@@ -521,9 +564,12 @@ export async function createVisualizerServer({
           return;
         }
         await readRequestJson(req);
-        const result = await runtime.reconcileGraphStatus(graphPath);
-        await runtime.renderPlanAfterUpdate(graphPath);
-        await broadcast();
+        const result = await runVisualizerWriteRoute(async () => {
+          const mutationResult = await runtime.reconcileGraphStatus(graphPath);
+          await runtime.renderPlanAfterUpdate(graphPath);
+          await broadcast();
+          return mutationResult;
+        });
         res.writeHead(200, { "content-type": "application/json; charset=utf-8", "cache-control": "no-store" });
         res.end(JSON.stringify(result));
         return;
@@ -534,9 +580,12 @@ export async function createVisualizerServer({
           return;
         }
         await readRequestJson(req);
-        const result = await runtime.releaseExpiredLeases(graphPath);
-        await runtime.renderPlanAfterUpdate(graphPath);
-        await broadcast();
+        const result = await runVisualizerWriteRoute(async () => {
+          const mutationResult = await runtime.releaseExpiredLeases(graphPath);
+          await runtime.renderPlanAfterUpdate(graphPath);
+          await broadcast();
+          return mutationResult;
+        });
         res.writeHead(200, { "content-type": "application/json; charset=utf-8", "cache-control": "no-store" });
         res.end(JSON.stringify(result));
         return;
@@ -583,6 +632,9 @@ export async function createVisualizerServer({
   const graphFileName = basename(graphPath);
   const watcher = watch(graphDir, async (_event, filename) => {
     if (filename && String(filename) !== graphFileName) {
+      return;
+    }
+    if (visualizerWriteDepth > 0) {
       return;
     }
     await broadcast();

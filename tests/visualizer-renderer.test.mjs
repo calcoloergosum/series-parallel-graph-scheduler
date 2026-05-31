@@ -1,5 +1,5 @@
 import test from "node:test";
-import { assert, assertInvalidFixtureFailure, blockNode, buildPlanarLayout, buildSlackNotificationText, buildVisualizerPayload, claimNode, copyGraphFixtureToTemp, createServer, createVisualizerServer, execFileAsync, existsSync, fixtureGraph, formatWorkerReport, invalidGraphValidatorOutcomes, isLocalVisualizerHost, join, mkdir, mkdtemp, readFile, readGraph, readdir, renderPlanarSvg, renderVisualizerHtml, rendererDocumentFixture, rendererScriptPath, rm, runVisualizerClientScript, schedulerScriptPath, sendSlackNotification, tmpdir, utimes, visualizerHostSecurityWarning, waitFor, withTempGraph, writeFile } from "./helpers/plan-scheduler-harness.mjs";
+import { assert, assertInvalidFixtureFailure, blockNode, buildPlanarLayout, buildSlackNotificationText, buildVisualizerPayload, claimNode, copyGraphFixtureToTemp, createServer, createVisualizerServer, execFileAsync, existsSync, fixtureGraph, formatWorkerReport, installGraphIoFaultInjectorForTests, invalidGraphValidatorOutcomes, isLocalVisualizerHost, join, mkdir, mkdtemp, readFile, readGraph, readdir, renderPlanarSvg, renderVisualizerHtml, rendererDocumentFixture, rendererScriptPath, rm, runVisualizerClientScript, schedulerScriptPath, sendSlackNotification, tmpdir, utimes, visualizerHostSecurityWarning, waitFor, withTempGraph, writeFile } from "./helpers/plan-scheduler-harness.mjs";
 
 async function openSseJsonStream(baseUrl) {
   const controller = new AbortController();
@@ -410,6 +410,51 @@ test("visualizer done route rejects report body paths outside the graph director
       assert.equal(graph.graph.nodes.A.completedAt, undefined);
       assert.deepEqual(graph.graph.nodes.A.history, before.graph.nodes.A.history);
     } finally {
+      await visualizer.close();
+    }
+  });
+});
+
+test("visualizer reconcile SSE emits the updated graph after pre-rename watcher activity", async () => {
+  await withTempGraph(async (graphPath) => {
+    const graph = fixtureGraph();
+    graph.document = rendererDocumentFixture();
+    for (const nodeId of ["A", "B", "C", "G"]) {
+      graph.graph.nodes[nodeId].status = "done";
+    }
+    await writeFile(graphPath, `${JSON.stringify(graph, null, 2)}\n`, "utf8");
+
+    let injectedPreRenameEvent = false;
+    const restoreFaultInjector = installGraphIoFaultInjectorForTests(async (point, context) => {
+      if (point !== "before-atomic-temp-open" || context.targetPath !== graphPath || injectedPreRenameEvent) {
+        return;
+      }
+      injectedPreRenameEvent = true;
+      const now = new Date();
+      await utimes(graphPath, now, now);
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    });
+
+    const visualizer = await createVisualizerServer({ graphPath, port: 0 });
+    const sse = await openSseJsonStream(visualizer.url);
+    try {
+      await sse.nextJson();
+
+      const response = await fetch(`${visualizer.url}/api/graph/reconcile`, { method: "POST" });
+      assert.equal(response.status, 200);
+
+      const result = await response.json();
+      assert.deepEqual(new Set(result.changed), new Set(["P", "ROOT"]));
+      assert.equal(result.summary.counts.done, 6);
+      assert.equal(injectedPreRenameEvent, true);
+
+      const payload = await sse.nextJson();
+      assert.equal(payload.graph.graph.nodes.ROOT.status, "done");
+      assert.equal(payload.graph.graph.nodes.P.status, "done");
+      assert.equal(payload.summary.counts.done, 6);
+    } finally {
+      restoreFaultInjector();
+      await sse.close();
       await visualizer.close();
     }
   });
