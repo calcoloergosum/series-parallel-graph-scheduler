@@ -712,7 +712,7 @@ The stable `node.gitFootprint` shape is:
     "commit": "fedcba9876543210fedcba9876543210fedcba98",
     "diffStat": {
       "filesChanged": 2,
-      "additions": 42,
+      "insertions": 42,
       "deletions": 7,
       "totalChanges": 49,
       "binaryFiles": 0
@@ -722,7 +722,7 @@ The stable `node.gitFootprint` shape is:
         "path": "scripts/contracts.ts",
         "oldPath": "scripts/types.ts",
         "changeType": "renamed",
-        "additions": 20,
+        "insertions": 20,
         "deletions": 3,
         "totalChanges": 23,
         "binary": false
@@ -742,14 +742,17 @@ Stable field meanings:
 - `branch`: display branch or short ref name for the head when available.
 - `commit`: display head commit. It should match `headRef.commit` and
   `outputRef.commit` when those fields are present.
-- `diffStat.filesChanged`, `diffStat.additions`, `diffStat.deletions`, and
+- `diffStat.filesChanged`, `diffStat.insertions`, `diffStat.deletions`, and
   `diffStat.totalChanges`: numeric summary fields for visualizer consumers.
-  `totalChanges` is `additions + deletions`. `binaryFiles` is optional and
-  counts files whose line-level stats are unavailable.
+  `totalChanges` is `insertions + deletions`. `binaryFiles` is optional and
+  counts files whose line-level stats are unavailable. Legacy metadata may use
+  `additions` instead of `insertions`; readers should treat it as the same
+  line-increase count when `insertions` is absent.
 - `files`: file-level stats sorted by path unless a producer documents another
   deterministic order. Stable field names are `path`, `oldPath`, `changeType`,
-  `additions`, `deletions`, `totalChanges`, and `binary`. Binary file line
-  counts may be `null`; otherwise `totalChanges` is `additions + deletions`.
+  `insertions`, `deletions`, `totalChanges`, and `binary`. Binary file line
+  counts may be `null`; otherwise `totalChanges` is `insertions + deletions`.
+  Legacy file metadata may use `additions` instead of `insertions`.
 - `collectedAt`: timestamp for when Git metadata was collected. It may differ
   slightly from `outputRef.producedAt` because collection can happen after the
   output ref is recorded.

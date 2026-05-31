@@ -3,6 +3,8 @@ import {
   isKnownNodeKind,
   isKnownNodeStatus,
   type CliCommand,
+  type GitDiffStatMetadata,
+  type GitFileFootprintMetadata,
   type GraphDiagnostics,
   type GraphLease,
   type GraphLockDiagnostics,
@@ -35,6 +37,7 @@ import {
   type VisualizerPayload,
   type WorkerManagerProcess
 } from "../scripts/contracts.js";
+
 import {
   parseArgs,
   parseChildrenArgs,
@@ -64,6 +67,11 @@ import {
 import { type GraphLockOptions } from "../scripts/graph-io.js";
 import { runtimePathsFromModuleUrl, type RuntimePaths } from "../scripts/runtime-paths.js";
 import { type BuildWorkerPromptOptions, type RunCodexPromptOptions } from "../scripts/worker.js";
+
+const _insertionDiffStat: GitDiffStatMetadata = { filesChanged: 1, insertions: 2, deletions: 1, totalChanges: 3 };
+const _legacyAdditionDiffStat: GitDiffStatMetadata = { filesChanged: 1, additions: 2, deletions: 1, totalChanges: 3 };
+const _insertionFileFootprint: GitFileFootprintMetadata = { path: "scripts/contracts.ts", insertions: 2, deletions: 1, totalChanges: 3 };
+const _legacyAdditionFileFootprint: GitFileFootprintMetadata = { path: "scripts/contracts.ts", additions: 2, deletions: 1, totalChanges: 3 };
 
 const rendererDocument: RendererDocument = {
   pageTitle: "Typed graph",
@@ -118,8 +126,8 @@ const extraMetadataNode: GraphNode = {
     commit: "fedcba9876543210fedcba9876543210fedcba98",
     report: "reports/A-run_20260527_000000_A_abc123.md",
     producedAt: "2026-05-27T00:05:00.000Z",
-    diffStat: { filesChanged: 1, additions: 12, deletions: 3, totalChanges: 15 },
-    files: [{ path: "scripts/contracts.ts", changeType: "modified", additions: 12, deletions: 3, totalChanges: 15 }],
+    diffStat: { filesChanged: 1, insertions: 12, deletions: 3, totalChanges: 15 },
+    files: [{ path: "scripts/contracts.ts", changeType: "modified", insertions: 12, deletions: 3, totalChanges: 15 }],
     collectedAt: "2026-05-27T00:05:01.000Z"
   },
   integrationRef: {
@@ -145,8 +153,8 @@ const extraMetadataNode: GraphNode = {
     },
     branch: "spg/node/A/run_20260527_000000_A_abc123",
     commit: "fedcba9876543210fedcba9876543210fedcba98",
-    diffStat: { filesChanged: 1, additions: 12, deletions: 3, totalChanges: 15 },
-    files: [{ path: "scripts/contracts.ts", changeType: "modified", additions: 12, deletions: 3, totalChanges: 15 }],
+    diffStat: { filesChanged: 1, insertions: 12, deletions: 3, totalChanges: 15 },
+    files: [{ path: "scripts/contracts.ts", changeType: "modified", insertions: 12, deletions: 3, totalChanges: 15 }],
     collectedAt: "2026-05-27T00:05:01.000Z"
   },
   documentField: ["extra metadata"],

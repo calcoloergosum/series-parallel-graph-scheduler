@@ -437,15 +437,30 @@
     },
     "gitDiffStat": {
       "type": "object",
-      "required": [
-        "filesChanged",
-        "additions",
-        "deletions",
-        "totalChanges"
+      "anyOf": [
+        {
+          "required": [
+            "filesChanged",
+            "insertions",
+            "deletions",
+            "totalChanges"
+          ]
+        },
+        {
+          "required": [
+            "filesChanged",
+            "additions",
+            "deletions",
+            "totalChanges"
+          ]
+        }
       ],
       "additionalProperties": true,
       "properties": {
         "filesChanged": {
+          "type": "number"
+        },
+        "insertions": {
           "type": "number"
         },
         "additions": {
@@ -464,11 +479,23 @@
     },
     "gitFileFootprint": {
       "type": "object",
-      "required": [
-        "path",
-        "additions",
-        "deletions",
-        "totalChanges"
+      "anyOf": [
+        {
+          "required": [
+            "path",
+            "insertions",
+            "deletions",
+            "totalChanges"
+          ]
+        },
+        {
+          "required": [
+            "path",
+            "additions",
+            "deletions",
+            "totalChanges"
+          ]
+        }
       ],
       "additionalProperties": true,
       "properties": {
@@ -480,6 +507,12 @@
         },
         "changeType": {
           "type": "string"
+        },
+        "insertions": {
+          "type": [
+            "number",
+            "null"
+          ]
         },
         "additions": {
           "type": [

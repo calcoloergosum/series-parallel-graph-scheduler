@@ -244,10 +244,14 @@ export function buildPlanGraphJsonSchema(): Record<string, unknown> {
       },
       gitDiffStat: {
         type: "object",
-        required: ["filesChanged", "additions", "deletions", "totalChanges"],
+        anyOf: [
+          { required: ["filesChanged", "insertions", "deletions", "totalChanges"] },
+          { required: ["filesChanged", "additions", "deletions", "totalChanges"] }
+        ],
         additionalProperties: true,
         properties: {
           filesChanged: { type: "number" },
+          insertions: { type: "number" },
           additions: { type: "number" },
           deletions: { type: "number" },
           totalChanges: { type: "number" },
@@ -256,12 +260,16 @@ export function buildPlanGraphJsonSchema(): Record<string, unknown> {
       },
       gitFileFootprint: {
         type: "object",
-        required: ["path", "additions", "deletions", "totalChanges"],
+        anyOf: [
+          { required: ["path", "insertions", "deletions", "totalChanges"] },
+          { required: ["path", "additions", "deletions", "totalChanges"] }
+        ],
         additionalProperties: true,
         properties: {
           path: { type: "string" },
           oldPath: { type: "string" },
           changeType: { type: "string" },
+          insertions: { type: ["number", "null"] },
           additions: { type: ["number", "null"] },
           deletions: { type: ["number", "null"] },
           totalChanges: { type: ["number", "null"] },

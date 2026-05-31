@@ -446,6 +446,42 @@ test("generated unknown kinds and custom statuses warn while remaining traversal
   }
 });
 
+test("graph validation accepts insertion and legacy addition git footprint metadata", () => {
+  const graph = {
+    graph: {
+      root: "ROOT",
+      nodes: {
+        ROOT: {
+          title: "Root",
+          kind: "parallel",
+          status: "pending",
+          children: ["NEW", "LEGACY"]
+        },
+        NEW: {
+          title: "New footprint",
+          kind: "task",
+          status: "done",
+          gitFootprint: {
+            diffStat: { filesChanged: 1, insertions: 12, deletions: 3, totalChanges: 15 },
+            files: [{ path: "scripts/contracts.ts", insertions: 12, deletions: 3, totalChanges: 15 }]
+          }
+        },
+        LEGACY: {
+          title: "Legacy footprint",
+          kind: "task",
+          status: "done",
+          gitFootprint: {
+            diffStat: { filesChanged: 1, additions: 12, deletions: 3, totalChanges: 15 },
+            files: [{ path: "scripts/contracts.ts", additions: 12, deletions: 3, totalChanges: 15 }]
+          }
+        }
+      }
+    }
+  };
+
+  assert.deepEqual(validatePlanGraphFileResult(graph).errors, []);
+});
+
 test("generated graph JSON Schema artifact is deterministic and maps validator invariants", async () => {
   const checkedInSchema = JSON.parse(await readFile(graphSchemaPath, "utf8"));
   assert.deepEqual(checkedInSchema, buildPlanGraphJsonSchema());
@@ -457,6 +493,20 @@ test("generated graph JSON Schema artifact is deterministic and maps validator i
   assert.equal(checkedInSchema.$defs.node.properties.children.uniqueItems, true);
   assert.deepEqual(checkedInSchema.$defs.lease.required, ["session", "runId", "claimedAt", "expiresAt"]);
   assert.deepEqual(checkedInSchema.$defs.historyEntry.required, ["at"]);
+  assert.deepEqual(checkedInSchema.$defs.gitDiffStat.anyOf, [
+    { required: ["filesChanged", "insertions", "deletions", "totalChanges"] },
+    { required: ["filesChanged", "additions", "deletions", "totalChanges"] }
+  ]);
+  assert.equal(checkedInSchema.$defs.gitDiffStat.properties.filesChanged.type, "number");
+  assert.equal(checkedInSchema.$defs.gitDiffStat.properties.insertions.type, "number");
+  assert.equal(checkedInSchema.$defs.gitDiffStat.properties.deletions.type, "number");
+  assert.deepEqual(checkedInSchema.$defs.gitFileFootprint.anyOf, [
+    { required: ["path", "insertions", "deletions", "totalChanges"] },
+    { required: ["path", "additions", "deletions", "totalChanges"] }
+  ]);
+  assert.equal(checkedInSchema.$defs.gitFileFootprint.properties.path.type, "string");
+  assert.deepEqual(checkedInSchema.$defs.gitFileFootprint.properties.insertions.type, ["number", "null"]);
+  assert.deepEqual(checkedInSchema.$defs.gitFileFootprint.properties.deletions.type, ["number", "null"]);
   assert.equal(
     checkedInSchema.$defs.timestamp.pattern,
     String.raw`^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})$`
