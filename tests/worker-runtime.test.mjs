@@ -940,21 +940,21 @@ test("nested parallel and series composition buffers publish refs before downstr
     assert.equal(reconciled.graph.nodes.FANOUT.status, "done");
     assert.equal(reconciled.graph.nodes.FANOUT.integrationRef.status, "clean");
     assert.deepEqual(reconciled.graph.nodes.FANOUT.integrationRef.inputRefs.map((input) => input.nodeId), ["LEFT", "RIGHT"]);
-    assert.deepEqual(reconciled.graph.nodes.FANOUT.outputRef.diffStat, { filesChanged: 2, additions: 2, deletions: 0, totalChanges: 2 });
-    assert.deepEqual(reconciled.graph.nodes.FANOUT.gitFootprint.diffStat, reconciled.graph.nodes.FANOUT.outputRef.diffStat);
+    assert.equal(reconciled.graph.nodes.FANOUT.outputRef.diffStat, undefined);
+    assert.deepEqual(reconciled.graph.nodes.FANOUT.gitFootprint.diffStat, { filesChanged: 2, additions: 2, deletions: 0, totalChanges: 2 });
     assert.equal(reconciled.graph.nodes.SERIES.status, "done");
     assert.equal(reconciled.graph.nodes.SERIES.outputRef.name, tailRef.name);
-    assert.deepEqual(reconciled.graph.nodes.SERIES.outputRef.diffStat, { filesChanged: 1, additions: 1, deletions: 0, totalChanges: 1 });
-    assert.deepEqual(reconciled.graph.nodes.SERIES.gitFootprint.diffStat, reconciled.graph.nodes.SERIES.outputRef.diffStat);
+    assert.equal(reconciled.graph.nodes.SERIES.outputRef.diffStat, undefined);
+    assert.deepEqual(reconciled.graph.nodes.SERIES.gitFootprint.diffStat, { filesChanged: 1, additions: 1, deletions: 0, totalChanges: 1 });
     assert.deepEqual(reconciled.graph.nodes.SERIES.integrationRef.inputRefs.map((input) => input.nodeId), ["FANOUT", "TAIL"]);
     assert.equal(reconciled.graph.nodes.SERIES.integrationRef.inputRefs[0].outputRef, reconciled.graph.nodes.FANOUT.outputRef.name);
     const fanoutPublishEvent = reconciled.graph.nodes.FANOUT.history.find((entry) => entry.event === "parent-ref-published");
     assert.equal(fanoutPublishEvent.diffStatCollected, true);
-    assert.deepEqual(fanoutPublishEvent.diffStat, reconciled.graph.nodes.FANOUT.outputRef.diffStat);
+    assert.deepEqual(fanoutPublishEvent.diffStat, reconciled.graph.nodes.FANOUT.gitFootprint.diffStat);
     assert.equal("files" in fanoutPublishEvent, false);
     const seriesPublishEvent = reconciled.graph.nodes.SERIES.history.find((entry) => entry.event === "parent-ref-published");
     assert.equal(seriesPublishEvent.diffStatCollected, true);
-    assert.deepEqual(seriesPublishEvent.diffStat, reconciled.graph.nodes.SERIES.outputRef.diffStat);
+    assert.deepEqual(seriesPublishEvent.diffStat, reconciled.graph.nodes.SERIES.gitFootprint.diffStat);
     assert.equal("files" in seriesPublishEvent, false);
     assert.deepEqual(listReadyLeafNodes(reconciled).map((node) => node.id), ["DOWNSTREAM"]);
   });
@@ -1225,7 +1225,8 @@ test("completeNode backfills git footprint metadata from output refs", async () 
         remote: credentialRemote,
         bareRepo: bareRepoPath,
         cloneCwd: sourcePath,
-        outputRef
+        outputRef,
+        gitFootprintWarning: "stale preflight warning"
       }
     });
 
@@ -1234,12 +1235,13 @@ test("completeNode backfills git footprint metadata from output refs", async () 
     assert.equal(node.status, "done");
     assert.deepEqual(node.vendorMetadata, { preserved: true });
     assert.equal(node.outputRef.name, outputRef.name);
-    assert.deepEqual(node.outputRef.diffStat, { filesChanged: 1, additions: 1, deletions: 0, totalChanges: 1 });
-    assert.deepEqual(node.outputRef.files, [
+    assert.equal(node.outputRef.diffStat, undefined);
+    assert.equal(node.outputRef.files, undefined);
+    assert.deepEqual(node.gitFootprint.diffStat, { filesChanged: 1, additions: 1, deletions: 0, totalChanges: 1 });
+    assert.deepEqual(node.gitFootprint.files, [
       { path: "direct.txt", changeType: "added", additions: 1, deletions: 0, totalChanges: 1 }
     ]);
-    assert.deepEqual(node.gitFootprint.diffStat, node.outputRef.diffStat);
-    assert.deepEqual(node.gitFootprint.files, node.outputRef.files);
+    assert.equal(node.gitFootprintWarning, undefined);
     assert.equal(node.gitFootprint.headRef.name, outputRef.name);
     assert.equal(node.workspace.remote, "https://[REDACTED]@example.com/org/repo.git");
     assert.doesNotMatch(JSON.stringify(node), /secret-token/);
@@ -1251,7 +1253,8 @@ test("completeNode backfills git footprint metadata from output refs", async () 
     const doneEvent = lastHistory(node);
     assert.equal(doneEvent.event, "done");
     assert.equal(doneEvent.diffStatCollected, true);
-    assert.deepEqual(doneEvent.diffStat, node.outputRef.diffStat);
+    assert.deepEqual(doneEvent.diffStat, node.gitFootprint.diffStat);
+    assert.equal(doneEvent.gitFootprintWarning, undefined);
     assert.equal("files" in doneEvent, false);
   });
 });
@@ -1303,8 +1306,10 @@ test("completeNode stores binary-file git footprint metadata from output refs", 
     const graph = await readGraph(graphPath);
     const node = graph.graph.nodes.A;
     assert.equal(node.status, "done");
-    assert.deepEqual(node.outputRef.diffStat, { filesChanged: 1, additions: 0, deletions: 0, totalChanges: 0, binaryFiles: 1 });
-    assert.deepEqual(node.outputRef.files, [
+    assert.equal(node.outputRef.diffStat, undefined);
+    assert.equal(node.outputRef.files, undefined);
+    assert.deepEqual(node.gitFootprint.diffStat, { filesChanged: 1, additions: 0, deletions: 0, totalChanges: 0, binaryFiles: 1 });
+    assert.deepEqual(node.gitFootprint.files, [
       {
         path: "assets/logo.bin",
         changeType: "added",
@@ -1314,7 +1319,6 @@ test("completeNode stores binary-file git footprint metadata from output refs", 
         binary: true
       }
     ]);
-    assert.deepEqual(node.gitFootprint.files, node.outputRef.files);
     assert.equal(lastHistory(node).diffStatCollected, true);
   });
 });
@@ -3071,7 +3075,7 @@ test("git-isolated one-shot worker runs in a clone and records an output ref", a
     assert.equal(node.gitFootprint.headRef.name, node.outputRef.name);
     assert.equal(node.gitFootprint.diffStat.filesChanged, 2);
     assert.deepEqual(node.gitFootprint.files.map((file) => file.path).sort(), ["shared-name.txt", "worker-output-A.txt"]);
-    assert.deepEqual(node.outputRef.diffStat, node.gitFootprint.diffStat);
+    assert.equal(node.outputRef.diffStat, undefined);
 
     const report = await readFile(join(graphDir, node.report), "utf8");
     assert.match(report, /## Isolation/);

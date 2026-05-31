@@ -2117,11 +2117,13 @@ async function attachGitFootprintMetadata(
     return {};
   }
 
-  if (node.outputRef.diffStat && node.gitFootprint?.diffStat) {
+  const existingFootprint = gitFootprintFromNode(node);
+  if (existingFootprint?.diffStat || existingFootprint?.files?.length) {
+    delete node.gitFootprintWarning;
     return {
       diffStatCollected: true,
-      diffStat: node.outputRef.diffStat,
-      gitFootprintCollectedAt: node.outputRef.collectedAt || node.gitFootprint.collectedAt
+      diffStat: existingFootprint.diffStat,
+      gitFootprintCollectedAt: existingFootprint.collectedAt || node.outputRef.collectedAt
     };
   }
 
@@ -2152,10 +2154,7 @@ async function attachGitFootprintMetadata(
 
     node.gitFootprint = mergeDefined(node.gitFootprint, collected.footprint);
     node.outputRef = mergeDefined(node.outputRef, {
-      commit: node.outputRef.commit || collected.footprint.headRef?.commit,
-      diffStat: collected.diffStat,
-      files: collected.files,
-      collectedAt: collected.footprint.collectedAt
+      commit: node.outputRef.commit || collected.footprint.headRef?.commit
     });
     delete node.gitFootprintWarning;
     return {
@@ -2277,11 +2276,12 @@ function applyWorkerRefMetadata(
 }
 
 function outputRefFootprintHistoryDetails(node: GraphNode): GitFootprintHistoryDetails {
-  if (node.outputRef?.diffStat) {
+  const gitFootprint = gitFootprintFromNode(node);
+  if (gitFootprint?.diffStat || gitFootprint?.files?.length) {
     return {
       diffStatCollected: true,
-      diffStat: node.outputRef.diffStat,
-      gitFootprintCollectedAt: node.outputRef.collectedAt || node.gitFootprint?.collectedAt
+      diffStat: gitFootprint.diffStat,
+      gitFootprintCollectedAt: gitFootprint.collectedAt || node.outputRef?.collectedAt
     };
   }
   if (node.gitFootprintWarning) {
