@@ -234,6 +234,42 @@ export interface NodePlannerMetadata {
   [metadata: string]: unknown;
 }
 
+export type NodeWorkerPlannerAttemptStatus =
+  | "planned"
+  | "decomposed"
+  | "approval-required"
+  | "failed"
+  | "limit-exceeded"
+  | (string & {});
+
+export interface NodeWorkerPlannerAttemptMetadata {
+  requestId?: string;
+  runId?: string;
+  session?: string;
+  mode?: WorkerPlannerMode | (string & {});
+  status: NodeWorkerPlannerAttemptStatus;
+  decision?: PlannerOutputKind;
+  attemptedAt: IsoDateString;
+  childIds?: NodeId[];
+  reason?: string;
+  planner?: NodePlannerMetadata;
+  [metadata: string]: unknown;
+}
+
+export interface NodeWorkerPlannerMetadata {
+  attempts?: NodeWorkerPlannerAttemptMetadata[];
+  attemptCount?: number;
+  maxAttempts?: number;
+  decision?: PlannerOutputKind;
+  decisionStatus?: NodeWorkerPlannerAttemptStatus;
+  requestId?: string;
+  runId?: string;
+  decidedAt?: IsoDateString;
+  childIds?: NodeId[];
+  reason?: string;
+  [metadata: string]: unknown;
+}
+
 export interface NodeContextRefMetadata {
   type?: "file" | "url" | "node" | "report" | "git-ref" | (string & {});
   ref: string;
@@ -361,6 +397,7 @@ export interface GraphNode {
   acceptanceCriteria?: string[];
   goal?: string | NodeGoalMetadata;
   planner?: NodePlannerMetadata;
+  workerPlanner?: NodeWorkerPlannerMetadata;
   plannerDecision?: string;
   decompositionReason?: string;
   rationale?: string;
@@ -480,6 +517,7 @@ export interface WorkerPlannerConfig {
   templatePath?: string;
   allowedKinds?: PlannerOutputKind[];
   requestIdPrefix?: string;
+  maxAttempts?: number;
   planner?: NodePlannerMetadata;
   [metadata: string]: unknown;
 }

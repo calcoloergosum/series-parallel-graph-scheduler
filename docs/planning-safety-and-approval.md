@@ -56,6 +56,12 @@ before Codex execution; `task` responses continue to Codex, while valid
 mutation and the worker does not execute Codex for that parent. `mode:
 "ask-approval"` writes an inspectable planner report and blocks the leased node
 instead of mutating children, so an operator can approve, reset, or fail it.
+Each planner preflight records durable `workerPlanner` metadata on the node,
+including attempts, request id, decision, decision status, and configured
+attempt limit. A persisted `task` decision is reused on later claims so normal
+worker execution can continue without asking the planner again. A persisted
+composite decision on an undecomposed leaf blocks further worker execution until
+the operator resets the node or explicitly applies/re-plans the decomposition.
 The planner runtime is selected separately with `adapterMode`: `fixture` reads
 a local JSON response or request-id map for deterministic tests and demos,
 `prompt` renders a prompt through the prompt adapter boundary, and `injected`
@@ -68,6 +74,11 @@ validated before the worker claims or starts a node.
 Both paths append `planner-failed` history before the worker continues. Approval
 mode appends `planner-preview-rejected` when a valid preview is intentionally
 held for manual review instead of being applied.
+`maxAttempts` defaults to `1` for worker planner preflight. When a node reaches
+the limit without a reusable atomic decision or applied decomposition, the
+worker follows `failurePolicy` and records a clear limit-exceeded reason instead
+of calling the planner again. Resetting the node, subtree, or reachable work
+clears `workerPlanner` execution state so an explicit retry can plan again.
 
 Regenerate creates a replacement proposal, not an implicit edit to accepted
 state. If regeneration happens while a draft is open, the UI should show the
