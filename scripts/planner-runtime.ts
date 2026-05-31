@@ -52,6 +52,7 @@ export interface ValidatePlannerResponseOptions {
   graph?: PlanGraphFile;
   parentId?: NodeId;
   allowedKinds?: PlannerOutputKind[];
+  allowNestedChildren?: boolean;
 }
 
 export class PlannerResponseValidationError extends Error {
@@ -90,7 +91,8 @@ const plannerResponseSchema = {
           title: { type: "string", minLength: 1 },
           description: { type: "string" },
           deliverables: { type: "array", items: { type: "string" } },
-          acceptanceCriteria: { type: "array", items: { type: "string" } }
+          acceptanceCriteria: { type: "array", items: { type: "string" } },
+          children: { type: "array", items: { type: "object", additionalProperties: true } }
         }
       }
     }
@@ -321,7 +323,11 @@ export function validatePlannerResponse(
   }
 
   if (Array.isArray(response.children)) {
-    validatePlannerChildren(response.children, errors, options);
+    validatePlannerChildren(response.children, errors, {
+      graph: options.graph,
+      parentId: options.parentId || "NODE",
+      allowNestedChildren: options.allowNestedChildren ?? true
+    });
   }
 
   return { valid: errors.length === 0, errors, warnings };
@@ -333,7 +339,12 @@ export function plannerResponseToDecomposeMutation(
   parentId: NodeId,
   options: ValidatePlannerResponseOptions = {}
 ): PlannerDecomposeMutation | undefined {
-  const validation = validatePlannerResponse(response, { ...options, graph, parentId });
+  const validation = validatePlannerResponse(response, {
+    ...options,
+    graph,
+    parentId,
+    allowNestedChildren: options.allowNestedChildren ?? false
+  });
   if (!validation.valid) {
     throw new PlannerResponseValidationError(validation);
   }
@@ -407,19 +418,103 @@ function isPlannerOutputKind(value: unknown): value is PlannerOutputKind {
   return value === "task" || value === "series" || value === "parallel";
 }
 
+interface ValidatePlannerChildrenContext {
+  graph?: PlanGraphFile;
+  parentId: NodeId;
+  allowNestedChildren: boolean;
+}
+
+interface PlannerChildIdValidationContext {
+  existingIds: Set<NodeId>;
+  explicitIdPaths: Map<NodeId, string>;
+}
+
+interface PlannerChildTreeValidationContext {
+  allowNestedChildren: boolean;
+  usedIds: Set<NodeId>;
+  materializedIdPaths: Map<NodeId, string>;
+}
+
 function validatePlannerChildren(
   children: unknown[],
   errors: PlannerValidationError[],
-  options: ValidatePlannerResponseOptions
+  context: ValidatePlannerChildrenContext
 ): void {
-  const seenMaterializedIds = new Map<NodeId, number>();
-  const usedIds = new Set(Object.keys(options.graph?.graph.nodes || {}));
+  const explicitIdContext: PlannerChildIdValidationContext = {
+    existingIds: new Set(Object.keys(context.graph?.graph.nodes || {})),
+    explicitIdPaths: new Map()
+  };
+  collectExplicitPlannerChildIds(children, "$.children", errors, explicitIdContext);
 
+  const usedIds = new Set<NodeId>([
+    ...explicitIdContext.existingIds,
+    ...explicitIdContext.explicitIdPaths.keys()
+  ]);
+  validatePlannerChildTree(children, "$.children", context.parentId, errors, {
+    allowNestedChildren: context.allowNestedChildren,
+    usedIds,
+    materializedIdPaths: new Map()
+  });
+}
+
+function collectExplicitPlannerChildIds(
+  children: unknown[],
+  path: string,
+  errors: PlannerValidationError[],
+  context: PlannerChildIdValidationContext
+): void {
   children.forEach((child, index) => {
-    const path = `$.children[${index}]`;
+    const childPath = `${path}[${index}]`;
+    if (!isRecord(child)) {
+      return;
+    }
+    if (child.id !== undefined && typeof child.id !== "string") {
+      return;
+    }
+    if (typeof child.id === "string") {
+      const id = child.id.trim();
+      validateSafePlannerId(id, `${childPath}.id`, errors);
+      if (id && isSafePlannerId(id)) {
+        if (context.existingIds.has(id)) {
+          errors.push({
+            path: `${childPath}.id`,
+            code: "duplicate-child-id",
+            message: `Child id already exists in graph.nodes: ${id}.`,
+            severity: "error"
+          });
+        } else {
+          const firstPath = context.explicitIdPaths.get(id);
+          if (firstPath) {
+            errors.push({
+              path: `${childPath}.id`,
+              code: "duplicate-child-id",
+              message: `Duplicate child id: ${id} (first seen at ${firstPath}).`,
+              severity: "error"
+            });
+          } else {
+            context.explicitIdPaths.set(id, `${childPath}.id`);
+          }
+        }
+      }
+    }
+    if (Array.isArray(child.children)) {
+      collectExplicitPlannerChildIds(child.children, `${childPath}.children`, errors, context);
+    }
+  });
+}
+
+function validatePlannerChildTree(
+  children: unknown[],
+  path: string,
+  parentId: NodeId,
+  errors: PlannerValidationError[],
+  context: PlannerChildTreeValidationContext
+): void {
+  children.forEach((child, index) => {
+    const childPath = `${path}[${index}]`;
     if (!isRecord(child)) {
       errors.push({
-        path,
+        path: childPath,
         code: "invalid-child",
         message: "Planner child proposal must be an object.",
         severity: "error"
@@ -427,14 +522,14 @@ function validatePlannerChildren(
       return;
     }
 
-    validateNonEmptyString(child.title, `${path}.title`, "child title", errors);
-    validateOptionalString(child.description, `${path}.description`, "child description", errors);
-    validateStringArray(child.deliverables, `${path}.deliverables`, "child deliverables", errors);
-    validateStringArray(child.acceptanceCriteria, `${path}.acceptanceCriteria`, "child acceptance criteria", errors);
+    validateNonEmptyString(child.title, `${childPath}.title`, "child title", errors);
+    validateOptionalString(child.description, `${childPath}.description`, "child description", errors);
+    validateStringArray(child.deliverables, `${childPath}.deliverables`, "child deliverables", errors);
+    validateStringArray(child.acceptanceCriteria, `${childPath}.acceptanceCriteria`, "child acceptance criteria", errors);
 
     if (child.kind !== undefined && !isPlannerOutputKind(child.kind)) {
       errors.push({
-        path: `${path}.kind`,
+        path: `${childPath}.kind`,
         code: "unknown-kind",
         message: "Planner child kind must be one of: task, series, parallel.",
         severity: "error"
@@ -442,55 +537,71 @@ function validatePlannerChildren(
     }
     if (child.id !== undefined && typeof child.id !== "string") {
       errors.push({
-        path: `${path}.id`,
+        path: `${childPath}.id`,
         code: "invalid-id",
         message: "Planner child id must be a string.",
         severity: "error"
       });
     }
-    if (typeof child.id === "string") {
-      const id = child.id.trim();
-      validateSafePlannerId(id, `${path}.id`, errors);
-      if (options.graph && usedIds.has(id)) {
-        errors.push({
-          path: `${path}.id`,
-          code: "duplicate-child-id",
-          message: `Child id already exists in graph.nodes: ${id}.`,
-          severity: "error"
-        });
-      }
-    }
     if (child.idHint !== undefined && typeof child.idHint !== "string") {
       errors.push({
-        path: `${path}.idHint`,
+        path: `${childPath}.idHint`,
         code: "invalid-id-hint",
         message: "Planner child idHint must be a string.",
         severity: "error"
       });
     }
-    if (child.children !== undefined) {
+    if (child.children !== undefined && !Array.isArray(child.children)) {
       errors.push({
-        path: `${path}.children`,
-        code: "unsupported-nested-children",
-        message: "Planner child proposals must be flat for node decomposition.",
+        path: `${childPath}.children`,
+        code: "invalid-children",
+        message: "Planner child children must be an array of child proposals.",
         severity: "error"
       });
     }
 
-    const materializedId = materializePlannerChildId(child as PlannerChildProposal, index, usedIds, options.parentId);
+    const materializedId = materializePlannerChildId(child as PlannerChildProposal, index, context.usedIds, parentId);
     if (materializedId) {
-      const firstIndex = seenMaterializedIds.get(materializedId);
-      if (firstIndex !== undefined) {
+      const firstPath = context.materializedIdPaths.get(materializedId);
+      if (firstPath) {
         errors.push({
-          path: `${path}.id`,
+          path: `${childPath}.id`,
           code: "duplicate-child-id",
-          message: `Duplicate child id: ${materializedId} (first seen at $.children[${firstIndex}].id).`,
+          message: `Duplicate child id: ${materializedId} (first seen at ${firstPath}).`,
           severity: "error"
         });
       } else {
-        seenMaterializedIds.set(materializedId, index);
-        usedIds.add(materializedId);
+        context.materializedIdPaths.set(materializedId, child.id === undefined ? childPath : `${childPath}.id`);
+        context.usedIds.add(materializedId);
       }
+    }
+
+    const nestedChildren = Array.isArray(child.children) ? child.children : undefined;
+    if (child.kind === "series" || child.kind === "parallel") {
+      if (!nestedChildren || nestedChildren.length === 0) {
+        errors.push({
+          path: `${childPath}.children`,
+          code: "missing-children",
+          message: `${child.kind} planner child proposals must include at least one child.`,
+          severity: "error"
+        });
+      } else if (!context.allowNestedChildren) {
+        errors.push({
+          path: `${childPath}.children`,
+          code: "unsupported-nested-children",
+          message: "Nested planner child proposals are not supported for node decomposition.",
+          severity: "error"
+        });
+      } else {
+        validatePlannerChildTree(nestedChildren, `${childPath}.children`, materializedId || parentId, errors, context);
+      }
+    } else if (nestedChildren) {
+      errors.push({
+        path: `${childPath}.children`,
+        code: "unsupported-nested-children",
+        message: "Nested planner child proposals require kind series or parallel.",
+        severity: "error"
+      });
     }
   });
 }

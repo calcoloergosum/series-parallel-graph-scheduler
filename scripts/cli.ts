@@ -1,4 +1,4 @@
-import { lstat, mkdir, realpath, stat } from "node:fs/promises";
+import { lstat, mkdir, readFile, realpath, stat } from "node:fs/promises";
 import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { isRecord, validatePlanGraphFileResult } from "./contracts.js";
 import type {
@@ -11,6 +11,9 @@ import type {
   NodeMutationResult,
   ParsedArgs,
   PlanGraphFile,
+  PlannerOutputKind,
+  PlannerResponse,
+  PlannerRuntimeRequest,
   ReconcileGraphResult,
   ReleaseExpiredLeasesResult,
   RenewLeaseResult,
@@ -23,9 +26,10 @@ import type {
 import { buildGoalGraph } from "./goal-graph.js";
 import { numericArgumentRanges, parseNumericArgument } from "./numeric-args.js";
 import { exportOperationalEvents, operationalEvents } from "./operational-events.js";
+import { createFixturePlannerRuntime, defaultPlannerOutputSchema } from "./planner-runtime.js";
 import { errorMessage, safeFilePart } from "./shared-utils.js";
 
-export { buildGoalGraph } from "./goal-graph.js";
+export { buildGoalGraph, buildGoalGraphFromPlannerResponse } from "./goal-graph.js";
 
 export interface DecomposeChildArg {
   id: string;
@@ -458,7 +462,7 @@ export async function dispatchCliCommand(options: CliDispatchOptions): Promise<v
   if (command === "plan") {
     const goal = requiredTrimmedOptionString(args, "goal", "plan");
     const graphPath = resolvePlanGraphOutputPath(options.rootDir, args, goal);
-    const graph = buildGoalGraph(goal, { title: optionString(args, "title") });
+    const graph = await buildPlanCommandGraph(goal, graphPath, args, handlers);
     const planOnly = booleanArg(args, "plan-only");
     const thenRun = booleanArg(args, "then-run");
     if (planOnly && thenRun) {
@@ -706,6 +710,122 @@ export async function dispatchCliCommand(options: CliDispatchOptions): Promise<v
     default:
       throw new Error(`Unknown command: ${command}`);
   }
+}
+
+async function buildPlanCommandGraph(
+  goal: string,
+  graphPath: string,
+  args: ParsedArgs,
+  handlers: CliCommandHandlers
+): Promise<PlanGraphFile> {
+  const title = optionString(args, "title");
+  const fallbackGraph = buildGoalGraph(goal, { title });
+  const settings = resolvePlanPlannerSettings(args);
+  if (settings.mode === "off") {
+    return fallbackGraph;
+  }
+  if (settings.adapterMode !== "fixture") {
+    throw new Error("plan planner mode requires --planner-adapter fixture and --planner-fixture");
+  }
+  if (!settings.fixturePath) {
+    throw new Error("plan fixture planner requires --planner-fixture");
+  }
+
+  const planner = createFixturePlannerRuntime(await readFixturePlannerResponses(resolveGraphRelativePath(graphPath, settings.fixturePath)));
+  const request = buildGoalPlannerRuntimeRequest(goal, fallbackGraph, handlers, settings);
+  const result = await planner.plan(request);
+  return buildGoalGraph(goal, {
+    title,
+    plannerResult: result,
+    allowedKinds: request.allowedKinds,
+    planner: result.planner
+  });
+}
+
+function buildGoalPlannerRuntimeRequest(
+  goal: string,
+  fallbackGraph: PlanGraphFile,
+  handlers: CliCommandHandlers,
+  settings: PlanPlannerSettings
+): PlannerRuntimeRequest {
+  const root = fallbackGraph.graph.nodes.ROOT;
+  const requestId = `${settings.requestIdPrefix}-ROOT-1`;
+  return {
+    requestId,
+    mode: "goal",
+    goal,
+    nodeId: "ROOT",
+    node: root,
+    parentContext: {
+      nodeId: "ROOT",
+      title: root.title,
+      kind: root.kind,
+      status: root.status,
+      description: root.description,
+      goal: root.goal,
+      parentIds: []
+    },
+    currentGraphSummary: handlers.summarizeGraph(fallbackGraph),
+    outputSchema: defaultPlannerOutputSchema,
+    allowedKinds: settings.allowedKinds,
+    planner: { name: "fixture-planner", requestId }
+  };
+}
+
+interface PlanPlannerSettings {
+  mode: "off" | "auto-decompose";
+  adapterMode: "none" | "fixture";
+  fixturePath?: string;
+  allowedKinds?: PlannerOutputKind[];
+  requestIdPrefix: string;
+}
+
+function resolvePlanPlannerSettings(args: ParsedArgs): PlanPlannerSettings {
+  const adapter = optionString(args, "planner-adapter") || (optionString(args, "planner-fixture") ? "fixture" : "none");
+  if (adapter !== "none" && adapter !== "fixture") {
+    throw new Error("Invalid plan planner adapter: expected none or fixture");
+  }
+  const rawMode = optionString(args, "planner-mode");
+  const mode = rawMode === undefined || rawMode === ""
+    ? (adapter === "fixture" ? "auto-decompose" : "off")
+    : rawMode;
+  if (mode !== "off" && mode !== "auto-decompose") {
+    throw new Error("Invalid plan planner mode: expected off or auto-decompose");
+  }
+  return {
+    mode,
+    adapterMode: adapter,
+    fixturePath: optionString(args, "planner-fixture"),
+    allowedKinds: parsePlannerAllowedKinds(args),
+    requestIdPrefix: optionString(args, "planner-request-id-prefix") || "goal-plan"
+  };
+}
+
+async function readFixturePlannerResponses(path: string): Promise<PlannerResponse | Record<string, PlannerResponse>> {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(await readFile(path, "utf8"));
+  } catch (error) {
+    throw new Error(`Invalid fixture planner file ${path}: ${errorMessage(error)}`, { cause: error });
+  }
+  if (!isPlannerFixtureSource(parsed)) {
+    throw new Error(`Invalid fixture planner file ${path}: expected a planner response object or request-id response map`);
+  }
+  return parsed;
+}
+
+function isPlannerFixtureSource(value: unknown): value is PlannerResponse | Record<string, PlannerResponse> {
+  if (!isRecord(value)) {
+    return false;
+  }
+  if (typeof value.kind === "string") {
+    return true;
+  }
+  return Object.values(value).every((entry) => isRecord(entry) && typeof entry.kind === "string");
+}
+
+function resolveGraphRelativePath(graphPath: string, path: string): string {
+  return isAbsolute(path) ? path : resolve(dirname(graphPath), path);
 }
 
 function parseChildJson(child: unknown, index: number): DecomposeChildArg {

@@ -409,6 +409,134 @@ test("goal graph factory creates a deterministic valid root graph", () => {
   assert.equal(graph.document.pageTitle, "Audit Log Plan");
 });
 
+test("goal graph factory materializes validated planner output as native graph nodes", () => {
+  const graph = buildGoalGraph("Ship a searchable audit log", {
+    title: "Audit Log Plan",
+    createdAt: "2026-05-31T00:00:00.000Z",
+    plannerResponse: {
+      requestId: "goal-plan-ROOT-1",
+      kind: "parallel",
+      title: "Audit log delivery fanout",
+      children: [
+        { id: "AUDIT_BACKEND", title: "Implement audit backend" },
+        { idHint: "AUDIT_UI", title: "Implement audit UI" }
+      ]
+    }
+  });
+  const validation = validatePlanGraphFileResult(graph);
+
+  assert.deepEqual(validation.errors, []);
+  assert.equal(graph.graph.nodes.ROOT.kind, "parallel");
+  assert.deepEqual(graph.graph.nodes.ROOT.children, ["AUDIT_BACKEND", "ROOT_AUDIT_UI"]);
+  assert.equal(graph.graph.nodes.AUDIT_BACKEND.kind, "task");
+  assert.equal(graph.graph.nodes.AUDIT_BACKEND.goal.source, "planner");
+  assert.equal(graph.graph.nodes.ROOT.planner.requestId, "goal-plan-ROOT-1");
+  assert.deepEqual(listReadyLeafNodes(graph).map((node) => node.id), ["AUDIT_BACKEND", "ROOT_AUDIT_UI"]);
+});
+
+test("goal graph factory recursively materializes nested planner output with stable generated id collisions", () => {
+  const graph = buildGoalGraph("Ship nested planner work", {
+    title: "Nested Planner Plan",
+    createdAt: "2026-05-31T00:00:00.000Z",
+    plannerResponse: {
+      requestId: "goal-plan-ROOT-nested",
+      kind: "series",
+      title: "Nested delivery sequence",
+      children: [
+        {
+          title: "Build API",
+          kind: "parallel",
+          children: [
+            { title: "Contract" },
+            { id: "ROOT_BUILD_API_CONTRACT", title: "Pinned contract id" }
+          ]
+        },
+        {
+          idHint: "verify",
+          title: "Verify graph"
+        }
+      ]
+    }
+  });
+  const validation = validatePlanGraphFileResult(graph);
+
+  assert.deepEqual(validation.errors, []);
+  assert.deepEqual(graph.graph.nodes.ROOT.children, ["ROOT_BUILD_API", "ROOT_VERIFY"]);
+  assert.equal(graph.graph.nodes.ROOT_BUILD_API.kind, "parallel");
+  assert.deepEqual(graph.graph.nodes.ROOT_BUILD_API.children, ["ROOT_BUILD_API_CONTRACT_2", "ROOT_BUILD_API_CONTRACT"]);
+  assert.equal(graph.graph.nodes.ROOT_BUILD_API_CONTRACT_2.title, "Contract");
+  assert.equal(graph.graph.nodes.ROOT_BUILD_API_CONTRACT.title, "Pinned contract id");
+  assert.deepEqual(
+    listReadyLeafNodes(graph).map((node) => node.id),
+    ["ROOT_BUILD_API_CONTRACT", "ROOT_BUILD_API_CONTRACT_2"]
+  );
+});
+
+test("goal graph factory rejects invalid nested planner child shapes before graph write", () => {
+  const cases = [
+    {
+      name: "empty nested composite",
+      response: {
+        kind: "series",
+        title: "Empty nested",
+        children: [{ kind: "parallel", title: "Empty fanout", children: [] }]
+      },
+      code: "missing-children",
+      path: "$.children[0].children"
+    },
+    {
+      name: "duplicate nested id",
+      response: {
+        kind: "parallel",
+        title: "Duplicate nested",
+        children: [
+          { id: "DUPLICATE", title: "First" },
+          { kind: "series", title: "Second branch", children: [{ id: "DUPLICATE", title: "Second" }] }
+        ]
+      },
+      code: "duplicate-child-id",
+      path: "$.children[1].children[0].id"
+    },
+    {
+      name: "task with nested children",
+      response: {
+        kind: "series",
+        title: "Unsupported nested",
+        children: [{ kind: "task", title: "Task parent", children: [{ title: "Nested" }] }]
+      },
+      code: "unsupported-nested-children",
+      path: "$.children[0].children"
+    },
+    {
+      name: "root id collision",
+      response: {
+        kind: "series",
+        title: "Root collision",
+        children: [{ id: "ROOT", title: "Would collide with root" }]
+      },
+      code: "duplicate-child-id",
+      path: "$.children[0].id"
+    }
+  ];
+
+  for (const testCase of cases) {
+    assert.throws(
+      () => buildGoalGraph("Reject invalid nested planner output", {
+        createdAt: "2026-05-31T00:00:00.000Z",
+        plannerResponse: testCase.response
+      }),
+      (error) => {
+        assert.equal(error.name, "PlannerResponseValidationError", testCase.name);
+        assert.ok(
+          error.validation.errors.some((issue) => issue.code === testCase.code && issue.path === testCase.path),
+          testCase.name
+        );
+        return true;
+      }
+    );
+  }
+});
+
 test("CLI plan creates a valid graph and rejects unsafe inputs", async () => {
   const dir = await mkdtemp(join(tmpdir(), "plan-cli-"));
   let outsideDir;
@@ -542,6 +670,67 @@ test("CLI plan creates a valid graph and rejects unsafe inputs", async () => {
     if (outsideDir) {
       await rm(outsideDir, { recursive: true, force: true });
     }
+  }
+});
+
+test("CLI plan with fixture planner writes composite goal graphs", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "plan-fixture-cli-"));
+  let visualizer;
+  try {
+    const graphPath = join(dir, "planner", "plan.graph.json");
+    const fixturePath = join(dir, "planner-fixture.json");
+    await writeFile(fixturePath, JSON.stringify({
+      kind: "series",
+      title: "Fixture-generated implementation plan",
+      rationale: "The contract should be settled before implementation.",
+      children: [
+        { id: "GOAL_CONTRACT", title: "Define fixture contract" },
+        { id: "GOAL_IMPLEMENT", title: "Implement fixture behavior" },
+        { id: "GOAL_VERIFY", title: "Verify fixture behavior" }
+      ]
+    }, null, 2), "utf8");
+
+    const cli = await execFileAsync(process.execPath, [
+      schedulerScriptPath,
+      "plan",
+      "--goal",
+      "Build fixture planner graph",
+      "--graph",
+      graphPath,
+      "--planner-mode",
+      "auto-decompose",
+      "--planner-adapter",
+      "fixture",
+      "--planner-fixture",
+      fixturePath
+    ]);
+    const result = JSON.parse(cli.stdout);
+
+    assert.equal(result.written, true);
+    assert.equal(result.nodeCount, 4);
+    assert.equal(result.summary.totalNodes, 4);
+    assert.deepEqual(result.summary.counts, { pending: 4 });
+    assert.equal(result.graph.graph.nodes.ROOT.kind, "series");
+    assert.deepEqual(result.graph.graph.nodes.ROOT.children, ["GOAL_CONTRACT", "GOAL_IMPLEMENT", "GOAL_VERIFY"]);
+    assert.equal(result.graph.graph.nodes.ROOT.planner.requestId, "goal-plan-ROOT-1");
+    assert.notDeepEqual(result.graph.graph.nodes.ROOT.children, ["PLAN"]);
+
+    const graph = await readGraph(graphPath);
+    assert.deepEqual(listReadyLeafNodes(graph).map((node) => node.id), ["GOAL_CONTRACT"]);
+
+    const summaryCli = await execFileAsync(process.execPath, [schedulerScriptPath, "summary", "--graph", graphPath]);
+    assert.equal(JSON.parse(summaryCli.stdout).totalNodes, 4);
+    const readyCli = await execFileAsync(process.execPath, [schedulerScriptPath, "ready", "--graph", graphPath]);
+    assert.deepEqual(JSON.parse(readyCli.stdout).map((node) => node.id), ["GOAL_CONTRACT"]);
+    const diagnosticsCli = await execFileAsync(process.execPath, [schedulerScriptPath, "diagnostics", "--graph", graphPath]);
+    assert.equal(JSON.parse(diagnosticsCli.stdout).summary.totalNodes, 4);
+    await execFileAsync(process.execPath, [rendererScriptPath, "--graph", graphPath]);
+    assert.equal(existsSync(join(dirname(graphPath), "plan.html")), true);
+    visualizer = await createVisualizerServer({ graphPath, port: 0 });
+    assert.equal((await (await fetch(`${visualizer.url}/api/summary`)).json()).totalNodes, 4);
+  } finally {
+    await visualizer?.close();
+    await rm(dir, { recursive: true, force: true });
   }
 });
 

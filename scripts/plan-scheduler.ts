@@ -7,6 +7,7 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import {
   dispatchCliCommand,
   buildGoalGraph,
+  buildGoalGraphFromPlannerResponse,
   parseArgs,
   parseChildrenArgs,
   parseCodexArgs,
@@ -165,6 +166,7 @@ export {
   parseChildrenArgs,
   parseCodexArgs,
   renderCliHelp,
+  buildGoalGraphFromPlannerResponse,
   buildGoalGraph,
   resolvePlanGraphOutputPath,
   shouldStreamWorkerOutput,
