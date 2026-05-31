@@ -1,5 +1,5 @@
 import test from "node:test";
-import { assert, assertCliFails, blockNode, buildNodeWorkBranchName, buildWorkerPrompt, claimNode, collectGitDiffStat, completeNode, copyGraphFixtureToTemp, createFixturePlannerRuntime, createRawWorkerManager, createRunClone, createSourceBranch, createWorkBranch, decomposeNode, depthPriorityGraph, dirname, escapeRegExp, execFileAsync, existsSync, failNode, fixtureGraph, formatWorkerReport, gitShow, join, knownTransitionStatuses, lastHistory, listReadyLeafNodes, mkdir, mkdtemp, normalizeWorkerReport, operationalEvents, parallelWorkerIsolationGraph, parseCodexArgs, prepareBareRepository, prepareCompositionBareRepository, publishOutputRef, readFile, readGraph, readyIds, realpath, reconcileGraphStatus, recordWorkerRefMetadata, releaseExpiredLeases, renewNodeLease, resetSubtree, resolveNodeBaseRef, rm, runCodexPrompt, runGitCommand, runWorker, schedulerTransitionTable, setNodeStatus, startLeaseHeartbeat, startNode, tmpdir, waitFor, withLocalBareRemote, withTempGraph, writeCommittingWorkerRunner, writeFile, writeNoopWorkerRunner, writeWorkerIsolationGraph } from "./helpers/plan-scheduler-harness.mjs";
+import { assert, assertCliFails, blockNode, buildNodeWorkBranchName, buildWorkerPrompt, claimNode, collectGitDiffStat, completeNode, copyGraphFixtureToTemp, createFixturePlannerRuntime, createRawWorkerManager, createRunClone, createSourceBranch, createWorkBranch, decomposeNode, depthPriorityGraph, dirname, escapeRegExp, execFileAsync, existsSync, failNode, exportOperationalEvents, fixtureGraph, formatWorkerReport, gitShow, join, knownTransitionStatuses, lastHistory, listReadyLeafNodes, mkdir, mkdtemp, normalizeWorkerReport, operationalEvents, parallelWorkerIsolationGraph, parseCodexArgs, prepareBareRepository, prepareCompositionBareRepository, publishOutputRef, readFile, readGraph, readyIds, realpath, reconcileGraphStatus, recordWorkerRefMetadata, releaseExpiredLeases, renewNodeLease, resetSubtree, resolveNodeBaseRef, rm, runCodexPrompt, runGitCommand, runWorker, schedulerTransitionTable, setNodeStatus, startLeaseHeartbeat, startNode, tmpdir, waitFor, withLocalBareRemote, withTempGraph, writeCommittingWorkerRunner, writeFile, writeNoopWorkerRunner, writeWorkerIsolationGraph } from "./helpers/plan-scheduler-harness.mjs";
 
 test("worker report formatting includes auditable fields and stable volatile normalization", () => {
   const report = normalizeWorkerReport(formatWorkerReport({
@@ -1182,6 +1182,7 @@ test("completeNode backfills git footprint metadata from output refs", async () 
   await withLocalBareRemote(async ({ dir, sourcePath, remotePath }) => {
     const graphDir = join(dir, "graph");
     const graphPath = join(graphDir, "plan.graph.json");
+    const credentialRemote = "https://user:secret-token@example.com/org/repo.git";
     await mkdir(graphDir);
     const outputRef = await createSourceBranch({
       sourcePath,
@@ -1221,7 +1222,9 @@ test("completeNode backfills git footprint metadata from output refs", async () 
       runId: "run-direct",
       report: "reports/A.md",
       refMetadata: {
+        remote: credentialRemote,
         bareRepo: bareRepoPath,
+        cloneCwd: sourcePath,
         outputRef
       }
     });
@@ -1232,8 +1235,19 @@ test("completeNode backfills git footprint metadata from output refs", async () 
     assert.deepEqual(node.vendorMetadata, { preserved: true });
     assert.equal(node.outputRef.name, outputRef.name);
     assert.deepEqual(node.outputRef.diffStat, { filesChanged: 1, additions: 1, deletions: 0, totalChanges: 1 });
+    assert.deepEqual(node.outputRef.files, [
+      { path: "direct.txt", changeType: "added", additions: 1, deletions: 0, totalChanges: 1 }
+    ]);
     assert.deepEqual(node.gitFootprint.diffStat, node.outputRef.diffStat);
+    assert.deepEqual(node.gitFootprint.files, node.outputRef.files);
     assert.equal(node.gitFootprint.headRef.name, outputRef.name);
+    assert.equal(node.workspace.remote, "https://[REDACTED]@example.com/org/repo.git");
+    assert.doesNotMatch(JSON.stringify(node), /secret-token/);
+    const cloneEvent = node.history.find((entry) => entry.event === "clone-prepared");
+    assert.equal(cloneEvent.remote, "https://[REDACTED]@example.com/org/repo.git");
+    const exportedCloneEvent = exportOperationalEvents(completed, { nodeId: "A", event: "clone-prepared", limit: 1 })[0];
+    assert.equal(exportedCloneEvent.details.remote, "https://[REDACTED]@example.com/org/repo.git");
+    assert.doesNotMatch(JSON.stringify(exportedCloneEvent), /secret-token/);
     const doneEvent = lastHistory(node);
     assert.equal(doneEvent.event, "done");
     assert.equal(doneEvent.diffStatCollected, true);
@@ -1242,13 +1256,228 @@ test("completeNode backfills git footprint metadata from output refs", async () 
   });
 });
 
-test("completeNode keeps successful completion when git footprint collection fails", async () => {
-  await withLocalBareRemote(async ({ dir }) => {
+test("completeNode stores binary-file git footprint metadata from output refs", async () => {
+  await withLocalBareRemote(async ({ dir, sourcePath, remotePath }) => {
     const graphDir = join(dir, "graph");
     const graphPath = join(graphDir, "plan.graph.json");
     await mkdir(graphDir);
+    const outputRef = await createFixtureBranch({
+      sourcePath,
+      remotePath,
+      branchName: "binary-output",
+      binaryFiles: { "assets/logo.bin": Buffer.from([0, 1, 2, 3, 4]) },
+      message: "binary output"
+    });
+    const bareRepoPath = await prepareCompositionBareRepository({ graphDir, remotePath });
+    await writeFile(graphPath, `${JSON.stringify({
+      graphVersion: 1,
+      scheduler: { remote: remotePath, baseRef: "refs/heads/main" },
+      graph: {
+        root: "A",
+        nodes: {
+          A: {
+            title: "Binary complete",
+            kind: "task",
+            status: "running",
+            lease: {
+              session: "codex-A",
+              runId: "run-binary",
+              claimedAt: "2026-05-31T00:00:00.000Z",
+              expiresAt: "2999-01-01T00:00:00.000Z"
+            }
+          }
+        }
+      }
+    }, null, 2)}\n`, "utf8");
+
+    await completeNode(graphPath, {
+      nodeId: "A",
+      session: "codex-A",
+      runId: "run-binary",
+      refMetadata: {
+        bareRepo: bareRepoPath,
+        outputRef
+      }
+    });
+
+    const graph = await readGraph(graphPath);
+    const node = graph.graph.nodes.A;
+    assert.equal(node.status, "done");
+    assert.deepEqual(node.outputRef.diffStat, { filesChanged: 1, additions: 0, deletions: 0, totalChanges: 0, binaryFiles: 1 });
+    assert.deepEqual(node.outputRef.files, [
+      {
+        path: "assets/logo.bin",
+        changeType: "added",
+        additions: null,
+        deletions: null,
+        totalChanges: null,
+        binary: true
+      }
+    ]);
+    assert.deepEqual(node.gitFootprint.files, node.outputRef.files);
+    assert.equal(lastHistory(node).diffStatCollected, true);
+  });
+});
+
+test("series completion aggregates child git footprints from local output refs", async () => {
+  await withLocalBareRemote(async ({ dir, sourcePath, remotePath }) => {
+    const graphDir = join(dir, "graph");
+    const graphPath = join(graphDir, "plan.graph.json");
+    await mkdir(graphDir);
+    const firstOutput = await createFixtureBranch({
+      sourcePath,
+      remotePath,
+      branchName: "spg/node/S1/run-series-one",
+      textFiles: { "series-one.txt": "one\n" },
+      message: "series one"
+    });
+    const secondOutput = await createFixtureBranch({
+      sourcePath,
+      remotePath,
+      branchName: "spg/node/S2/run-series-two",
+      baseRef: firstOutput.name,
+      textFiles: { "series-two.txt": "two\nthree\n" },
+      message: "series two"
+    });
+    const bareRepoPath = await prepareCompositionBareRepository({ graphDir, remotePath });
+    await writeFile(graphPath, `${JSON.stringify({
+      graphVersion: 1,
+      scheduler: { remote: remotePath, baseRef: "refs/heads/main" },
+      graph: {
+        root: "SERIES",
+        nodes: {
+          SERIES: { title: "Series parent", kind: "series", status: "pending", children: ["S1", "S2"] },
+          S1: {
+            title: "Series child one",
+            kind: "task",
+            status: "running",
+            lease: { session: "codex-S1", runId: "run-s1", claimedAt: "2026-05-31T00:00:00.000Z", expiresAt: "2999-01-01T00:00:00.000Z" }
+          },
+          S2: {
+            title: "Series child two",
+            kind: "task",
+            status: "running",
+            lease: { session: "codex-S2", runId: "run-s2", claimedAt: "2026-05-31T00:00:00.000Z", expiresAt: "2999-01-01T00:00:00.000Z" }
+          }
+        }
+      }
+    }, null, 2)}\n`, "utf8");
+
+    await completeNode(graphPath, {
+      nodeId: "S1",
+      session: "codex-S1",
+      runId: "run-s1",
+      refMetadata: { bareRepo: bareRepoPath, outputRef: firstOutput }
+    });
+    await completeNode(graphPath, {
+      nodeId: "S2",
+      session: "codex-S2",
+      runId: "run-s2",
+      refMetadata: { bareRepo: bareRepoPath, outputRef: secondOutput }
+    });
+
+    const graph = await readGraph(graphPath);
+    const parent = graph.graph.nodes.SERIES;
+    assert.equal(parent.status, "done");
+    assert.equal(parent.outputRef.name, secondOutput.name);
+    assert.equal(parent.gitFootprint.source, "git-diff");
+    assert.deepEqual(parent.gitFootprint.diffStat, { filesChanged: 2, additions: 3, deletions: 0, totalChanges: 3 });
+    assert.deepEqual(parent.gitFootprint.files.map((file) => [file.path, file.additions]), [
+      ["series-one.txt", 1],
+      ["series-two.txt", 2]
+    ]);
+    assert.deepEqual(parent.gitFootprint.childAggregate.diffStat, { filesChanged: 2, additions: 3, deletions: 0, totalChanges: 3 });
+    assert.deepEqual(parent.gitFootprint.childAggregate.aggregation.includedChildIds, ["S1", "S2"]);
+    assert.deepEqual(parent.integrationRef.inputRefs.map((input) => input.outputRef), [firstOutput.name, secondOutput.name]);
+    const publishEvent = parent.history.find((entry) => entry.event === "parent-ref-published");
+    assert.equal(publishEvent.diffStatCollected, true);
+    assert.deepEqual(publishEvent.diffStat, parent.gitFootprint.diffStat);
+  });
+});
+
+test("parallel completion aggregates child git footprints from local output refs", async () => {
+  await withLocalBareRemote(async ({ dir, sourcePath, remotePath }) => {
+    const graphDir = join(dir, "graph");
+    const graphPath = join(graphDir, "plan.graph.json");
+    await mkdir(graphDir);
+    const leftOutput = await createFixtureBranch({
+      sourcePath,
+      remotePath,
+      branchName: "spg/node/A/run-parallel-left",
+      textFiles: { "parallel-left.txt": "left\n" },
+      message: "parallel left"
+    });
+    const rightOutput = await createFixtureBranch({
+      sourcePath,
+      remotePath,
+      branchName: "spg/node/B/run-parallel-right",
+      textFiles: { "parallel-right.txt": "right\nagain\n" },
+      message: "parallel right"
+    });
+    const bareRepoPath = await prepareCompositionBareRepository({ graphDir, remotePath });
+    await writeFile(graphPath, `${JSON.stringify({
+      graphVersion: 1,
+      scheduler: { remote: remotePath, baseRef: "refs/heads/main" },
+      graph: {
+        root: "P",
+        nodes: {
+          P: { title: "Parallel parent", kind: "parallel", status: "pending", children: ["A", "B"] },
+          A: {
+            title: "Branch A",
+            kind: "task",
+            status: "running",
+            lease: { session: "codex-A", runId: "run-a", claimedAt: "2026-05-31T00:00:00.000Z", expiresAt: "2999-01-01T00:00:00.000Z" }
+          },
+          B: {
+            title: "Branch B",
+            kind: "task",
+            status: "running",
+            lease: { session: "codex-B", runId: "run-b", claimedAt: "2026-05-31T00:00:00.000Z", expiresAt: "2999-01-01T00:00:00.000Z" }
+          }
+        }
+      }
+    }, null, 2)}\n`, "utf8");
+
+    await completeNode(graphPath, {
+      nodeId: "A",
+      session: "codex-A",
+      runId: "run-a",
+      refMetadata: { bareRepo: bareRepoPath, outputRef: leftOutput }
+    });
+    await completeNode(graphPath, {
+      nodeId: "B",
+      session: "codex-B",
+      runId: "run-b",
+      refMetadata: { bareRepo: bareRepoPath, outputRef: rightOutput }
+    });
+
+    const graph = await readGraph(graphPath);
+    const parent = graph.graph.nodes.P;
+    assert.equal(parent.status, "done");
+    assert.equal(parent.outputRef.source, "parallel-integration");
+    assert.equal(parent.outputRef.name, parent.integrationRef.publishedOutputRef);
+    assert.deepEqual(parent.gitFootprint.diffStat, { filesChanged: 2, additions: 3, deletions: 0, totalChanges: 3 });
+    assert.deepEqual(parent.gitFootprint.files.map((file) => [file.path, file.additions]), [
+      ["parallel-left.txt", 1],
+      ["parallel-right.txt", 2]
+    ]);
+    assert.deepEqual(parent.gitFootprint.childAggregate.diffStat, parent.gitFootprint.diffStat);
+    assert.deepEqual(parent.gitFootprint.childAggregate.aggregation.includedChildIds, ["A", "B"]);
+    assert.deepEqual(parent.integrationRef.inputRefs.map((input) => input.outputRef), [leftOutput.name, rightOutput.name]);
+    assert.equal(await gitShow(bareRepoPath, parent.outputRef.name, "parallel-left.txt"), "left\n");
+    assert.equal(await gitShow(bareRepoPath, parent.outputRef.name, "parallel-right.txt"), "right\nagain\n");
+  });
+});
+
+test("completeNode keeps successful completion when git footprint collection fails", async () => {
+  await withLocalBareRemote(async ({ dir, remotePath }) => {
+    const graphDir = join(dir, "graph");
+    const graphPath = join(graphDir, "plan.graph.json");
+    await mkdir(graphDir);
+    const bareRepoPath = await prepareCompositionBareRepository({ graphDir, remotePath });
     const graph = {
       graphVersion: 1,
+      scheduler: { remote: remotePath, baseRef: "refs/heads/main" },
       graph: {
         root: "A",
         nodes: {
@@ -1274,10 +1503,9 @@ test("completeNode keeps successful completion when git footprint collection fai
       session: "codex-A",
       runId: "run-direct-warning",
       refMetadata: {
-        bareRepo: join(dir, "missing.git"),
+        bareRepo: bareRepoPath,
         outputRef: {
-          name: "refs/heads/missing-output",
-          commit: "1".repeat(40)
+          name: "refs/heads/missing-output"
         }
       }
     });
@@ -1287,10 +1515,10 @@ test("completeNode keeps successful completion when git footprint collection fai
     assert.equal(node.status, "done");
     assert.equal(node.outputRef.name, "refs/heads/missing-output");
     assert.equal(node.outputRef.diffStat, undefined);
-    assert.match(node.gitFootprintWarning, /Git diffstat omitted/);
+    assert.match(node.gitFootprintWarning, /Git diffstat omitted: missing head ref refs\/heads\/missing-output/);
     const doneEvent = lastHistory(node);
     assert.equal(doneEvent.diffStatCollected, false);
-    assert.match(doneEvent.gitFootprintWarning, /Git diffstat omitted/);
+    assert.match(doneEvent.gitFootprintWarning, /Git diffstat omitted: missing head ref refs\/heads\/missing-output/);
     assert.equal("files" in doneEvent, false);
   });
 });
@@ -2735,3 +2963,38 @@ test("default codex worker flags are passed through codex exec", () => {
     /Missing --codex-arg value\. Use --codex-arg=value for values that start with '-'\./
   );
 });
+
+async function createFixtureBranch({
+  sourcePath,
+  remotePath,
+  branchName,
+  baseRef = "main",
+  textFiles = {},
+  binaryFiles = {},
+  message
+}) {
+  await execFileAsync("git", ["checkout", "-B", branchName, baseRef], { cwd: sourcePath });
+  for (const [filePath, contents] of Object.entries(textFiles)) {
+    const fileDir = dirname(filePath);
+    if (fileDir !== ".") {
+      await mkdir(join(sourcePath, fileDir), { recursive: true });
+    }
+    await writeFile(join(sourcePath, filePath), contents, "utf8");
+  }
+  for (const [filePath, contents] of Object.entries(binaryFiles)) {
+    const fileDir = dirname(filePath);
+    if (fileDir !== ".") {
+      await mkdir(join(sourcePath, fileDir), { recursive: true });
+    }
+    await writeFile(join(sourcePath, filePath), contents);
+  }
+  await execFileAsync("git", ["add", "-A"], { cwd: sourcePath });
+  await execFileAsync("git", ["commit", "-m", message], { cwd: sourcePath });
+  await execFileAsync("git", ["push", remotePath, `${branchName}:refs/heads/${branchName}`], { cwd: sourcePath });
+  const { stdout } = await execFileAsync("git", ["rev-parse", "HEAD"], { cwd: sourcePath });
+  await execFileAsync("git", ["checkout", "main"], { cwd: sourcePath });
+  return {
+    name: `refs/heads/${branchName}`,
+    commit: stdout.trim()
+  };
+}
