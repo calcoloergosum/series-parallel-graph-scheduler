@@ -102,6 +102,7 @@ export const {
   reconcileGraphStatus,
   recordWorkerRefMetadata,
   releaseExpiredLeases,
+  regeneratePlannerPreview,
   rejectPlannerPreview,
   renewNodeLease,
   resetReachable,

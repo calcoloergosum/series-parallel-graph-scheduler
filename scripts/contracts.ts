@@ -1117,7 +1117,8 @@ type VisualizerActionId =
   | "reset-reachable"
   | "decompose"
   | "apply-preview"
-  | "reject-preview";
+  | "reject-preview"
+  | "regenerate-preview";
 
 export interface VisualizerActionConfirmation {
   required: boolean;

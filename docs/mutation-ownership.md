@@ -37,6 +37,7 @@ This section is generated from `schedulerTransitionTable` in `scripts/node-mutat
 | `done` | worker | leaf | `claimed`, `running`, `blocked`, `review` | `done` | requires matching session or run id when the node is leased; clears any lease | `completeNode` |
 | `fail` | worker | leaf | `claimed`, `running`, `blocked`, `review` | `failed` | requires matching session or run id when the node is leased; clears any lease | `failNode` |
 | `reconcile` | system | non-leaf whose child subtrees are all done | `pending`, `claimed`, `running`, `blocked`, `review`, `failed` | `done` | does not inspect or require leases | `reconcileGraphStatus` |
+| `regenerate-preview` | operator | claimed, running, or blocked leaf | `claimed`, `running`, `blocked` | `blocked` | requires matching session or run id when the node is leased; stores a fresh pendingPlannerPreview without creating children | `regeneratePlannerPreview` |
 | `reject-preview` | operator | blocked or pending leaf with pendingPlannerPreview | `blocked`, `pending` | `pending` | does not require owner credentials; clears any lease and preview metadata without creating children | `rejectPlannerPreview` |
 | `release-expired` | system | nodes with expired leases | `claimed`, `running` | `pending` | requires an expired lease; clears the lease | `releaseExpiredLeases` |
 | `renew` | worker | leased leaf | `claimed`, `running`, `blocked`, `review` | `same` | requires an existing lease and matching session or run id | `renewNodeLease` |

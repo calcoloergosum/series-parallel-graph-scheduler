@@ -450,6 +450,69 @@ test("visualizer planner preview routes apply or reject stored previews", async 
   });
 });
 
+test("visualizer planner preview route regenerates and stale previews are rejected", async () => {
+  await withTempGraph(async (graphPath, dir) => {
+    const visualizer = await createVisualizerServer({ graphPath, port: 0 });
+    try {
+      const postNode = (route, body) => postNodeOrFail(visualizer.url, route, body);
+      const claim = await postNode("claim", { nodeId: "A", session: "codex-api-preview" });
+      await blockNode(graphPath, {
+        nodeId: "A",
+        session: "codex-api-preview",
+        runId: claim.runId,
+        question: "Approve planner preview?",
+        plannerPreview: {
+          requestId: "api-preview-old",
+          proposedKind: "series",
+          childIds: ["A_OLD"],
+          response: { kind: "series", title: "Old preview", children: [{ id: "A_OLD", title: "Old child" }] },
+          decompose: { kind: "series", children: [{ id: "A_OLD", title: "Old child" }] }
+        }
+      });
+      await writeFile(join(dir, "planner-fixture.json"), JSON.stringify({
+        "api-preview-regenerated": {
+          kind: "parallel",
+          title: "Regenerated preview",
+          children: [{ id: "A_REGEN", title: "Regenerated child" }]
+        }
+      }), "utf8");
+
+      const regenerated = await postNode("regenerate-preview", {
+        nodeId: "A",
+        session: "codex-api-preview",
+        runId: claim.runId,
+        requestId: "api-preview-regenerated",
+        plannerFixturePath: "planner-fixture.json"
+      });
+      assert.equal(regenerated.status, "blocked");
+      assert.deepEqual(regenerated.childIds, ["A_REGEN"]);
+      assertSkippedSlack(regenerated.slack);
+      let graph = await assertSummaryMatchesGraph(visualizer.url, regenerated.summary, graphPath);
+      assert.equal(graph.graph.nodes.A.pendingPlannerPreview.requestId, "api-preview-regenerated");
+      assert.equal(graph.graph.nodes.A.pendingPlannerPreview.decompose.kind, "parallel");
+      assert.equal(latestHistory(graph.graph.nodes.A).event, "planner-preview-regenerated");
+
+      graph.graphVersion += 1;
+      await writeFile(graphPath, JSON.stringify(graph, null, 2), "utf8");
+      const stale = await postJson(`${visualizer.url}/api/node/apply-preview`, {
+        nodeId: "A",
+        session: "codex-api-preview",
+        runId: claim.runId
+      });
+      assert.equal(stale.status, 500);
+      assert.match(await stale.text(), /Stale planner preview/);
+
+      graph = await readGraph(graphPath);
+      graph.graphVersion = graph.graph.nodes.A.pendingPlannerPreview.graphVersion;
+      await writeFile(graphPath, JSON.stringify(graph, null, 2), "utf8");
+      const applied = await postNode("apply-preview", { nodeId: "A", session: "codex-api-preview", runId: claim.runId });
+      assert.deepEqual(applied.children, ["A_REGEN"]);
+    } finally {
+      await visualizer.close();
+    }
+  });
+});
+
 test("visualizer done route rejects report body paths outside the graph directory", async () => {
   await withTempGraph(async (graphPath, dir) => {
     const visualizer = await createVisualizerServer({ graphPath, port: 0 });
@@ -1849,11 +1912,34 @@ test("visualizer payload includes selected-node action availability metadata", a
     detail = payload.nodes.find((node) => node.id === "A");
     assert.equal(actionById(detail, "answer").disabledReason, undefined);
     assert.match(actionById(detail, "done").disabledReason, /no worker credentials/);
+    assert.match(actionById(detail, "regenerate-preview").disabledReason, /no worker credentials/);
     assert.deepEqual(payload.actionPolicy.leaseProtectedWorkerActions, {
       whenCredentialsAbsent: "disable-leased-node-actions",
       requiredCredential: "matching-session-or-runId"
     });
     assert.equal(payload.actionPolicy.serverAuthority, "scheduler-mutation-guards");
+
+    const graph = await readGraph(graphPath);
+    graph.graph.nodes.A.pendingPlannerPreview = {
+      requestId: "stale-action-preview",
+      graphVersion: graph.graphVersion,
+      nodeState: {
+        status: "blocked",
+        kind: "task",
+        lease: { session: graph.graph.nodes.A.lease.session, runId: graph.graph.nodes.A.lease.runId },
+        question: "Proceed?"
+      },
+      proposedKind: "series",
+      childIds: ["A_PREVIEW"],
+      response: { kind: "series", title: "Preview", children: [{ id: "A_PREVIEW", title: "Preview child" }] },
+      decompose: { kind: "series", children: [{ id: "A_PREVIEW", title: "Preview child" }] }
+    };
+    graph.graphVersion += 1;
+    await writeFile(graphPath, JSON.stringify(graph, null, 2), "utf8");
+    payload = await buildVisualizerPayload(graphPath);
+    detail = payload.nodes.find((node) => node.id === "A");
+    assert.match(actionById(detail, "apply-preview").disabledReason, /stale/);
+    assert.match(actionById(detail, "decompose").disabledReason, /stale/);
   });
 });
 

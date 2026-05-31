@@ -265,6 +265,15 @@ export function renderVisualizerHtml(): string {
       gap: 8px;
       margin-top: 10px;
     }
+    .planner-result {
+      margin-top: 10px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 9px;
+      background: #fbfcfd;
+      overflow-wrap: anywhere;
+      word-break: break-word;
+    }
     .manager-form {
       display: grid;
       gap: 9px;
@@ -469,6 +478,10 @@ export function renderVisualizerHtml(): string {
       gap: 8px;
       margin: 10px 0;
     }
+    .selected-actions button[disabled] {
+      cursor: not-allowed;
+      opacity: 0.55;
+    }
     .inspector-section {
       margin-top: 14px;
       padding-top: 12px;
@@ -589,6 +602,13 @@ export function renderVisualizerHtml(): string {
       font-size: 11px;
       white-space: pre-wrap;
     }
+    .planner-preview-list {
+      display: grid;
+      gap: 6px;
+      margin: 8px 0;
+      padding: 0;
+      list-style: none;
+    }
     [data-modal-error],
     .action-error {
       color: var(--failed);
@@ -643,6 +663,29 @@ export function renderVisualizerHtml(): string {
       <div id="graph" class="graph-viewport" role="region" aria-label="Scrollable graph diagram" tabindex="0"></div>
     </section>
     <aside class="panel" aria-label="Scheduler controls and status lists">
+      <section class="sidebar-section" aria-labelledby="goal-planner-heading">
+        <h2 id="goal-planner-heading">Goal Planner</h2>
+        <form id="goal-planner-form" class="manager-form">
+          <div class="field">
+            <label for="goal-text">Goal</label>
+            <textarea id="goal-text" name="goal" placeholder="Describe the outcome to plan" required></textarea>
+          </div>
+          <div class="field">
+            <label for="goal-title">Title</label>
+            <input id="goal-title" name="title" autocomplete="off" placeholder="Optional plan title">
+          </div>
+          <div class="field">
+            <label for="goal-planner-fixture">Planner Fixture</label>
+            <input id="goal-planner-fixture" name="plannerFixturePath" autocomplete="off" placeholder="Optional fixture path relative to graph">
+          </div>
+          <div id="goal-planner-error" class="action-error" role="alert"></div>
+          <div class="button-row">
+            <button class="secondary" type="submit" name="intent" value="preview">Preview</button>
+            <button type="submit" name="intent" value="create">Create Graph</button>
+          </div>
+        </form>
+        <div id="goal-planner-result" class="planner-result">No goal preview generated.</div>
+      </section>
       <section class="sidebar-section" aria-labelledby="worker-manager-heading">
         <h2 id="worker-manager-heading">Worker Manager</h2>
         <div id="worker-manager-summary" class="meta"></div>
@@ -852,6 +895,64 @@ export function renderVisualizerHtml(): string {
       children ? "children " + children : "",
       preview.report ? "report " + preview.report : ""
     ].filter(Boolean).join(" / ");
+  }
+
+  function nodeAction(node, actionId) {
+    return (node.actions || []).find((action) => action.id === actionId);
+  }
+
+  function actionableDisabledReason(action, node) {
+    if (!action?.disabledReason) {
+      return "";
+    }
+    if (node?.lease && /no worker credentials/.test(action.disabledReason)) {
+      return "";
+    }
+    return action.disabledReason;
+  }
+
+  function previewNodeState(node) {
+    return {
+      status: node.status,
+      kind: node.kind,
+      children: Array.isArray(node.children) && node.children.length ? [...node.children] : undefined,
+      lease: node.lease ? { session: node.lease.session, runId: node.lease.runId } : undefined,
+      blockedReason: node.blockedReason,
+      question: node.question,
+      report: node.report
+    };
+  }
+
+  function sortJsonValue(value) {
+    if (Array.isArray(value)) {
+      return value.map(sortJsonValue);
+    }
+    if (value && typeof value === "object") {
+      return Object.fromEntries(Object.entries(value)
+        .filter((entry) => entry[1] !== undefined)
+        .sort((left, right) => left[0].localeCompare(right[0]))
+        .map((entry) => [entry[0], sortJsonValue(entry[1])]));
+    }
+    return value;
+  }
+
+  function stableJsonStringify(value) {
+    return JSON.stringify(sortJsonValue(value));
+  }
+
+  function clientPreviewFreshnessReason(node) {
+    const preview = node.pendingPlannerPreview;
+    if (!preview) {
+      return "";
+    }
+    const graphVersion = latestPayload?.summary?.graphVersion;
+    if (preview.graphVersion !== undefined && graphVersion !== undefined && preview.graphVersion !== graphVersion) {
+      return "Planner preview is stale: graph version changed from " + preview.graphVersion + " to " + graphVersion + ".";
+    }
+    if (stableJsonStringify(preview.nodeState || {}) !== stableJsonStringify(previewNodeState(node) || {})) {
+      return "Planner preview is stale: node state changed.";
+    }
+    return "";
   }
 
   function joinList(values) {
@@ -1610,6 +1711,41 @@ export function renderVisualizerHtml(): string {
     parent.append(section);
   }
 
+  function appendPlannerPreviewSection(parent, node) {
+    const section = document.createElement("section");
+    section.className = "inspector-section";
+    const heading = document.createElement("h3");
+    heading.textContent = "Planner Preview";
+    section.append(heading);
+
+    const preview = node.pendingPlannerPreview;
+    if (!preview) {
+      const empty = document.createElement("p");
+      empty.className = "meta";
+      empty.textContent = "No pending planner preview.";
+      section.append(empty);
+      parent.append(section);
+      return;
+    }
+
+    appendMetaLine(section, "request", preview.requestId);
+    appendMetaLine(section, "kind", preview.decompose?.kind || preview.proposedKind);
+    appendMetaLine(section, "freshness", clientPreviewFreshnessReason(node) || "fresh");
+    const children = Array.isArray(preview.decompose?.children) ? preview.decompose.children : [];
+    if (children.length) {
+      const list = document.createElement("ul");
+      list.className = "planner-preview-list";
+      for (const child of children) {
+        const item = document.createElement("li");
+        item.className = "meta";
+        item.textContent = child.id + ": " + (child.title || child.id);
+        list.append(item);
+      }
+      section.append(list);
+    }
+    parent.append(section);
+  }
+
   function renderFilterSummary(visibleReady, visibleWorking, visibleWorkers) {
     const query = filters.query ? ' / search "' + filters.query + '"' : "";
     const message = "Showing " + visibleReady.length + " ready, " + visibleWorking.length + " active, " + visibleWorkers.length + " workers" + query + ".";
@@ -1640,13 +1776,20 @@ export function renderVisualizerHtml(): string {
     document.getElementById("start-selected-worker").disabled = !ready;
     summary.textContent = ready ? "Selected: " + id + " is ready." : "Selected: " + id + " is " + (node.status || "pending") + ".";
     const children = Array.isArray(node.children) ? node.children.join(", ") : "";
-    const actions = [
-      ["claim-selected", "Claim Selected"],
-      ["start", "Start"],
-      ["block", "Block"],
-      ["reset", "Reset"],
-      ...(node.pendingPlannerPreview ? [["apply-preview", "Apply Preview"], ["reject-preview", "Reject Preview"]] : []),
-      ...((node.status === "claimed" || node.status === "running" || node.status === "blocked") && !children ? [["decompose", "Decompose"]] : [])
+    const previewReason = clientPreviewFreshnessReason(node);
+    const actionControls = [
+      { action: "claim-selected", policy: "claim", label: "Claim Selected" },
+      { action: "start", policy: "start", label: "Start" },
+      { action: "block", policy: "block", label: "Block" },
+      { action: "reset", policy: "reset", label: "Reset" },
+      { action: "decompose", policy: "decompose", label: "Split Series" },
+      { action: "split-parallel", policy: "decompose", label: "Split Parallel" },
+      ...(node.pendingPlannerPreview ? [
+        { action: "planner-preview", policy: "apply-preview", label: "Planner Preview", ignoreDisabled: true },
+        { action: "apply-preview", policy: "apply-preview", label: "Apply Preview" },
+        { action: "reject-preview", policy: "reject-preview", label: "Reject Preview" }
+      ] : []),
+      { action: "regenerate-preview", policy: "regenerate-preview", label: "Regenerate" }
     ];
     const history = (node.history || []).slice().reverse().map((event) => event.event || "event").join(", ");
     details.textContent = "";
@@ -1667,15 +1810,29 @@ export function renderVisualizerHtml(): string {
     const actionWrap = document.createElement("div");
     actionWrap.className = "selected-actions";
     actionWrap.setAttribute("aria-label", "Selected node actions");
-    for (const [action, label] of actions) {
+    for (const control of actionControls) {
+      const policy = nodeAction(node, control.policy);
+      let disabledReason = control.ignoreDisabled ? "" : (previewReason && (control.policy === "apply-preview" || control.policy === "decompose") ? previewReason : actionableDisabledReason(policy, node));
+      const previewKind = node.pendingPlannerPreview?.decompose?.kind || node.pendingPlannerPreview?.proposedKind;
+      if (!disabledReason && control.policy === "decompose" && previewKind) {
+        const requestedKind = control.action === "split-parallel" ? "parallel" : "series";
+        disabledReason = requestedKind === previewKind ? "" : "Pending planner preview proposed " + previewKind + "; reject or regenerate before using a different split.";
+      }
       const button = document.createElement("button");
       button.className = "secondary";
       button.type = "button";
-      button.dataset.nodeAction = action;
-      button.textContent = label;
+      button.dataset.nodeAction = control.action;
+      button.textContent = control.label;
+      if (disabledReason) {
+        button.disabled = true;
+        button.title = disabledReason;
+        button.setAttribute("aria-label", control.label + ": " + disabledReason);
+      }
       actionWrap.append(button);
     }
     details.append(actionWrap);
+
+    appendPlannerPreviewSection(details, node);
 
     appendMetaLine(details, "kind", node.kind || "task");
     appendMetaLine(details, "goal", detailGoalText(node));
@@ -1758,6 +1915,24 @@ export function renderVisualizerHtml(): string {
     const message = routeErrorMessage(prefix, error);
     document.getElementById("subtitle").textContent = message;
     announce(message);
+  }
+
+  function renderGoalPlannerResult(result) {
+    const container = document.getElementById("goal-planner-result");
+    if (!result) {
+      container.textContent = "No goal preview generated.";
+      return;
+    }
+    const root = result.graph?.graph?.root || result.rootId || "unknown";
+    const rootNode = result.graph?.graph?.nodes?.[root] || {};
+    const children = Array.isArray(rootNode.children) ? rootNode.children.join(", ") : "";
+    container.innerHTML =
+      '<strong>' + escapeHtml(result.written ? "Created graph" : "Preview graph") + '</strong>' +
+      metaLine("path", result.graphPath) +
+      metaLine("root", root) +
+      metaLine("nodes", result.nodeCount ?? result.summary?.totalNodes) +
+      metaLine("title", result.graph?.title) +
+      metaLine("children", children || "none");
   }
 
   function render(payload) {
@@ -1851,6 +2026,10 @@ export function renderVisualizerHtml(): string {
       });
       return;
     }
+    if (action === "planner-preview") {
+      openPlannerPreviewModal(entry);
+      return;
+    }
     if (action === "reject-preview") {
       openActionModal({
         title: "Reject Preview " + id,
@@ -1863,9 +2042,46 @@ export function renderVisualizerHtml(): string {
       });
       return;
     }
-    if (action === "decompose") {
-      openDecomposeModal(entry);
+    if (action === "regenerate-preview") {
+      openActionModal({
+        title: "Regenerate Preview " + id,
+        submitLabel: "Regenerate",
+        fields: [
+          ...ownerFields(node),
+          { name: "requestId", label: "Request Id", value: "" },
+          { name: "plannerFixturePath", label: "Planner Fixture", value: "" },
+          { name: "report", label: "Report", value: node.pendingPlannerPreview?.report || node.report || "" }
+        ],
+        onSubmit: (values) => apiPost("/api/regenerate-preview", {
+          nodeId: id,
+          session: values.session,
+          runId: values.runId,
+          requestId: values.requestId || undefined,
+          plannerFixturePath: values.plannerFixturePath || undefined,
+          report: values.report || undefined
+        })
+      });
+      return;
     }
+    if (action === "decompose") {
+      openDecomposeModal(entry, "series");
+      return;
+    }
+    if (action === "split-parallel") {
+      openDecomposeModal(entry, "parallel");
+    }
+  }
+
+  function openPlannerPreviewModal(entry) {
+    const root = document.getElementById("modal-root");
+    const preview = entry.node.pendingPlannerPreview;
+    root.innerHTML = '<div class="modal-backdrop"><section class="modal-dialog" role="dialog" aria-modal="true" aria-labelledby="planner-preview-modal-title">' +
+      '<h2 id="planner-preview-modal-title">Planner Preview ' + escapeHtml(entry.id) + '</h2>' +
+      '<pre class="decompose-preview">' + escapeHtml(JSON.stringify(preview || null, null, 2)) + '</pre>' +
+      '<div class="button-row"><button class="secondary" type="button" data-modal-cancel>Close</button></div>' +
+      '</section></div>';
+    root.querySelector("[data-modal-cancel]").addEventListener("click", closeModal);
+    root.querySelector("[data-modal-cancel]").focus();
   }
 
   function decomposeRowHtml(child, index) {
@@ -1929,11 +2145,11 @@ export function renderVisualizerHtml(): string {
     }
   }
 
-  function openDecomposeModal(entry) {
+  function openDecomposeModal(entry, forcedKind) {
     const root = document.getElementById("modal-root");
     const node = entry.node;
     const preview = node.pendingPlannerPreview?.decompose;
-    const initialKind = preview?.kind || "series";
+    const initialKind = forcedKind || preview?.kind || "series";
     const initialChildren = Array.isArray(preview?.children) && preview.children.length
       ? preview.children
       : [{ id: nextChildId(entry.id), title: "" }];
@@ -2050,6 +2266,42 @@ export function renderVisualizerHtml(): string {
       showRouteError("Worker start failed", error);
     } finally {
       button.disabled = false;
+    }
+  });
+
+  document.getElementById("goal-planner-form").addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const form = event.currentTarget;
+    const intent = event.submitter?.value || "preview";
+    const error = document.getElementById("goal-planner-error");
+    const buttons = form.querySelectorAll("button[type=submit]");
+    const body = {
+      goal: form.goal.value.trim(),
+      title: form.title.value.trim() || undefined,
+      plannerFixturePath: form.plannerFixturePath.value.trim() || undefined,
+      dryRun: intent !== "create"
+    };
+    error.textContent = "";
+    buttons.forEach((button) => { button.disabled = true; });
+    try {
+      const response = await fetch("/api/goal/plan", {
+        method: "POST",
+        headers: writeHeaders(true),
+        body: JSON.stringify(body)
+      });
+      if (!response.ok) {
+        throw new Error(await response.text());
+      }
+      const result = await response.json();
+      renderGoalPlannerResult(result);
+      if (result.written) {
+        await load();
+      }
+    } catch (routeError) {
+      error.textContent = routeError?.message || String(routeError);
+      showRouteError("Goal planning failed", routeError);
+    } finally {
+      buttons.forEach((button) => { button.disabled = false; });
     }
   });
 

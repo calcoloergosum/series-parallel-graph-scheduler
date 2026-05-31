@@ -1,7 +1,8 @@
 #!/usr/bin/env node
 import { spawn } from "node:child_process";
 import { realpathSync } from "node:fs";
-import { resolve } from "node:path";
+import { readFile } from "node:fs/promises";
+import { dirname, isAbsolute, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
 import {
@@ -17,8 +18,12 @@ import {
 } from "./cli.js";
 import type { CliCommandHandlers } from "./cli.js";
 import { printCliError } from "./cli-errors.js";
+import { validatePlanGraphFileResult } from "./contracts.js";
 import type {
   JsonValue,
+  PlanGraphFile,
+  PlannerResponse,
+  PlannerRuntimeRequest,
   RunWorkerOptions,
   VisualizerServerHandle,
   WorkerManager
@@ -58,6 +63,8 @@ import {
   startNode
 } from "./node-mutations.js";
 import { sendSlackNotification } from "./notification.js";
+import { regeneratePlannerPreview } from "./planner-preview-mutations.js";
+import { createFixturePlannerRuntime, defaultPlannerOutputSchema } from "./planner-runtime.js";
 import { runtimePathsFromModuleUrl } from "./runtime-paths.js";
 import {
   buildWorkerPrompt as buildWorkerPromptImpl,
@@ -123,6 +130,7 @@ export {
   schedulerTransitionTable,
   startNode
 } from "./node-mutations.js";
+export { regeneratePlannerPreview } from "./planner-preview-mutations.js";
 export { planNodeDecomposition } from "./node-mutations.js";
 export {
   exportOperationalEvents,
@@ -240,6 +248,142 @@ export async function renderPlanAfterUpdate(graphPath: string): Promise<void> {
   });
 }
 
+export async function planGoalGraph(
+  graphPath: string,
+  {
+    goal,
+    title,
+    dryRun = false,
+    plannerFixturePath
+  }: {
+    goal?: string;
+    title?: string;
+    dryRun?: boolean;
+    plannerFixturePath?: string;
+  }
+): Promise<Record<string, unknown>> {
+  const normalizedGoal = goal?.trim();
+  if (!normalizedGoal) {
+    throw new Error("plan requires goal");
+  }
+  const graph = await buildVisualizerGoalGraph(normalizedGoal, graphPath, { title, plannerFixturePath });
+  const validation = validatePlanGraphFileResult(graph);
+  if (validation.errors.length > 0) {
+    throw new Error(`Generated graph failed validation: ${validation.errors.map((issue) => `${issue.path} ${issue.message}`).join("; ")}`);
+  }
+  const summary = summarizeGraph(graph);
+  const result = {
+    graphPath,
+    mode: "plan-only",
+    dryRun,
+    written: false,
+    rootId: summary.root,
+    nodeCount: summary.totalNodes,
+    validation: { valid: true, errors: validation.errors, warnings: validation.warnings },
+    summary,
+    graph
+  };
+  if (!dryRun) {
+    await withGraphLock(graphPath, async () => {
+      await writeGraphAtomic(graph, graphPath);
+    });
+    result.written = true;
+  }
+  return result;
+}
+
+async function buildVisualizerGoalGraph(
+  goal: string,
+  graphPath: string,
+  {
+    title,
+    plannerFixturePath
+  }: {
+    title?: string;
+    plannerFixturePath?: string;
+  } = {}
+): Promise<PlanGraphFile> {
+  const fallbackGraph = buildGoalGraph(goal, { title });
+  const fixturePath = plannerFixturePath?.trim();
+  if (!fixturePath) {
+    return fallbackGraph;
+  }
+  const source = await readFixturePlannerResponses(resolveGraphRelativeFixturePath(graphPath, fixturePath));
+  const requestId = "goal-plan-ROOT-1";
+  const root = fallbackGraph.graph.nodes.ROOT;
+  const request: PlannerRuntimeRequest = {
+    requestId,
+    mode: "goal",
+    goal,
+    nodeId: "ROOT",
+    node: root,
+    parentContext: {
+      nodeId: "ROOT",
+      title: root.title,
+      kind: root.kind,
+      status: root.status,
+      description: root.description,
+      goal: root.goal,
+      parentIds: []
+    },
+    currentGraphSummary: summarizeGraph(fallbackGraph),
+    outputSchema: defaultPlannerOutputSchema,
+    allowedKinds: ["task", "series", "parallel"],
+    planner: { name: "fixture-planner", requestId }
+  };
+  const result = await createFixturePlannerRuntime(source).plan(request);
+  return buildGoalGraph(goal, {
+    title,
+    plannerResult: result,
+    allowedKinds: request.allowedKinds,
+    planner: result.planner
+  });
+}
+
+async function readFixturePlannerResponses(path: string): Promise<PlannerResponse | Record<string, PlannerResponse>> {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(await readFile(path, "utf8"));
+  } catch (error) {
+    throw new Error(`Invalid fixture planner file ${path}: ${error instanceof Error ? error.message : String(error)}`, { cause: error });
+  }
+  if (!isPlannerFixtureSource(parsed)) {
+    throw new Error(`Invalid fixture planner file ${path}: expected a planner response object or request-id response map`);
+  }
+  return parsed;
+}
+
+function isPlannerFixtureSource(value: unknown): value is PlannerResponse | Record<string, PlannerResponse> {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return false;
+  }
+  if (typeof (value as { kind?: unknown }).kind === "string") {
+    return true;
+  }
+  return Object.values(value).every((entry) => Boolean(entry) && typeof entry === "object" && !Array.isArray(entry) && typeof (entry as { kind?: unknown }).kind === "string");
+}
+
+function resolveGraphRelativeFixturePath(graphPath: string, path: string): string {
+  return isAbsolute(path) ? path : resolve(dirname(graphPath), path);
+}
+
+async function resolveVisualizerPlannerFixturePath(graphPath: string, path?: string): Promise<string> {
+  const explicitPath = typeof path === "string" && path.trim() ? path.trim() : undefined;
+  if (explicitPath) {
+    return resolveGraphRelativeFixturePath(graphPath, explicitPath);
+  }
+  const graph = await readGraph(graphPath);
+  const configuredPath = graph.scheduler?.workerPlanner?.fixturePath;
+  if (typeof configuredPath !== "string" || !configuredPath.trim()) {
+    throw new Error("regenerate-preview requires plannerFixturePath or scheduler.workerPlanner.fixturePath");
+  }
+  return resolveGraphRelativeFixturePath(graphPath, configuredPath);
+}
+
+function safeVisualizerRequestIdPart(value: string): string {
+  return value.replaceAll(/[^A-Za-z0-9_.-]/g, "-").replaceAll(/-+/g, "-").slice(0, 80) || "node";
+}
+
 export async function main(argv = process.argv.slice(2)): Promise<void> {
   await dispatchCliCommand({
     argv,
@@ -342,8 +486,29 @@ function visualizerRuntime() {
     decomposeNode,
     applyPlannerPreview,
     rejectPlannerPreview,
+    regeneratePlannerPreview: async (graphPath: string, options: {
+      nodeId?: string;
+      session?: string;
+      runId?: string;
+      requestId?: string;
+      plannerFixturePath?: string;
+      report?: string;
+    }) => {
+      const requestId = options.requestId || `visualizer-regenerate-${safeVisualizerRequestIdPart(options.nodeId || "node")}-${Date.now()}`;
+      return regeneratePlannerPreview(graphPath, {
+        nodeId: options.nodeId,
+        session: options.session,
+        runId: options.runId,
+        requestId,
+        report: options.report,
+        planner: createFixturePlannerRuntime(await readFixturePlannerResponses(await resolveVisualizerPlannerFixturePath(graphPath, options.plannerFixturePath))),
+        allowedKinds: ["series", "parallel"],
+        plannerMetadata: { name: "fixture-planner", requestId }
+      });
+    },
     reconcileGraphStatus,
     releaseExpiredLeases,
+    planGoalGraph,
     renderPlanAfterUpdate,
     sendSlackNotification: (
       graphPath: string,

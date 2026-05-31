@@ -1,5 +1,5 @@
 import test from "node:test";
-import { addUnknownMetadata, answerNode, applyPlannerPreview, assert, assertUnknownMetadata, attachReadyPriorityFields, blockNode, buildGoalGraphFromPlannerResponse, buildPlannerPrompt, buildPlannerRuntimeRequest, buildReachableParentMap, buildReadyPrioritySelections, buildRelevantContext, buildStableRootPathMap, buildVisualizerPayload, buildWorkerPrompt, checkSchedulerTransitionReference, claimNode, compareReadyPriorityCandidates, completeNode, completedDeepReadinessGraph, concurrentMutationGraph, countSharedParentsWithCurrentTask, createFixturePlannerRuntime, createPromptPlannerRuntime, decomposeNode, deepReadinessGraph, depthPriorityGraph, diagnoseGraph, dirname, escapeRegExp, execFileAsync, failNode, knownTransitionStatuses, lastHistory, leafOnlyChildCountPriorityGraph, listReadyLeafNodes, listWorkingNodes, lockArtifacts, mutationOwnershipDocsPath, nestedResetReachabilityGraph, parsePlannerResponse, planNodeDecomposition, plannerResponseToDecomposeMutation, readGraph, readyIds, reconcileGraphStatus, rejectPlannerPreview, releaseExpiredLeases, renewNodeLease, resetNode, resetReachable, resetSubtree, schedulerScriptPath, schedulerTransitionTable, setNodeStatus, sharedParentPriorityGraph, startNode, stressScriptPath, validatePlanGraphFileResult, validatePlannerResponse, withTempGraph, writeFile } from "./helpers/plan-scheduler-harness.mjs";
+import { addUnknownMetadata, answerNode, applyPlannerPreview, assert, assertUnknownMetadata, attachReadyPriorityFields, blockNode, buildGoalGraphFromPlannerResponse, buildPlannerPrompt, buildPlannerRuntimeRequest, buildReachableParentMap, buildReadyPrioritySelections, buildRelevantContext, buildStableRootPathMap, buildVisualizerPayload, buildWorkerPrompt, checkSchedulerTransitionReference, claimNode, compareReadyPriorityCandidates, completeNode, completedDeepReadinessGraph, concurrentMutationGraph, countSharedParentsWithCurrentTask, createFixturePlannerRuntime, createPromptPlannerRuntime, decomposeNode, deepReadinessGraph, depthPriorityGraph, diagnoseGraph, dirname, escapeRegExp, execFileAsync, failNode, knownTransitionStatuses, lastHistory, leafOnlyChildCountPriorityGraph, listReadyLeafNodes, listWorkingNodes, lockArtifacts, mutationOwnershipDocsPath, nestedResetReachabilityGraph, parsePlannerResponse, planNodeDecomposition, plannerResponseToDecomposeMutation, readGraph, readyIds, reconcileGraphStatus, regeneratePlannerPreview, rejectPlannerPreview, releaseExpiredLeases, renewNodeLease, resetNode, resetReachable, resetSubtree, schedulerScriptPath, schedulerTransitionTable, setNodeStatus, sharedParentPriorityGraph, startNode, stressScriptPath, validatePlanGraphFileResult, validatePlannerResponse, withTempGraph, writeFile } from "./helpers/plan-scheduler-harness.mjs";
 
 function priorityCandidate(id, depth, childCount, sharedParentCountWithCurrentTask) {
   return {
@@ -1176,6 +1176,7 @@ test("scheduler transition table documents mutating commands and actors", () => 
     "done",
     "fail",
     "reconcile",
+    "regenerate-preview",
     "release-expired",
     "renew",
     "reset",
@@ -1191,6 +1192,7 @@ test("scheduler transition table documents mutating commands and actors", () => 
   assert.equal(schedulerTransitionTable.reset.lease.includes("clears any lease"), true);
   assert.equal(schedulerTransitionTable["reset-reachable"].additionalAllowedFrom, "custom statuses");
   assert.equal(schedulerTransitionTable["apply-preview"].implementation, "applyPlannerPreview");
+  assert.equal(schedulerTransitionTable["regenerate-preview"].implementation, "regeneratePlannerPreview");
   assert.equal(schedulerTransitionTable["reject-preview"].actor, "operator");
   assert.equal(schedulerTransitionTable["release-expired"].actor, "system");
 });
@@ -1294,6 +1296,23 @@ test("transition contract covers every known status for every mutating command",
       }),
       run: (graphPath) => rejectPlannerPreview(graphPath, { nodeId: "A", reason: "transition test" }),
       rejects: /Cannot reject-preview node from status/
+    },
+    {
+      command: "regenerate-preview",
+      target: "blocked",
+      run: (graphPath) => regeneratePlannerPreview(graphPath, {
+        nodeId: "A",
+        session: "owner",
+        requestId: "transition-regenerate-preview",
+        planner: createFixturePlannerRuntime({
+          "transition-regenerate-preview": {
+            kind: "series",
+            title: "Regenerated preview",
+            children: [{ id: "A_REGENERATED", title: "Regenerated child" }]
+          }
+        })
+      }),
+      rejects: /Cannot regenerate-preview node from status/
     }
   ];
 

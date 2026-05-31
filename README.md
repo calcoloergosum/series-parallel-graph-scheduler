@@ -517,7 +517,9 @@ The node routes are `claim`, `start`, `renew`, `done`, `block`, `answer`,
 `apply-preview`, and `reject-preview`. Leased worker-style actions still
 require the matching `session` or `runId`, just like the CLI. Graph-level
 recovery routes are `/api/graph/reconcile` and
-`/api/leases/release-expired`.
+`/api/leases/release-expired`. Goal planning uses `POST /api/goal/plan`; with
+`dryRun: true` it previews the generated graph, and without dry run it replaces
+the graph currently served by the visualizer with the validated plan-only graph.
 
 Explicit unsafe mode is only for a trusted network boundary where every
 reachable client may start and stop workers, mutate graph nodes, and run graph
