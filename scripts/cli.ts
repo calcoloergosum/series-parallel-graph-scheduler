@@ -135,6 +135,13 @@ export interface CliCommandHandlers {
     remote?: string;
     workspaceRoot?: string;
     workspaceRetention?: string;
+    plannerMode?: string;
+    plannerFailurePolicy?: string;
+    plannerAdapterMode?: string;
+    plannerFixturePath?: string;
+    plannerTemplatePath?: string;
+    plannerAllowedKinds?: Array<"task" | "series" | "parallel">;
+    plannerRequestIdPrefix?: string;
     once: boolean;
     idleMs?: number;
     timeoutMs?: number;
@@ -185,7 +192,7 @@ export const cliCommands = [
 ] as const satisfies readonly CliCommand[];
 
 const booleanFlags = new Set(["help", "once", "quiet", "unsafe-visualizer-write", "dry-run", "plan-only", "then-run"]);
-const repeatableValueFlags = new Set(["child", "codex-arg"]);
+const repeatableValueFlags = new Set(["child", "codex-arg", "planner-allowed-kind"]);
 
 export function parseArgs(argv: readonly string[]): ParsedArgs {
   const args: ParsedArgs = { _: [] };
@@ -402,8 +409,9 @@ Commands:
 
   worker
     Required: none
-    Optional: --graph PATH, --session NAME (default: codex-worker), --node ID, --once, --quiet, --cwd PATH (default: graph directory), --template PATH (default: prompts/codex-worker-task.md), --idle-ms MS (default: 5000), --timeout-ms MS, --lease SECONDS, --codex-command PATH (default: codex), --codex-arg ARG repeated (default: exec), --isolation off|git (default: off), --remote URL (default: scheduler.remote), --workspace-root PATH (default: runs/workspaces), --workspace-retention on-failure|always|never (default: on-failure)
+    Optional: --graph PATH, --session NAME (default: codex-worker), --node ID, --once, --quiet, --cwd PATH (default: graph directory), --template PATH (default: prompts/codex-worker-task.md), --idle-ms MS (default: 5000), --timeout-ms MS, --lease SECONDS, --codex-command PATH (default: codex), --codex-arg ARG repeated (default: exec), --isolation off|git (default: off), --remote URL (default: scheduler.remote), --workspace-root PATH (default: runs/workspaces), --workspace-retention on-failure|always|never (default: on-failure), --planner-mode off|auto-decompose|ask-approval, --planner-adapter none|fixture|prompt, --planner-fixture PATH, --planner-template PATH, --planner-failure-policy block|fail, --planner-allowed-kind KIND repeated, --planner-request-id-prefix TEXT
     Example: node scripts/plan-scheduler.mjs worker --graph plan.graph.json --session codex-A --once
+    Example: node scripts/plan-scheduler.mjs worker --graph plan.graph.json --planner-mode ask-approval --planner-adapter fixture --planner-fixture planner-fixture.json --once
 
   reconcile
     Required: none
@@ -422,9 +430,9 @@ Commands:
 
 Flag types:
   Boolean flags take no value: --help, --dry-run, --plan-only, --then-run, --once, --quiet, --unsafe-visualizer-write.
-  Repeatable flags: --child ID=Title or ID:Title; --codex-arg ARG. Use --codex-arg=--flag when the value starts with "-".
+  Repeatable flags: --child ID=Title or ID:Title; --codex-arg ARG; --planner-allowed-kind task|series|parallel. Use --codex-arg=--flag when the value starts with "-".
   Numeric flags are integers: --lease 1..86400 seconds, --idle-ms 1..86400000, --timeout-ms 1..86400000, --port 0..65535, --limit 1..10000.
-  Path flags: --graph selects the graph; for plan only, --graph is the output graph path. --report stays inside the graph directory; --template resolves from the graph directory; --cwd controls worker process cwd.
+  Path flags: --graph selects the graph; for plan only, --graph is the output graph path. --report stays inside the graph directory; --template and --planner-template resolve from the graph directory; --planner-fixture resolves from the graph directory; --cwd controls worker process cwd.
   Isolation flags: --isolation git requires scheduler.remote unless --remote URL is supplied; --workspace-root selects isolated clone placement; --workspace-retention controls clone cleanup.
 
 Environment:
@@ -862,6 +870,13 @@ function buildWorkerOptionsFromArgs(args: ParsedArgs): Parameters<CliCommandHand
     remote: optionString(args, "remote"),
     workspaceRoot: optionString(args, "workspace-root"),
     workspaceRetention: optionString(args, "workspace-retention"),
+    plannerMode: optionString(args, "planner-mode"),
+    plannerFailurePolicy: optionString(args, "planner-failure-policy"),
+    plannerAdapterMode: optionString(args, "planner-adapter"),
+    plannerFixturePath: optionString(args, "planner-fixture"),
+    plannerTemplatePath: optionString(args, "planner-template"),
+    plannerAllowedKinds: parsePlannerAllowedKinds(args),
+    plannerRequestIdPrefix: optionString(args, "planner-request-id-prefix"),
     once: booleanArg(args, "once"),
     idleMs: numberArg(args, "idle-ms", numericArgumentRanges.idleMs),
     timeoutMs: numberArg(args, "timeout-ms", numericArgumentRanges.timeoutMs),
@@ -872,6 +887,23 @@ function buildWorkerOptionsFromArgs(args: ParsedArgs): Parameters<CliCommandHand
     codexCommand: optionString(args, "codex-command"),
     codexArgs: parseCodexArgs(args, optionString(args, "codex-command"))
   };
+}
+
+function parsePlannerAllowedKinds(args: ParsedArgs): Array<"task" | "series" | "parallel"> | undefined {
+  const values = argValues(args["planner-allowed-kind"]);
+  if (values.length === 0) {
+    return undefined;
+  }
+  return values.map((value, index) => {
+    if (value === true) {
+      throw new Error("Missing --planner-allowed-kind value");
+    }
+    const kind = String(value).trim();
+    if (kind === "task" || kind === "series" || kind === "parallel") {
+      return kind;
+    }
+    throw new Error(`Invalid --planner-allowed-kind #${index + 1}: expected task, series, or parallel`);
+  });
 }
 
 function buildPlanNextCommands(graphPath: string, session?: string): Record<string, string> {

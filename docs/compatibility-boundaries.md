@@ -24,7 +24,7 @@ authoritative coverage that should fail when the surface regresses.
 | Package binaries | `spg-scheduler`, `spg-render-plan` | `README.md` "Command Entry Points" | `tests/package-smoke.test.mjs` "built package bin entry points smoke test scheduler and renderer CLIs" |
 | Compatibility wrappers | `node scripts/plan-scheduler.mjs ...`, `node scripts/render-plan.mjs ...`, `node scripts/sp-layout.mjs` as a layout wrapper | `README.md` "Command Entry Points"; this document "Stable CLI Surface" | `tests/package-smoke.test.mjs`; `scripts/migration-smoke.mjs` |
 | Scheduler commands | `plan`, `ready`, `summary`, `diagnostics`, `events`, `claim`, `start`, `renew`, `reset`, `reset-subtree`, `reset-reachable`, `done`, `block`, `answer`, `fail`, `decompose`, `prompt`, `worker`, `reconcile`, `release-expired`, `serve`, `help` | `README.md` "Scheduler Commands" and "Goal-Driven Planning"; `docs/operational-events.md`; this document "Stable CLI Surface" | `tests/fixtures/cli-goldens.json`; `tests/cli-goldens.test.mjs`; `tests/scheduler-mutations.test.mjs`; `tests/worker-runtime.test.mjs`; `tests/validation-contracts.test.mjs`; `tests/visualizer-renderer.test.mjs` |
-| Scheduler flags | `--graph`, `--goal`, `--title`, `--dry-run`, `--plan-only`, `--then-run`, `--node`, `--event`, `--limit`, `--session`, `--run`, `--lease`, `--reason`, `--report`, `--report-body`, `--question`, `--answer`, `--responder`, `--kind`, `--child`, `--child-json`, `--template`, `--cwd`, `--once`, `--quiet`, `--idle-ms`, `--timeout-ms`, `--codex-command`, repeated `--codex-arg`, `--isolation`, `--remote`, `--workspace-root`, `--workspace-retention`, `--port`, `--host`, `--visualizer-write-token`, `--unsafe-visualizer-write`, `--help` | `README.md`; `docs/operational-events.md`; this document "Stable CLI Surface", "Goal-Driven Mode Compatibility Note", and "Worker Execution Contract" | `tests/fixtures/cli-goldens.json`; `tests/cli-goldens.test.mjs`; `tests/worker-runtime.test.mjs`; `tests/visualizer-renderer.test.mjs` |
+| Scheduler flags | `--graph`, `--goal`, `--title`, `--dry-run`, `--plan-only`, `--then-run`, `--node`, `--event`, `--limit`, `--session`, `--run`, `--lease`, `--reason`, `--report`, `--report-body`, `--question`, `--answer`, `--responder`, `--kind`, `--child`, `--child-json`, `--template`, `--cwd`, `--once`, `--quiet`, `--idle-ms`, `--timeout-ms`, `--codex-command`, repeated `--codex-arg`, `--isolation`, `--remote`, `--workspace-root`, `--workspace-retention`, `--planner-mode`, `--planner-adapter`, `--planner-fixture`, `--planner-template`, `--planner-failure-policy`, repeated `--planner-allowed-kind`, `--planner-request-id-prefix`, `--port`, `--host`, `--visualizer-write-token`, `--unsafe-visualizer-write`, `--help` | `README.md`; `docs/operational-events.md`; this document "Stable CLI Surface", "Goal-Driven Mode Compatibility Note", and "Worker Execution Contract" | `tests/fixtures/cli-goldens.json`; `tests/cli-goldens.test.mjs`; `tests/worker-runtime.test.mjs`; `tests/visualizer-renderer.test.mjs` |
 | Renderer flags and positional arguments | `--graph`, `--output`, `--out`, first positional graph path, second positional output path | `README.md` "Renderer Usage"; this document "Renderer Output Locations" | `tests/visualizer-renderer.test.mjs` static renderer tests; `scripts/migration-smoke.mjs` |
 | Environment variables | `PLAN_GRAPH`, `SLACK_WEBHOOK_URL`, `SPG_SLACK_TIMEOUT_MS`, `SPG_DEBUG`, `SPG_GRAPH_LOCK_TIMEOUT_MS`, `SPG_GIT_CACHE_LOCK_TIMEOUT_MS` | `README.md`; `docs/security.md`; this document "Stable CLI Surface" | `tests/cli-goldens.test.mjs`; `tests/visualizer-renderer.test.mjs`; `tests/validation-contracts.test.mjs` |
 | JSON stdout shapes | Successful JSON from `plan`, `ready`, `summary`, `diagnostics`, `events`, `claim`, `start`, `renew`, `reset`, `reset-subtree`, `reset-reachable`, `done`, `block`, `answer`, `fail`, `decompose`, `worker`, `reconcile`, and `release-expired` | This document "JSON Output Shapes"; `docs/operational-events.md` | `tests/fixtures/cli-goldens.json`; `tests/cli-goldens.test.mjs`; `tests/validation-contracts.test.mjs` |
@@ -81,8 +81,11 @@ Stable scheduler flags include `--graph`, `--goal`, `--title`, `--dry-run`,
 `--answer`, `--responder`, `--kind`, `--child`, `--child-json`, `--template`,
 `--cwd`, `--once`, `--quiet`, `--idle-ms`, `--timeout-ms`, `--codex-command`,
 repeated `--codex-arg`, `--isolation`, `--remote`, `--workspace-root`,
-`--workspace-retention`, `--port`, `--host`, `--visualizer-write-token`,
-`--unsafe-visualizer-write`, and `--help`.
+`--workspace-retention`, `--planner-mode`, `--planner-adapter`,
+`--planner-fixture`, `--planner-template`, `--planner-failure-policy`,
+repeated `--planner-allowed-kind`, `--planner-request-id-prefix`, `--port`,
+`--host`, `--visualizer-write-token`, `--unsafe-visualizer-write`, and
+`--help`.
 Stable renderer flags include `--graph`, `--output`, and `--out`.
 
 Stable environment variables:
@@ -574,9 +577,17 @@ The worker command should continue to:
 - Claim one ready leaf, start it, render a prompt, run Codex, write a report, and mark the node `done` or `failed`.
 - Use `--session` or default `codex-worker`.
 - Honor `--once`, `--quiet`, `--cwd`, `--node`, `--idle-ms`, `--lease`, `--template`, `--codex-command`, and repeated `--codex-arg`.
+- Honor planner preflight flags `--planner-mode`, `--planner-adapter`,
+  `--planner-fixture`, `--planner-template`, `--planner-failure-policy`,
+  repeated `--planner-allowed-kind`, and `--planner-request-id-prefix`.
 - Default Codex invocation to `codex exec "<rendered prompt>"`.
 - Treat `--codex-arg` as a repeated value flag. If no custom `--codex-command` is supplied and the first codex arg starts with `-`, the worker prepends `exec` so model and sandbox flags still call `codex exec`.
 - Validate the worker process boundary before claiming work: command, cwd, and argument values must be non-empty strings without null bytes; command and cwd values are capped at 4096 characters; Codex args are capped at 64 entries and 4096 characters per entry.
+- Validate planner preflight configuration before claiming work. Enabling
+  `auto-decompose` or `ask-approval` requires a usable adapter: `fixture` with a
+  local fixture file, `prompt` with an injected prompt adapter, or an injected
+  planner runtime supplied by API/test callers. Scheduler core must not
+  hard-code an external model provider.
 - Spawn worker and Codex subprocesses with argument arrays and no shell interpolation. User-controlled command strings, args, remotes, paths, and prompt text must never be concatenated into a shell command by the scheduler.
 - Inherit the scheduler process environment for worker and Codex subprocesses. The scheduler is not an environment sandbox; operators should use OS accounts, containers, or wrapper commands to narrow environment access when needed.
 - Renew its lease while Codex is running.
@@ -1058,8 +1069,11 @@ The CLI contract is:
 These isolation flags are additive. Existing worker flags remain part of the
 public contract and keep their current defaults: `--session`, `--node`,
 `--once`, `--quiet`, `--cwd`, `--template`, `--idle-ms`, `--timeout-ms`,
-`--lease`, `--codex-command`, and repeated `--codex-arg`. In `--isolation off`,
-`--cwd` continues to set the child process working directory. In
+`--lease`, `--codex-command`, repeated `--codex-arg`, `--planner-mode`,
+`--planner-adapter`, `--planner-fixture`, `--planner-template`,
+`--planner-failure-policy`, repeated `--planner-allowed-kind`, and
+`--planner-request-id-prefix`. In `--isolation off`, `--cwd` continues to set
+the child process working directory. In
 `--isolation git`, the child process working directory is the generated clone;
 `--cwd` must not be accepted as a second workspace selector. If an operator
 passes both `--cwd` and `--isolation git`, fail before claim/start with:

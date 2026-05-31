@@ -1,5 +1,5 @@
 import test from "node:test";
-import { assert, assertCliFails, blockNode, buildNodeWorkBranchName, buildWorkerPrompt, claimNode, collectGitDiffStat, completeNode, copyGraphFixtureToTemp, createFixturePlannerRuntime, createRawWorkerManager, createRunClone, createSourceBranch, createWorkBranch, decomposeNode, depthPriorityGraph, dirname, escapeRegExp, execFileAsync, existsSync, failNode, exportOperationalEvents, fixtureGraph, formatWorkerReport, gitShow, join, knownTransitionStatuses, lastHistory, listReadyLeafNodes, mkdir, mkdtemp, normalizeWorkerReport, operationalEvents, parallelWorkerIsolationGraph, parseCodexArgs, prepareBareRepository, prepareCompositionBareRepository, publishOutputRef, readFile, readGraph, readyIds, realpath, reconcileGraphStatus, recordWorkerRefMetadata, releaseExpiredLeases, renewNodeLease, resetSubtree, resolveNodeBaseRef, rm, runCodexPrompt, runGitCommand, runWorker, schedulerTransitionTable, setNodeStatus, startLeaseHeartbeat, startNode, tmpdir, waitFor, withLocalBareRemote, withTempGraph, writeCommittingWorkerRunner, writeFile, writeNoopWorkerRunner, writeWorkerIsolationGraph } from "./helpers/plan-scheduler-harness.mjs";
+import { assert, assertCliFails, blockNode, buildNodeWorkBranchName, buildWorkerPrompt, claimNode, collectGitDiffStat, completeNode, copyGraphFixtureToTemp, createFixturePlannerRuntime, createRawWorkerManager, createRunClone, createSourceBranch, createWorkBranch, decomposeNode, depthPriorityGraph, dirname, escapeRegExp, execFileAsync, existsSync, failNode, exportOperationalEvents, fixtureGraph, formatWorkerReport, gitShow, join, knownTransitionStatuses, lastHistory, listReadyLeafNodes, mkdir, mkdtemp, normalizeWorkerReport, operationalEvents, parallelWorkerIsolationGraph, parseCodexArgs, prepareBareRepository, prepareCompositionBareRepository, publishOutputRef, readFile, readGraph, readyIds, realpath, reconcileGraphStatus, recordWorkerRefMetadata, releaseExpiredLeases, renewNodeLease, resetSubtree, resolveNodeBaseRef, rm, runCodexPrompt, runGitCommand, runWorker, schedulerScriptPath, schedulerTransitionTable, setNodeStatus, startLeaseHeartbeat, startNode, tmpdir, waitFor, withLocalBareRemote, withTempGraph, writeCommittingWorkerRunner, writeFile, writeNoopWorkerRunner, writeWorkerIsolationGraph } from "./helpers/plan-scheduler-harness.mjs";
 
 test("worker report formatting includes auditable fields and stable volatile normalization", () => {
   const report = normalizeWorkerReport(formatWorkerReport({
@@ -2266,6 +2266,83 @@ test("worker planner preflight auto-decomposes parallel decisions before Codex",
   });
 });
 
+test("worker CLI fixture planner mode auto-decomposes without network access", async () => {
+  await withTempGraph(async (graphPath, dir) => {
+    const fixturePath = join(dir, "planner-fixture.json");
+    await writeFile(fixturePath, JSON.stringify({
+      kind: "series",
+      title: "CLI fixture split",
+      children: [
+        { id: "A_FIXTURE_PLAN", title: "Plan fixture child" },
+        { id: "A_FIXTURE_VERIFY", title: "Verify fixture child" }
+      ]
+    }, null, 2), "utf8");
+
+    const markerPath = join(dir, "cli-fixture-codex-ran");
+    const fakeRunnerPath = join(dir, "fake-cli-fixture-runner.mjs");
+    await writeFile(fakeRunnerPath, `import { writeFileSync } from 'node:fs'; writeFileSync(${JSON.stringify(markerPath)}, 'ran');\n`, "utf8");
+
+    const { stdout } = await execFileAsync(process.execPath, [
+      schedulerScriptPath,
+      "worker",
+      "--graph", graphPath,
+      "--session", "codex-cli-fixture",
+      "--once",
+      "--quiet",
+      "--planner-mode", "auto-decompose",
+      "--planner-adapter", "fixture",
+      "--planner-fixture", fixturePath,
+      "--codex-command", process.execPath,
+      "--codex-arg", fakeRunnerPath
+    ]);
+
+    const result = JSON.parse(stdout);
+    assert.equal(result.results[0].note, "planner decomposed node as series");
+    assert.equal(existsSync(markerPath), false);
+    const updated = await readGraph(graphPath);
+    assert.equal(updated.graph.nodes.A.status, "pending");
+    assert.deepEqual(updated.graph.nodes.A.children, ["A_FIXTURE_PLAN", "A_FIXTURE_VERIFY"]);
+    assert.deepEqual(listReadyLeafNodes(updated).map((node) => node.id), ["A_FIXTURE_PLAN"]);
+  });
+});
+
+test("worker prompt planner adapter uses configured template boundary without provider coupling", async () => {
+  await withTempGraph(async (graphPath, dir) => {
+    const graph = await readGraph(graphPath);
+    graph.scheduler.workerPlanner = { mode: "auto-decompose", adapterMode: "prompt", templatePath: "planner-template.md" };
+    await writeFile(graphPath, `${JSON.stringify(graph, null, 2)}\n`, "utf8");
+    await writeFile(join(dir, "planner-template.md"), "Prompt boundary for {{goal}}\n{{requestJson}}\n", "utf8");
+
+    const fakeRunnerPath = join(dir, "fake-prompt-planner-runner.mjs");
+    await writeFile(fakeRunnerPath, "console.log('prompt planner task executed codex');\n", "utf8");
+
+    let sawPrompt = false;
+    const result = await runWorker(graphPath, {
+      session: "codex-prompt-planner",
+      once: true,
+      cwd: dir,
+      stream: false,
+      codexCommand: process.execPath,
+      codexArgs: [fakeRunnerPath],
+      promptPlannerAdapter: {
+        async complete({ prompt, request }) {
+          sawPrompt = true;
+          assert.equal(request.nodeId, "A");
+          assert.match(prompt, /Prompt boundary for Bootstrap/);
+          assert.match(prompt, /"requestId": "worker-plan-A-run_/);
+          return JSON.stringify({ kind: "task", title: "Keep prompt-planned work atomic" });
+        }
+      }
+    });
+
+    assert.equal(sawPrompt, true);
+    assert.equal(result.results[0].status, "done");
+    const updated = await readGraph(graphPath);
+    const report = await readFile(join(dir, updated.graph.nodes.A.report), "utf8");
+    assert.match(report, /prompt planner task executed codex/);
+  });
+});
+
 test("worker planner preflight decomposes generated goal fixtures deterministically", async () => {
   const { dir, graphPath } = await copyGraphFixtureToTemp("valid-generated-goal.graph.json");
   try {
@@ -2434,7 +2511,7 @@ test("worker planner preflight fails invalid planner output by policy", async ()
   });
 });
 
-test("worker planner preflight blocks planner failures by default", async () => {
+test("worker planner preflight rejects missing adapter configuration before mutation", async () => {
   await withTempGraph(async (graphPath, dir) => {
     const graph = await readGraph(graphPath);
     graph.scheduler.workerPlanner = { mode: "auto-decompose" };
@@ -2444,13 +2521,49 @@ test("worker planner preflight blocks planner failures by default", async () => 
     const fakeRunnerPath = join(dir, "fake-planner-missing-runner.mjs");
     await writeFile(fakeRunnerPath, `import { writeFileSync } from 'node:fs'; writeFileSync(${JSON.stringify(markerPath)}, 'ran');\n`, "utf8");
 
+    await assert.rejects(
+      runWorker(graphPath, {
+        session: "codex-planner-missing",
+        once: true,
+        cwd: dir,
+        stream: false,
+        codexCommand: process.execPath,
+        codexArgs: [fakeRunnerPath]
+      }),
+      /Invalid worker planner configuration: planner mode requires --planner-adapter fixture\|prompt or an injected planner runtime/
+    );
+
+    assert.equal(existsSync(markerPath), false);
+    const updated = await readGraph(graphPath);
+    assert.equal(updated.graph.nodes.A.status, "pending");
+    assert.equal(updated.graph.nodes.A.lease, undefined);
+    assert.equal(updated.graph.nodes.A.history, undefined);
+    assert.equal(updated.graphVersion, graph.graphVersion);
+  });
+});
+
+test("worker planner preflight blocks runtime planner failures by default", async () => {
+  await withTempGraph(async (graphPath, dir) => {
+    const graph = await readGraph(graphPath);
+    graph.scheduler.workerPlanner = { mode: "auto-decompose" };
+    await writeFile(graphPath, `${JSON.stringify(graph, null, 2)}\n`, "utf8");
+
+    const markerPath = join(dir, "planner-throwing-codex-ran");
+    const fakeRunnerPath = join(dir, "fake-planner-throwing-runner.mjs");
+    await writeFile(fakeRunnerPath, `import { writeFileSync } from 'node:fs'; writeFileSync(${JSON.stringify(markerPath)}, 'ran');\n`, "utf8");
+
     const result = await runWorker(graphPath, {
-      session: "codex-planner-missing",
+      session: "codex-planner-throwing",
       once: true,
       cwd: dir,
       stream: false,
       codexCommand: process.execPath,
-      codexArgs: [fakeRunnerPath]
+      codexArgs: [fakeRunnerPath],
+      planner: {
+        async plan() {
+          throw new Error("planner adapter unavailable");
+        }
+      }
     });
 
     assert.equal(result.results[0].status, "blocked");
@@ -2458,11 +2571,11 @@ test("worker planner preflight blocks planner failures by default", async () => 
     assert.equal(existsSync(markerPath), false);
     const updated = await readGraph(graphPath);
     assert.equal(updated.graph.nodes.A.status, "blocked");
-    assert.match(updated.graph.nodes.A.blockedReason, /planner failed: worker planner mode auto-decompose requires an injected planner runtime/);
+    assert.match(updated.graph.nodes.A.blockedReason, /planner failed: planner adapter unavailable/);
     const plannerFailedEvent = updated.graph.nodes.A.history.find((event) => event.event === operationalEvents.plannerFailed);
     assert.equal(plannerFailedEvent.status, "blocked");
     assert.equal(plannerFailedEvent.failurePolicy, "block");
-    assert.match(plannerFailedEvent.reason, /requires an injected planner runtime/);
+    assert.match(plannerFailedEvent.reason, /planner adapter unavailable/);
     const report = await readFile(join(dir, updated.graph.nodes.A.report), "utf8");
     assert.match(report, /Planner failure: A/);
   });

@@ -178,6 +178,7 @@ const schedulerScriptPath = fileURLToPath(import.meta.url);
 const defaultGraphPath = resolve(rootDir, "plan.graph.json");
 const defaultRendererPath = isBuiltOutput ? resolve(scriptDir, "render-plan.js") : resolve(rootDir, "scripts/render-plan.mjs");
 const defaultPromptTemplatePath = resolve(rootDir, "prompts/codex-worker-task.md");
+const defaultPlannerPromptTemplatePath = resolve(rootDir, "prompts/planner-decompose-task.md");
 
 export async function buildWorkerPrompt(graphPath: string, options: BuildWorkerPromptOptions = {}): Promise<string> {
   return buildWorkerPromptImpl(graphPath, options, workerRuntime());
@@ -279,6 +280,7 @@ function workerRuntime() {
   return {
     defaultGraphPath,
     defaultPromptTemplatePath,
+    defaultPlannerPromptTemplatePath,
     schedulerCommand: `node ${schedulerScriptPath}`,
     readGraph,
     getNode,

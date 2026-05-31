@@ -1251,10 +1251,10 @@ test("CLI help lists commands, flag kinds, defaults, environment variables, and 
 
   assert.match(help, /--graph PATH\s+Optional for every command\. Default: PLAN_GRAPH, then plan\.graph\.json\./);
   assert.match(help, /Boolean flags take no value: --help, --dry-run, --plan-only, --then-run, --once, --quiet, --unsafe-visualizer-write\./);
-  assert.match(help, /Repeatable flags: --child ID=Title or ID:Title; --codex-arg ARG\./);
+  assert.match(help, /Repeatable flags: --child ID=Title or ID:Title; --codex-arg ARG; --planner-allowed-kind task\|series\|parallel\./);
   assert.match(help, /Use --codex-arg=--flag when the value starts with "-"\./);
   assert.match(help, /--lease 1\.\.86400 seconds, --idle-ms 1\.\.86400000, --timeout-ms 1\.\.86400000, --port 0\.\.65535, --limit 1\.\.10000/);
-  assert.match(help, /Path flags: --graph selects the graph; for plan only, --graph is the output graph path\. --report stays inside the graph directory; --template resolves from the graph directory; --cwd controls worker process cwd\./);
+  assert.match(help, /Path flags: --graph selects the graph; for plan only, --graph is the output graph path\. --report stays inside the graph directory; --template and --planner-template resolve from the graph directory; --planner-fixture resolves from the graph directory; --cwd controls worker process cwd\./);
   assert.match(help, /PLAN_GRAPH\s+Default graph path when --graph is omitted\./);
   assert.match(help, /SLACK_WEBHOOK_URL\s+Enables notifications for done, block, answer, fail, and decompose\./);
   assert.match(help, /SPG_SLACK_TIMEOUT_MS\s+Slack notification timeout in milliseconds\. Default: 5000\./);

@@ -14,6 +14,7 @@ import type {
   PlannerOutputKind,
   PlannerOutputSchemaDescriptor,
   PlannerParentContext,
+  PromptPlannerAdapter,
   PlannerResponse,
   PlannerRuntime,
   PlannerRuntimeRequest,
@@ -29,15 +30,6 @@ export interface BuildPlannerRuntimeRequestOptions {
   goal?: string;
   allowedKinds?: PlannerOutputKind[];
   planner?: NodePlannerMetadata;
-}
-
-export interface PromptPlannerAdapterRequest {
-  prompt: string;
-  request: PlannerRuntimeRequest;
-}
-
-export interface PromptPlannerAdapter {
-  complete(request: PromptPlannerAdapterRequest): Promise<string>;
 }
 
 export interface PromptPlannerRuntimeOptions {

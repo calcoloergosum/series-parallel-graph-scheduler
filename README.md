@@ -623,6 +623,22 @@ Worker options:
 - `--workspace-root PATH`: parent directory for Git-isolated per-run clones.
 - `--workspace-retention on-failure|always|never`: clone cleanup policy for
   Git-isolated runs.
+- `--planner-mode off|auto-decompose|ask-approval`: opt into planner preflight
+  before Codex execution. `auto-decompose` applies valid `series` or `parallel`
+  fixture/prompt decisions; `ask-approval` blocks with a preview report.
+- `--planner-adapter none|fixture|prompt`: choose the planner runtime boundary.
+  `fixture` reads local JSON and never uses the network. `prompt` requires an
+  injected prompt adapter; the scheduler core does not hard-code a provider.
+- `--planner-fixture PATH`: local planner response object or request-id map for
+  deterministic demos and tests; relative paths resolve from the graph
+  directory.
+- `--planner-template PATH`: custom planner prompt template for prompt-backed
+  adapters; relative paths resolve from the graph directory.
+- `--planner-failure-policy block|fail`: convert planner runtime/validation
+  failures to blocked nodes by default, or failed nodes when set to `fail`.
+- `--planner-allowed-kind task|series|parallel`: repeat to constrain accepted
+  planner response kinds.
+- `--planner-request-id-prefix TEXT`: request id prefix for planner preflight.
 
 Default worker reports go to:
 

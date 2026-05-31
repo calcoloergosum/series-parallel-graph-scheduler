@@ -10,9 +10,12 @@ import type {
   NodeIsolationDetails,
   NodeMutationResult,
   PlanGraphFile,
+  PlannerResponse,
   PlannerOutputKind,
+  PromptPlannerAdapter,
   PlannerRuntime,
   PlannerRuntimeResponse,
+  WorkerPlannerAdapterMode,
   ReadyNode,
   RenewLeaseResult,
   RunWorkerOptions,
@@ -23,6 +26,7 @@ import type {
   WorkerRunRefMetadata,
   WorkerOutcome
 } from "./contracts.js";
+import { isRecord } from "./contracts.js";
 import {
   collectGitDiffStat,
   createWorkBranch,
@@ -37,12 +41,18 @@ import {
 import { nodeIsolationDetails } from "./graph-traversal.js";
 import { numericArgumentRanges, parseNumericArgument } from "./numeric-args.js";
 import { operationalEvents, type OperationalEventName } from "./operational-events.js";
-import { buildPlannerRuntimeRequest, plannerResponseToDecomposeMutation } from "./planner-runtime.js";
+import {
+  buildPlannerRuntimeRequest,
+  createFixturePlannerRuntime,
+  createPromptPlannerRuntime,
+  plannerResponseToDecomposeMutation
+} from "./planner-runtime.js";
 import { runtimePathsFromModuleUrl } from "./runtime-paths.js";
 import { errorMessage, redactSecretText, safeFilePart, sleep } from "./shared-utils.js";
 
 const { rootDir } = runtimePathsFromModuleUrl(import.meta.url);
 const defaultGraphPath = resolve(rootDir, "plan.graph.json");
+const defaultPlannerPromptTemplatePath = resolve(rootDir, "prompts/planner-decompose-task.md");
 const workerProcessLimits = {
   commandLength: 4096,
   argCount: 64,
@@ -138,6 +148,8 @@ export interface WorkerRuntime extends WorkerPromptRuntime {
   ): Promise<SlackNotificationResult>;
   renderPlanAfterUpdate(graphPath: string): Promise<void>;
   planner?: PlannerRuntime;
+  promptPlannerAdapter?: PromptPlannerAdapter;
+  defaultPlannerPromptTemplatePath?: string;
 }
 
 export interface BuildWorkerPromptOptions {
@@ -342,6 +354,9 @@ export async function runWorker(
 interface WorkerPlannerSettings {
   mode: WorkerPlannerMode;
   failurePolicy: WorkerPlannerFailurePolicy;
+  adapterMode: WorkerPlannerAdapterMode;
+  fixturePath?: string;
+  templatePath?: string;
   allowedKinds?: PlannerOutputKind[];
   requestIdPrefix: string;
 }
@@ -352,7 +367,10 @@ async function validateWorkerPlannerSettings(
   runtime: WorkerRuntime
 ): Promise<void> {
   const graph = await runtime.readGraph(graphPath);
-  resolveWorkerPlannerSettings(graph, options);
+  const settings = resolveWorkerPlannerSettings(graph, options, runtime);
+  if (settings.mode !== "off") {
+    await activeWorkerPlanner(graphPath, settings, options, runtime);
+  }
 }
 
 async function runPlannerPreflight(
@@ -371,16 +389,13 @@ async function runPlannerPreflight(
   runtime: WorkerRuntime
 ): Promise<WorkerOutcome | undefined> {
   const graph = await runtime.readGraph(graphPath);
-  const settings = resolveWorkerPlannerSettings(graph, options);
+  const settings = resolveWorkerPlannerSettings(graph, options, runtime);
   if (settings.mode === "off") {
     return undefined;
   }
 
   try {
-    const planner = activeWorkerPlanner(options, runtime);
-    if (!planner) {
-      throw new Error(`worker planner mode ${settings.mode} requires an injected planner runtime`);
-    }
+    const planner = await activeWorkerPlanner(graphPath, settings, options, runtime);
     const plan = await planWorkerNode(graph, graphPath, { claim, planner, settings }, runtime);
     if (plan.response.kind === "task") {
       return undefined;
@@ -616,20 +631,63 @@ function requestIdFromPlannerError(error: unknown): string | undefined {
     : undefined;
 }
 
-function resolveWorkerPlannerSettings(graph: PlanGraphFile, options: RunWorkerOptions): WorkerPlannerSettings {
+function resolveWorkerPlannerSettings(
+  graph: PlanGraphFile,
+  options: RunWorkerOptions,
+  runtime: WorkerRuntime
+): WorkerPlannerSettings {
   const config = graph.scheduler?.workerPlanner || {};
   const mode = normalizeWorkerPlannerMode(options.plannerMode ?? config.mode);
   const failurePolicy = normalizeWorkerPlannerFailurePolicy(options.plannerFailurePolicy ?? config.failurePolicy);
+  const adapterMode = normalizeWorkerPlannerAdapterMode(
+    options.plannerAdapterMode ?? config.adapterMode,
+    { options, runtime, config }
+  );
   return {
     mode,
     failurePolicy,
-    allowedKinds: options.plannerAllowedKinds || config.allowedKinds,
+    adapterMode,
+    fixturePath: stringConfigValue(options.plannerFixturePath) || stringConfigValue(config.fixturePath),
+    templatePath: stringConfigValue(options.plannerTemplatePath) || stringConfigValue(config.templatePath),
+    allowedKinds: normalizePlannerAllowedKinds(options.plannerAllowedKinds || config.allowedKinds),
     requestIdPrefix: options.plannerRequestIdPrefix || stringConfigValue(config.requestIdPrefix) || "worker-plan"
   };
 }
 
-function activeWorkerPlanner(options: RunWorkerOptions, runtime: WorkerRuntime): PlannerRuntime | undefined {
-  return options.planner || runtime.planner;
+async function activeWorkerPlanner(
+  graphPath: string,
+  settings: WorkerPlannerSettings,
+  options: RunWorkerOptions,
+  runtime: WorkerRuntime
+): Promise<PlannerRuntime> {
+  if (settings.adapterMode === "injected") {
+    const planner = options.planner || runtime.planner;
+    if (!planner) {
+      throw new Error("Invalid worker planner configuration: injected planner adapter selected but no planner runtime was provided");
+    }
+    return planner;
+  }
+  if (settings.adapterMode === "fixture") {
+    if (!settings.fixturePath) {
+      throw new Error("Invalid worker planner configuration: fixture planner adapter requires --planner-fixture or scheduler.workerPlanner.fixturePath");
+    }
+    return createFixturePlannerRuntime(await readFixturePlannerResponses(resolveTemplatePath(graphPath, settings.fixturePath, "")));
+  }
+  if (settings.adapterMode === "prompt") {
+    const adapter = options.promptPlannerAdapter || runtime.promptPlannerAdapter;
+    if (!adapter) {
+      throw new Error("Invalid worker planner configuration: prompt planner adapter requires an injected prompt adapter");
+    }
+    return createPromptPlannerRuntime({
+      adapter,
+      templatePath: resolveTemplatePath(
+        graphPath,
+        settings.templatePath,
+        runtime.defaultPlannerPromptTemplatePath || defaultPlannerPromptTemplatePath
+      )
+    });
+  }
+  throw new Error("Invalid worker planner configuration: planner mode requires --planner-adapter fixture|prompt or an injected planner runtime");
 }
 
 function normalizeWorkerPlannerMode(value: unknown): WorkerPlannerMode {
@@ -650,6 +708,78 @@ function normalizeWorkerPlannerFailurePolicy(value: unknown): WorkerPlannerFailu
     return value;
   }
   throw new Error(`Invalid worker planner failure policy: expected block or fail; received ${JSON.stringify(value)}`);
+}
+
+function normalizeWorkerPlannerAdapterMode(
+  value: unknown,
+  {
+    options,
+    runtime,
+    config
+  }: {
+    options: RunWorkerOptions;
+    runtime: WorkerRuntime;
+    config: NonNullable<PlanGraphFile["scheduler"]>["workerPlanner"];
+  }
+): WorkerPlannerAdapterMode {
+  if (value === undefined || value === null || value === "") {
+    if (options.planner || runtime.planner) {
+      return "injected";
+    }
+    if (options.plannerFixturePath || config?.fixturePath) {
+      return "fixture";
+    }
+    if (options.promptPlannerAdapter || runtime.promptPlannerAdapter) {
+      return "prompt";
+    }
+    return "none";
+  }
+  if (typeof value !== "string") {
+    throw new Error("Invalid worker planner adapter: expected none, injected, fixture, or prompt");
+  }
+  const normalized = value.trim();
+  if (normalized === "none" || normalized === "injected" || normalized === "fixture" || normalized === "prompt") {
+    return normalized;
+  }
+  throw new Error(`Invalid worker planner adapter: expected none, injected, fixture, or prompt; received ${JSON.stringify(value)}`);
+}
+
+function normalizePlannerAllowedKinds(value: unknown): PlannerOutputKind[] | undefined {
+  if (value === undefined || value === null) {
+    return undefined;
+  }
+  if (!Array.isArray(value)) {
+    throw new Error("Invalid worker planner allowedKinds: expected an array");
+  }
+  return value.map((item, index) => {
+    if (item === "task" || item === "series" || item === "parallel") {
+      return item;
+    }
+    throw new Error(`Invalid worker planner allowedKinds[${index}]: expected task, series, or parallel; received ${JSON.stringify(item)}`);
+  });
+}
+
+async function readFixturePlannerResponses(path: string): Promise<PlannerResponse | Record<string, PlannerResponse>> {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(await readFile(path, "utf8"));
+  } catch (error) {
+    throw new Error(`Invalid fixture planner file ${path}: ${errorMessage(error)}`, { cause: error });
+  }
+  if (!isPlannerFixtureSource(parsed)) {
+    throw new Error(`Invalid fixture planner file ${path}: expected a planner response object or request-id response map`);
+  }
+  return parsed;
+}
+
+function isPlannerFixtureSource(value: unknown): value is PlannerResponse | Record<string, PlannerResponse> {
+  if (!isRecord(value)) {
+    return false;
+  }
+  if (typeof value.kind === "string") {
+    return true;
+  }
+  return Object.values(value).every((entry) => isRecord(entry) && typeof entry.kind === "string");
 }
 
 function stringConfigValue(value: unknown): string | undefined {

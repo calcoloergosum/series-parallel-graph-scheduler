@@ -56,6 +56,13 @@ before Codex execution; `task` responses continue to Codex, while valid
 mutation and the worker does not execute Codex for that parent. `mode:
 "ask-approval"` writes an inspectable planner report and blocks the leased node
 instead of mutating children, so an operator can approve, reset, or fail it.
+The planner runtime is selected separately with `adapterMode`: `fixture` reads
+a local JSON response or request-id map for deterministic tests and demos,
+`prompt` renders a prompt through the prompt adapter boundary, and `injected`
+is available to API/test callers that provide a runtime directly. Prompt-backed
+planning has no built-in external provider in scheduler core. Planner adapter,
+fixture path, template path, allowed kinds, and failure-policy configuration are
+validated before the worker claims or starts a node.
 `failurePolicy: "block"` is the default for planner errors; `failurePolicy:
 "fail"` marks the node failed with the planner report attached.
 Both paths append `planner-failed` history before the worker continues. Approval

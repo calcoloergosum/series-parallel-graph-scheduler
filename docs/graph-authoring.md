@@ -180,6 +180,28 @@ why a node exists, `outputContract` for expected artifact shape, and
 [`../examples/goal-git-footprint.graph.json`](../examples/goal-git-footprint.graph.json)
 for a complete validating graph with goal and planner metadata.
 
+Planner preflight is configured under `scheduler.workerPlanner` or equivalent
+worker CLI flags. Keep planner behavior and adapter selection separate:
+`mode` controls approval behavior (`off`, `auto-decompose`, or
+`ask-approval`), while `adapterMode` selects the runtime boundary (`fixture`,
+`prompt`, or an injected runtime supplied by API/test callers). Fixture mode
+uses local JSON only and is suitable for deterministic demos and tests. Prompt
+mode renders `templatePath` through the prompt adapter boundary; the scheduler
+does not embed an external model provider.
+
+```json
+{
+  "scheduler": {
+    "workerPlanner": {
+      "mode": "ask-approval",
+      "adapterMode": "fixture",
+      "fixturePath": "planner-fixture.json",
+      "failurePolicy": "block"
+    }
+  }
+}
+```
+
 ## Git Footprint Metadata
 
 Git-only worker isolation uses optional node ref metadata fields named

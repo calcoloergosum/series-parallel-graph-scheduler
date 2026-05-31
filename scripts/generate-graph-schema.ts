@@ -62,6 +62,9 @@ export function buildPlanGraphJsonSchema(): Record<string, unknown> {
         properties: {
           mode: { enum: ["off", "auto-decompose", "ask-approval"] },
           failurePolicy: { enum: ["block", "fail"] },
+          adapterMode: { enum: ["none", "injected", "fixture", "prompt"] },
+          fixturePath: { type: "string" },
+          templatePath: { type: "string" },
           allowedKinds: {
             type: "array",
             items: { enum: ["task", "series", "parallel"] }

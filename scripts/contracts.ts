@@ -407,12 +407,25 @@ export interface PlannerRuntime {
   plan(request: PlannerRuntimeRequest): Promise<PlannerRuntimeResponse>;
 }
 
+export interface PromptPlannerAdapterRequest {
+  prompt: string;
+  request: PlannerRuntimeRequest;
+}
+
+export interface PromptPlannerAdapter {
+  complete(request: PromptPlannerAdapterRequest): Promise<string>;
+}
+
 export type WorkerPlannerMode = "off" | "auto-decompose" | "ask-approval";
 export type WorkerPlannerFailurePolicy = "block" | "fail";
+export type WorkerPlannerAdapterMode = "none" | "injected" | "fixture" | "prompt";
 
 export interface WorkerPlannerConfig {
   mode?: WorkerPlannerMode;
   failurePolicy?: WorkerPlannerFailurePolicy;
+  adapterMode?: WorkerPlannerAdapterMode;
+  fixturePath?: string;
+  templatePath?: string;
   allowedKinds?: PlannerOutputKind[];
   requestIdPrefix?: string;
   planner?: NodePlannerMetadata;
@@ -1119,9 +1132,13 @@ export interface StartWorkerOptions {
   workspaceRetention?: "on-failure" | "always" | "never" | (string & {});
   plannerMode?: WorkerPlannerMode | (string & {});
   plannerFailurePolicy?: WorkerPlannerFailurePolicy | (string & {});
+  plannerAdapterMode?: WorkerPlannerAdapterMode | (string & {});
+  plannerFixturePath?: string;
+  plannerTemplatePath?: string;
   plannerAllowedKinds?: PlannerOutputKind[];
   plannerRequestIdPrefix?: string;
   planner?: PlannerRuntime;
+  promptPlannerAdapter?: PromptPlannerAdapter;
 }
 
 export interface RunWorkerOptions extends StartWorkerOptions {
