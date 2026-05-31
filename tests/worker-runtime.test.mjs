@@ -341,7 +341,9 @@ test("series reconciliation aliases the final child output ref as the parent out
             status: "done",
             outputRef: {
               name: "refs/heads/spg/node/S1/run-s1",
-              commit: "1111111111111111111111111111111111111111"
+              commit: "1111111111111111111111111111111111111111",
+              diffStat: { filesChanged: 1, additions: 1, deletions: 0, totalChanges: 1 },
+              files: [{ path: "shared.txt", changeType: "modified", additions: 1, deletions: 0, totalChanges: 1 }]
             }
           },
           S2: {
@@ -353,7 +355,12 @@ test("series reconciliation aliases the final child output ref as the parent out
               commit: "2222222222222222222222222222222222222222",
               runId: "run-s2",
               session: "codex-S2",
-              report: "reports/S2-run-s2.md"
+              report: "reports/S2-run-s2.md",
+              diffStat: { filesChanged: 2, additions: 5, deletions: 1, totalChanges: 6 },
+              files: [
+                { path: "final.txt", changeType: "modified", additions: 3, deletions: 0, totalChanges: 3 },
+                { path: "shared.txt", changeType: "modified", additions: 2, deletions: 1, totalChanges: 3 }
+              ]
             }
           },
           DOWNSTREAM: { title: "Downstream", kind: "task", status: "pending" }
@@ -380,6 +387,16 @@ test("series reconciliation aliases the final child output ref as the parent out
     assert.equal(parent.integrationRef.kind, "series");
     assert.equal(parent.integrationRef.status, "clean");
     assert.equal(parent.integrationRef.publishedOutputRef, "refs/heads/spg/node/S2/run-s2");
+    assert.equal(parent.gitFootprint.source, "child-aggregate");
+    assert.equal(parent.gitFootprint.headRef.name, parent.outputRef.name);
+    assert.deepEqual(parent.gitFootprint.diffStat, {
+      filesChanged: 2,
+      additions: 6,
+      deletions: 1,
+      totalChanges: 7
+    });
+    assert.equal(parent.gitFootprint.aggregation.diffStatKind, "summed-child-stats");
+    assert.deepEqual(parent.gitFootprint.aggregation.duplicateFilePaths, ["shared.txt"]);
     assert.deepEqual(parent.integrationRef.inputRefs.map((input) => input.outputRef), [
       "refs/heads/spg/node/S1/run-s1",
       "refs/heads/spg/node/S2/run-s2"

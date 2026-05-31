@@ -49,6 +49,7 @@ after(async () => {
 });
 
 export const {
+  aggregateChildGitFootprints,
   answerNode,
   attachReadyPriorityFields,
   blockNode,

@@ -127,16 +127,39 @@ export interface GitFileFootprintMetadata {
   deletions: number | null;
   totalChanges: number | null;
   binary?: boolean;
+  childIds?: NodeId[];
+  [metadata: string]: unknown;
+}
+
+export type GitFootprintSource =
+  | "git-diff"
+  | "child-aggregate"
+  | (string & {});
+
+export interface GitFootprintAggregationMetadata {
+  source: "child-footprints" | (string & {});
+  parentId?: NodeId;
+  parentKind?: NodeKind;
+  childCount: number;
+  includedChildIds: NodeId[];
+  missingChildIds: NodeId[];
+  duplicateFilePaths: string[];
+  diffStatKind: "summed-child-stats" | (string & {});
+  filesChangedKind: "unique-file-paths-with-stat-only-sum" | (string & {});
+  fileMergeRule: "sum-line-counts-by-path" | (string & {});
   [metadata: string]: unknown;
 }
 
 export interface NodeGitFootprintMetadata {
+  source?: GitFootprintSource;
   baseRef?: GitRefFootprintMetadata;
   headRef?: GitRefFootprintMetadata;
   branch?: string;
   commit?: string;
   diffStat?: GitDiffStatMetadata;
   files?: GitFileFootprintMetadata[];
+  aggregation?: GitFootprintAggregationMetadata;
+  childAggregate?: NodeGitFootprintMetadata;
   collectedAt?: IsoDateString;
   [metadata: string]: unknown;
 }

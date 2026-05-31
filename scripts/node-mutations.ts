@@ -31,6 +31,7 @@ import {
 import { validatePlanGraphFileResult } from "./contracts.js";
 
 import { defaultGraphPath, readGraph, withGraphLock, writeGraphAtomic, writeReportFile } from "./graph-io.js";
+import { aggregateChildGitFootprints } from "./git-footprint.js";
 import {
   findAncestorIds,
   getNode,
@@ -282,9 +283,10 @@ const resetClearedFields = [
   "workspace",
   "workRef",
   "outputRef",
-  "integrationRef"
+  "integrationRef",
+  "gitFootprint"
 ] as const;
-const compositionResetClearedFields = ["outputRef", "integrationRef"] as const;
+const compositionResetClearedFields = ["outputRef", "integrationRef", "gitFootprint"] as const;
 
 export async function claimNode(
   graphPath: string,
@@ -747,6 +749,7 @@ export async function publishResolvedIntegration(
       producedAt: completedAt,
       source: "parallel-integration"
     };
+    applyAggregatedChildGitFootprint(graph, nodeId, node, completedAt);
     node.status = "done";
     node.completedAt = completedAt;
     if (reportPath) {
@@ -939,8 +942,10 @@ async function reconcileCompletedSubtrees(graph: PlanGraphFile, graphPath: strin
         }
       }
       const previousStatus = node.status || "pending";
+      const completedAt = new Date().toISOString();
+      applyAggregatedChildGitFootprint(graph, nodeId, node, completedAt);
       node.status = "done";
-      node.completedAt ||= new Date().toISOString();
+      node.completedAt ||= completedAt;
       appendHistory(node, operationalEvents.subtreeDone, {
         previousStatus,
         status: node.status,
@@ -1057,6 +1062,7 @@ async function publishSeriesAliasIfRequired(
     source: "series-alias",
     aliasOfNodeId: finalChildId
   };
+  applyAggregatedChildGitFootprint(graph, parentId, node, publishedAt);
   appendHistory(node, operationalEvents.parentRefPublished, {
     parentId,
     kind: "series",
@@ -1224,6 +1230,7 @@ async function publishParallelIntegrationIfRequired(
 
   const commit = gitText(["-C", workspace, "rev-parse", "HEAD"]).trim();
   const reportPath = parallelIntegrationReportPath(parentId, reportAttemptId);
+  const producedAt = new Date().toISOString();
   node.integrationRef = {
     ...node.integrationRef,
     status: "clean",
@@ -1236,10 +1243,11 @@ async function publishParallelIntegrationIfRequired(
     commit,
     runId: reportAttemptId,
     report: reportPath,
-    producedAt: new Date().toISOString(),
+    producedAt,
     source: "parallel-integration"
   };
   const clearedFields = clearCompositionBlockState(node);
+  applyAggregatedChildGitFootprint(graph, parentId, node, producedAt);
   await writeReportFile(graphPath, reportPath, formatParallelIntegrationReport({
     parentId,
     result: "clean",
@@ -1945,6 +1953,41 @@ function completionRequiresOutputRef(graph: PlanGraphFile, nodeId: NodeId, node:
     }
   }
   return false;
+}
+
+function applyAggregatedChildGitFootprint(
+  graph: PlanGraphFile,
+  parentId: NodeId,
+  node: GraphNode,
+  collectedAt: string
+): void {
+  const aggregate = aggregateChildGitFootprints({
+    parentId,
+    parentKind: node.kind,
+    children: (node.children || []).map((childId) => {
+      const child = getNode(graph, childId);
+      return {
+        nodeId: childId,
+        gitFootprint: child.gitFootprint,
+        outputRef: child.outputRef
+      };
+    }),
+    baseRef: node.baseRef,
+    headRef: node.outputRef ? { name: node.outputRef.name, commit: node.outputRef.commit } : undefined,
+    collectedAt
+  });
+  if (!aggregate) {
+    return;
+  }
+
+  if (node.gitFootprint?.diffStat && node.gitFootprint.source !== "child-aggregate") {
+    node.gitFootprint = {
+      ...node.gitFootprint,
+      childAggregate: aggregate
+    };
+    return;
+  }
+  node.gitFootprint = aggregate;
 }
 
 function mutationEventForStatus(status: NodeStatus): OperationalEventName {
