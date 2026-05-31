@@ -1920,11 +1920,11 @@ test("planner response validator reports nested and metadata shape errors withou
   assert.equal(validation.valid, false);
   assert.deepEqual(validation.errors.map(({ path, code }) => `${path}:${code}`), [
     "$.kind:disallowed-kind",
+    "$.children[1].id:duplicate-child-id",
     "$.children[0].idHint:invalid-id-hint",
     "$.children[1].title:invalid-string",
     "$.children[1].deliverables[1]:invalid-string",
     "$.children[1].kind:unknown-kind",
-    "$.children[1].id:duplicate-child-id",
     "$.children[1].children:unsupported-nested-children"
   ]);
   assert.deepEqual(validation.warnings, []);
@@ -2099,6 +2099,36 @@ test("valid planner output materializes existing decompose child specs", async (
     assert.equal(decompose.children[0].kind, "task");
     assert.equal(decompose.children[0].description, "Write the scheduler contract.");
     assert.deepEqual(decompose.children[0].acceptanceCriteria, ["The contract is documented."]);
+  });
+});
+
+test("node decomposition rejects nested planner children that cannot be materialized by the flat mutation", async () => {
+  await withTempGraph(async (graphPath) => {
+    const graph = await readGraph(graphPath);
+    const response = {
+      kind: "series",
+      title: "Nested decomposition",
+      children: [
+        {
+          kind: "parallel",
+          title: "Nested fanout",
+          children: [
+            { title: "Branch A" },
+            { title: "Branch B" }
+          ]
+        }
+      ]
+    };
+
+    assert.equal(validatePlannerResponse(response, { graph, parentId: "A" }).valid, true);
+    await assert.rejects(
+      async () => plannerResponseToDecomposeMutation(response, graph, "A"),
+      (error) => {
+        assert.equal(error.name, "PlannerResponseValidationError");
+        assert.ok(error.validation.errors.some((issue) => issue.code === "unsupported-nested-children" && issue.path === "$.children[0].children"));
+        return true;
+      }
+    );
   });
 });
 

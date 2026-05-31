@@ -123,18 +123,24 @@ export function buildGoalGraphFromPlannerResponse(
   const plannerValidation = validatePlannerResponse(response, {
     graph: baseGraph,
     parentId: "ROOT",
-    allowedKinds: normalizedOptions.allowedKinds
+    allowedKinds: normalizedOptions.allowedKinds,
+    allowNestedChildren: true
   });
   if (!plannerValidation.valid) {
     throw new PlannerResponseValidationError(plannerValidation);
   }
 
-  const usedIds = new Set<NodeId>(["ROOT"]);
+  const existingIds = new Set<NodeId>(["ROOT"]);
+  const explicitIds = response.kind === "task"
+    ? new Set<NodeId>()
+    : collectExplicitPlannerChildIds(response.children);
+  const usedIds = new Set<NodeId>([...existingIds, ...explicitIds]);
   const materializedNodes: Record<NodeId, GraphNode> = {};
   const rootChildren = response.kind === "task"
     ? [goalGraphInitialNodeId]
     : materializePlannerChildren(response.children, {
       parentId: "ROOT",
+      existingIds,
       usedIds,
       nodes: materializedNodes,
       goal: normalizedGoal,
@@ -211,6 +217,7 @@ export function buildGoalGraphFromPlannerResponse(
 
 interface MaterializePlannerChildContext {
   parentId: NodeId;
+  existingIds: ReadonlySet<NodeId>;
   usedIds: Set<NodeId>;
   nodes: Record<NodeId, GraphNode>;
   goal: string;
@@ -224,6 +231,9 @@ function materializePlannerChildren(
 ): NodeId[] {
   return children.map((child, index) => {
     const id = materializePlannerChildId(child, index, context);
+    if (context.existingIds.has(id) || context.nodes[id]) {
+      throw new Error(`Planner child id collision after validation: ${id}`);
+    }
     context.usedIds.add(id);
     const kind = plannerChildNodeKind(child);
     const node = nodeFromPlannerProposal(child, {
@@ -234,6 +244,7 @@ function materializePlannerChildren(
       planner: context.planner,
       goalSource: "planner"
     });
+    context.nodes[id] = node;
     if (kind === "series" || kind === "parallel") {
       node.children = materializePlannerChildren(child.children || [], {
         ...context,
@@ -242,7 +253,6 @@ function materializePlannerChildren(
     } else {
       delete node.children;
     }
-    context.nodes[id] = node;
     return id;
   });
 }
@@ -260,7 +270,11 @@ function materializePlannerChildId(
   context: MaterializePlannerChildContext
 ): NodeId {
   if (typeof child.id === "string" && child.id.trim()) {
-    return child.id.trim();
+    const id = child.id.trim();
+    if (!isSafePlannerId(id)) {
+      throw new Error(`Unsafe planner child id after validation: ${id}`);
+    }
+    return id;
   }
   const parentPrefix = slugIdPart(context.parentId) || "NODE";
   const childBase = slugIdPart(child.idHint || child.title) || `CHILD_${index + 1}`;
@@ -273,6 +287,21 @@ function materializePlannerChildId(
     suffix += 1;
   }
   return candidate;
+}
+
+function collectExplicitPlannerChildIds(children: PlannerChildProposal[]): Set<NodeId> {
+  const ids = new Set<NodeId>();
+  for (const child of children) {
+    if (typeof child.id === "string" && child.id.trim()) {
+      ids.add(child.id.trim());
+    }
+    if (Array.isArray(child.children)) {
+      for (const id of collectExplicitPlannerChildIds(child.children)) {
+        ids.add(id);
+      }
+    }
+  }
+  return ids;
 }
 
 function nodeFromPlannerProposal(
@@ -388,6 +417,10 @@ function slugIdPart(value: string | undefined): string {
     .toUpperCase()
     .replaceAll(/[^A-Z0-9]+/g, "_")
     .replaceAll(/^_+|_+$/g, "");
+}
+
+function isSafePlannerId(id: string): boolean {
+  return /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/.test(id) && !id.includes("..");
 }
 
 function buildGoalDocument(title: string, goal: string, initialNodeIds: NodeId[] = [goalGraphInitialNodeId]): NonNullable<PlanGraphFile["document"]> {

@@ -23,7 +23,7 @@ import type {
   SlackNotificationResult,
   VisualizerServerHandle
 } from "./contracts.js";
-import { buildGoalGraph, buildGoalGraphFromPlannerResponse } from "./goal-graph.js";
+import { buildGoalGraph } from "./goal-graph.js";
 import { numericArgumentRanges, parseNumericArgument } from "./numeric-args.js";
 import { exportOperationalEvents, operationalEvents } from "./operational-events.js";
 import { createFixturePlannerRuntime, defaultPlannerOutputSchema } from "./planner-runtime.js";
