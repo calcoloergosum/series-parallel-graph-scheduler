@@ -1424,7 +1424,7 @@ test("visualizer builds graph payload and real-time HTML shell", async () => {
   });
 });
 
-test("visualizer and event payloads expose git footprints with redaction", async () => {
+test("visualizer exposes current git footprints while event payloads stay event-time", async () => {
   await withTempGraph(async (graphPath) => {
     const graph = await readGraph(graphPath);
     graph.graph.nodes.A.status = "done";
@@ -1452,30 +1452,47 @@ test("visualizer and event payloads expose git footprints with redaction", async
       outputRef: "refs/heads/spg/node/A/run-a",
       commit: "2222222222222222222222222222222222222222"
     }];
+    graph.graph.nodes.B.status = "done";
+    graph.graph.nodes.B.outputRef = {
+      name: "refs/heads/spg/node/B/run-b",
+      commit: "3333333333333333333333333333333333333333"
+    };
+    graph.graph.nodes.B.gitFootprintWarning = "Git diffstat omitted: missing cloneCwd or bareRepo for B";
     await writeFile(graphPath, `${JSON.stringify(graph, null, 2)}\n`, "utf8");
 
     const payload = await buildVisualizerPayload(graphPath);
     const withFootprint = payload.nodes.find((node) => node.id === "A");
-    const withoutFootprint = payload.nodes.find((node) => node.id === "B");
+    const refOnly = payload.nodes.find((node) => node.id === "B");
+    const withoutFootprint = payload.nodes.find((node) => node.id === "C");
     assert.equal(withFootprint.git.commit, "2222222222222222222222222222222222222222");
     assert.equal(withFootprint.git.baseRef.display, "refs/remotes/origin/main @ 1111111111111111111111111111111111111111");
     assert.equal(withFootprint.git.outputRef.display, "refs/heads/spg/node/A/run-a @ 2222222222222222222222222222222222222222");
     assert.deepEqual(withFootprint.git.diffStat, { filesChanged: 1, insertions: 4, deletions: 1, totalChanges: 5 });
     assert.deepEqual(withFootprint.git.changedFiles.map((file) => [file.path, file.insertions, file.deletions]), [["src/app.ts", 4, 1]]);
     assert.equal(withFootprint.git.remoteDisplay, "https://[REDACTED]@example.com/org/repo.git");
+    assert.equal(refOnly.refs.outputRef.name, "refs/heads/spg/node/B/run-b");
+    assert.equal(refOnly.git.outputRef.display, "refs/heads/spg/node/B/run-b @ 3333333333333333333333333333333333333333");
+    assert.equal(refOnly.git.diffStat, undefined);
+    assert.deepEqual(refOnly.git.changedFiles, []);
+    assert.equal(refOnly.git.warning, "Git diffstat omitted: missing cloneCwd or bareRepo for B");
+    assert.equal(refOnly.gitFootprintWarning, "Git diffstat omitted: missing cloneCwd or bareRepo for B");
     assert.equal(withoutFootprint.git, undefined);
     assert.equal(withFootprint.refs.gitFootprint.headRef.commit, "2222222222222222222222222222222222222222");
     assert.deepEqual(withFootprint.gitDiffStat, { filesChanged: 1, insertions: 4, deletions: 1, totalChanges: 5 });
     assert.deepEqual(withFootprint.changedFiles.map((file) => file.path), ["src/app.ts"]);
     assert.equal(withoutFootprint.refs.gitFootprint, undefined);
     assert.equal(withoutFootprint.gitFootprint, undefined);
-    assert.deepEqual(payload.gitFootprint.refs.commits, ["2222222222222222222222222222222222222222"]);
+    assert.deepEqual(payload.gitFootprint.refs.commits, [
+      "2222222222222222222222222222222222222222",
+      "3333333333333333333333333333333333333333"
+    ]);
     assert.deepEqual(payload.gitFootprint.changedFiles.map((file) => file.path), ["src/app.ts"]);
-    assert.deepEqual(payload.diagnostics.gitFootprint.nodes.map((node) => node.nodeId), ["A"]);
+    assert.deepEqual(payload.diagnostics.gitFootprint.nodes.map((node) => node.nodeId), ["A", "B"]);
     assert.equal(withFootprint.workspace.remote, "https://[REDACTED]@example.com/org/repo.git");
     assert.doesNotMatch(JSON.stringify(payload), /secret-token|workspace-secret/);
-    assert.equal(payload.recentEvents[0].details.gitFootprint.headRef.commit, "2222222222222222222222222222222222222222");
-    assert.deepEqual(payload.recentEvents[0].details.diffStat, { filesChanged: 1, additions: 4, deletions: 1, totalChanges: 5 });
+    assert.equal(payload.recentEvents[0].details.gitFootprint, undefined);
+    assert.equal(payload.recentEvents[0].details.diffStat, undefined);
+    assert.equal(payload.recentEvents[0].details.commit, "2222222222222222222222222222222222222222");
   });
 });
 

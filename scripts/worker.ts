@@ -1828,8 +1828,7 @@ export async function finalizeWorkerRun(
 
 async function collectWorkerGitFootprint(refMetadata: WorkerRunRefMetadata): Promise<void> {
   const baseRef = refMetadata.baseRef?.name;
-  const existingOutputRef = refMetadata.outputRef;
-  const outputRef = existingOutputRef?.name;
+  const outputRef = refMetadata.outputRef?.name;
   const cloneCwd = refMetadata.cloneCwd;
   if (!baseRef || !outputRef || !cloneCwd) {
     return;
@@ -1848,13 +1847,6 @@ async function collectWorkerGitFootprint(refMetadata: WorkerRunRefMetadata): Pro
     }
 
     refMetadata.gitFootprint = collected.footprint;
-    refMetadata.outputRef = {
-      ...existingOutputRef,
-      name: outputRef,
-      diffStat: collected.diffStat,
-      files: collected.files,
-      collectedAt: collected.footprint.collectedAt
-    };
     delete refMetadata.gitFootprintWarning;
   } catch (error) {
     refMetadata.gitFootprintWarning = `Git diffstat collection failed: ${errorMessage(error)}`;

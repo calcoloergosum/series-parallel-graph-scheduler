@@ -235,8 +235,10 @@ remote is supplied with `--remote`.
 The visualizer reads `gitFootprint` first and falls back to compatible
 `outputRef` commit, `diffStat`, `files`, and `collectedAt` fields. This means a
 node can still show changed files and line counts for older isolated worker
-runs that only recorded output-ref metadata. New producers should prefer this
-shape:
+runs that only recorded output-ref metadata. `outputRef.name` remains the
+published-work ref used by downstream scheduling; diff stats are optional
+display/provenance metadata and are not required for completion. New producers
+should prefer this shape:
 
 ```json
 {

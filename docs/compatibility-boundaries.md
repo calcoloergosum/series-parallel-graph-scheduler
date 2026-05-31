@@ -214,9 +214,12 @@ Commands that currently print JSON should continue to print a single JSON value 
   `outputRef` fallback used by the visualizer when rendering commit and
   line-change summaries.
 - `events`: array of newest-first event objects with at least `at`, `event`,
-  `nodeId`, `status`, `timestamps`, and `details`; `session` and `runId` are
-  present when known. `--node`, `--event`, and `--limit` filter the exported
-  history without mutating graph state.
+  `nodeId`, `timestamps`, and `details`; `status`, `session`, and `runId` are
+  present when recorded on the history entry. `--node`, `--event`, and
+  `--limit` filter the exported history without mutating graph state. The
+  export is event-time only: it must not backfill current node fields such as
+  `outputRef`, `gitFootprint`, `diffStat`, changed files, or current status
+  onto older history entries.
 - `claim`: object with at least `nodeId`, `runId`, `lease`, `releasedExpired`, and `summary`; `title` is present when known. `lease` has at least `session`, `runId`, `claimedAt`, and `expiresAt`.
 - `start`: object with at least `nodeId`, `status`, and `summary`; `title` is present when known.
 - `renew`: object with at least `nodeId`, `lease`, and `summary`. Renewed leases keep `session`, `runId`, `claimedAt`, `expiresAt`, and add or update `renewedAt`.
@@ -742,14 +745,25 @@ must be preserved by mutation commands.
 
 Git footprint metadata is additive graph state for diagnostics and visualizer
 consumers that need commit and line-change summaries without re-running Git for
-every payload. The canonical node field is `gitFootprint`; `outputRef` may carry
-the same `diffStat`, `files`, and `collectedAt` fields as compatibility and
-fallback metadata. This is intentionally "both": new producers should write
-`node.gitFootprint` when they can, and may mirror the small summary under
-`outputRef`; readers must fall back to `outputRef.commit`, `outputRef.diffStat`,
-`outputRef.files`, and `outputRef.collectedAt` when `gitFootprint` is absent.
-This lets older isolated runs show a commit and line-change counts when only
-`outputRef` metadata exists.
+every payload. The canonical node field for this display/provenance metadata is
+`gitFootprint`. `outputRef.name` is the source of truth for published work and
+completion readiness; `outputRef.commit` is an optional integrity/display
+commit. Legacy `outputRef.diffStat`, `outputRef.files`, and
+`outputRef.collectedAt` fields remain valid compatibility metadata, but new
+mutation paths should write collected stats to `node.gitFootprint` instead of
+requiring or mirroring them under `outputRef`. Readers must still fall back to
+`outputRef.commit`, `outputRef.diffStat`, `outputRef.files`, and
+`outputRef.collectedAt` when `gitFootprint` is absent. This lets older isolated
+runs show a commit and line-change counts when only `outputRef` metadata exists.
+`gitFootprintWarning` records a best-effort stats collection failure after the
+ref was published; it must not make completion, reconcile, or reset flows fail,
+and it should be cleared by reset or by a later successful collection.
+
+Operational event exports do not synthesize this current node metadata onto
+history entries. Event payloads may include `diffStat`, `gitFootprint`, or
+warning fields only when the producer wrote those fields to that exact history
+entry. Diagnostics and visualizer node details remain the current-state surfaces
+for `node.gitFootprint` and legacy `outputRef` fallback display.
 
 The stable `node.gitFootprint` shape is:
 

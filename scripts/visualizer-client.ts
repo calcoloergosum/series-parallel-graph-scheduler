@@ -918,6 +918,7 @@ export function renderVisualizerHtml(): string {
     appendMetaLine(section, "integration ref", git.integrationRef?.name);
     appendMetaLine(section, "remote", git.remoteDisplay);
     appendMetaLine(section, "workspace", git.workspaceDisplay);
+    appendMetaLine(section, "footprint warning", git.warning);
 
     if (git.diffStat) {
       appendMetaLine(

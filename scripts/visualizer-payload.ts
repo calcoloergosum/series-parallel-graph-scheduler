@@ -110,6 +110,7 @@ function normalizeVisualizerNode(
     gitFootprint,
     gitDiffStat: git?.diffStat,
     changedFiles: git?.changedFiles,
+    gitFootprintWarning: node.gitFootprintWarning,
     workspace: node.workspace,
     workspaceDisplay: workspaceDisplay(node.workspace),
     report: node.report,
@@ -155,6 +156,7 @@ function normalizeVisualizerGitDetail(
 
   return omitUndefined({
     source: gitFootprint?.source,
+    warning: node.gitFootprintWarning,
     commit,
     branch,
     baseRef,

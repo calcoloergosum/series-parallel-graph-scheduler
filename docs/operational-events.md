@@ -22,7 +22,7 @@ Each exported entry has stable top-level fields:
 | `at` | Primary event timestamp copied from the history entry. |
 | `event` | Stable event name. |
 | `nodeId` | Node that owns the source history entry. |
-| `status` | Event status when present, otherwise the node's current status. |
+| `status` | Event status when present in the history entry. Older entries without an event-time status omit this field. |
 | `session` | Worker or operator session when present. |
 | `runId` | Worker run id when present. |
 | `timestamps` | Timestamp-like fields from the event, including `at`, `blockedAt`, `completedAt`, `failedAt`, `renewedAt`, and `leaseExpiresAt`. |
@@ -31,6 +31,14 @@ Each exported entry has stable top-level fields:
 The command returns newest events first. `--limit` defaults to 50 and accepts
 1..10000. `--node` filters to one node history, and `--event` filters by event
 name.
+
+Event export is an event-time audit stream. It copies only fields recorded on
+each history entry, then applies operational redaction; it does not backfill
+current node fields such as `status`, `outputRef`, `gitFootprint`, `diffStat`,
+or changed files onto older events. When an event needs Git context, the
+mutation that creates that event must write the relevant event-time fields onto
+the history entry. Use `diagnostics` or visualizer node details for the current
+node git footprint.
 
 To triage a stuck graph, run `diagnostics` first and then inspect events for the
 node called out by `.leases.expired`, `.blocked`, `.failed`, or
@@ -56,7 +64,7 @@ Graph history entries always include `at` and `event`.
 | `claimed` | A worker claimed a ready leaf and created a lease. | `previousStatus`, `status`, `session`, `runId`, `leaseExpiresAt` |
 | `running` | A claimed leaf entered worker execution. | `previousStatus`, `status`, `session`, `runId`, `startedAt` |
 | `renewed` | A worker extended an owned lease. | `status`, `session`, `runId`, `renewedAt`, `leaseExpiresAt` |
-| `done` | A worker completed a leaf. | `previousStatus`, `status`, `session`, `runId`, `completedAt`, `report`, `clearedFields` |
+| `done` | A worker completed a leaf. | `previousStatus`, `status`, `session`, `runId`, `completedAt`, `report`, `clearedFields`, `diffStatCollected`, `diffStat`, `gitFootprintCollectedAt`, `gitFootprintWarning` |
 | `blocked` | A worker paused a leaf for operator input. | `previousStatus`, `status`, `session`, `runId`, `blockedAt`, `blockedReason`, `question` |
 | `answered` | An operator answered a blocked leaf and returned it to pending. | `previousStatus`, `status`, `answer`, `responder`, `answeredAt`, `clearedFields` |
 | `failed` | A worker marked a leaf failed. | `previousStatus`, `status`, `session`, `runId`, `failedAt`, `failureReason`, `report`, `clearedFields` |
@@ -67,10 +75,10 @@ Graph history entries always include `at` and `event`.
 | `child-reset` | A reset reopened a completed or unresolved composition ancestor. | `previousStatus`, `status`, `childId`, `clearedFields` |
 | `clone-prepared` | An isolated worker prepared a local clone from the bare repository cache. | `session`, `runId`, `remote`, `bareRepo`, `cloneCwd`, `baseRef` |
 | `branch-created` | An isolated worker created or checked out the per-run work branch. | `session`, `runId`, `cloneCwd`, `baseRef`, `workRef` |
-| `output-ref-recorded` | An isolated worker recorded the output ref produced by a completed run. | `session`, `runId`, `workRef`, `outputRef`, `commit`, `report` |
+| `output-ref-recorded` | An isolated worker recorded the output ref produced by a completed run. | `session`, `runId`, `workRef`, `outputRef`, `commit`, `report`, `diffStatCollected`, `diffStat`, `gitFootprintCollectedAt`, `gitFootprintWarning` |
 | `merge-attempted` | A parallel parent buffer attempted to merge a child output ref. | `parentId`, `integrationRef`, `baseRef`, `childId`, `childOutputRef`, `childOrderIndex` |
 | `merge-conflicted` | A parallel parent buffer merge encountered conflicts and left the parent unresolved. | `parentId`, `integrationRef`, `baseRef`, `childId`, `childOutputRef`, `childOrderIndex`, `conflictedPaths`, `result` |
-| `parent-ref-published` | A composition parent published the output ref used by downstream isolated work. | `parentId`, `kind`, `integrationRef`, `outputRef`, `commit`, `result` |
+| `parent-ref-published` | A composition parent published the output ref used by downstream isolated work. | `parentId`, `kind`, `integrationRef`, `outputRef`, `commit`, `result`, `diffStatCollected`, `diffStat`, `gitFootprintCollectedAt`, `gitFootprintWarning` |
 | `planner-decision-recorded` | Worker planner preflight recorded a durable node decision or attempt outcome. | `previousStatus`, `status`, `session`, `runId`, `requestId`, `decision`, `decisionStatus`, `attemptCount`, `maxAttempts`, `childIds`, `reason` |
 | `planner-failed` | Worker planner preflight failed validation or runtime execution and was converted to controlled `blocked` or `failed` state. | `previousStatus`, `status`, `session`, `runId`, `requestId`, `failurePolicy`, `reason`, `report` |
 | `planner-preview-applied` | An operator approved and applied a stored planner decomposition preview through the guarded decompose mutation path. | `previousStatus`, `status`, `session`, `runId`, `requestId`, `proposedKind`, `childIds`, `report` |

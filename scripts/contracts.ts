@@ -81,12 +81,15 @@ export interface NodeWorkRefMetadata {
 }
 
 export interface NodeOutputRefMetadata {
+  /** Published ref name consumed by downstream isolated work. */
   name: string;
+  /** Optional resolved commit for display/integrity checks; scheduling uses name. */
   commit?: string;
   runId?: string;
   session?: string;
   report?: string;
   producedAt?: IsoDateString;
+  /** Legacy compatibility stats; new producers should prefer node.gitFootprint. */
   diffStat?: GitDiffStatMetadata;
   files?: GitFileFootprintMetadata[];
   collectedAt?: IsoDateString;
@@ -1061,6 +1064,7 @@ export interface VisualizerWorkspaceDisplay {
 
 export interface VisualizerGitFootprintDetail {
   source?: GitFootprintSource;
+  warning?: string;
   commit?: string;
   branch?: string;
   baseRef?: VisualizerGitRefDisplay;
@@ -1166,6 +1170,7 @@ export interface VisualizerNodeDetail {
   gitFootprint?: NodeGitFootprintMetadata;
   gitDiffStat?: GitDiffStatMetadata;
   changedFiles?: GitFileFootprintMetadata[];
+  gitFootprintWarning?: string;
   workspace?: NodeWorkspaceMetadata;
   workspaceDisplay?: VisualizerWorkspaceDisplay;
   report?: string;
