@@ -1,5 +1,5 @@
 import test from "node:test";
-import { assert, assertCliFails, applyPlannerPreview, blockNode, buildNodeWorkBranchName, buildWorkerPrompt, claimNode, collectGitDiffStat, completeNode, copyGraphFixtureToTemp, createFixturePlannerRuntime, createRawWorkerManager, createRunClone, createSourceBranch, createWorkBranch, decomposeNode, depthPriorityGraph, dirname, escapeRegExp, execFileAsync, existsSync, failNode, exportOperationalEvents, fixtureGraph, formatWorkerReport, gitShow, join, knownTransitionStatuses, lastHistory, listReadyLeafNodes, mkdir, mkdtemp, normalizeWorkerReport, operationalEvents, parallelWorkerIsolationGraph, parseCodexArgs, prepareBareRepository, prepareCompositionBareRepository, publishOutputRef, readFile, readGraph, readyIds, realpath, reconcileGraphStatus, recordWorkerRefMetadata, rejectPlannerPreview, releaseExpiredLeases, renewNodeLease, resetSubtree, resolveNodeBaseRef, rm, runCodexPrompt, runGitCommand, runWorker, schedulerScriptPath, schedulerTransitionTable, setNodeStatus, startLeaseHeartbeat, startNode, tmpdir, waitFor, withLocalBareRemote, withTempGraph, writeCommittingWorkerRunner, writeFile, writeNoopWorkerRunner, writeWorkerIsolationGraph } from "./helpers/plan-scheduler-harness.mjs";
+import { assert, assertCliFails, applyPlannerPreview, blockNode, buildNodeWorkBranchName, buildVisualizerPayload, buildWorkerPrompt, claimNode, collectGitDiffStat, completeNode, copyGraphFixtureToTemp, createFixturePlannerRuntime, createRawWorkerManager, createRunClone, createSourceBranch, createWorkBranch, decomposeNode, depthPriorityGraph, dirname, escapeRegExp, execFileAsync, existsSync, failNode, exportOperationalEvents, fixtureGraph, formatWorkerReport, gitShow, join, knownTransitionStatuses, lastHistory, listReadyLeafNodes, mkdir, mkdtemp, normalizeWorkerReport, operationalEvents, parallelWorkerIsolationGraph, parseCodexArgs, prepareBareRepository, prepareCompositionBareRepository, publishOutputRef, readFile, readGraph, readyIds, realpath, reconcileGraphStatus, recordWorkerRefMetadata, rejectPlannerPreview, releaseExpiredLeases, renewNodeLease, resetSubtree, resolveNodeBaseRef, rm, runCodexPrompt, runGitCommand, runWorker, schedulerScriptPath, schedulerTransitionTable, setNodeStatus, startLeaseHeartbeat, startNode, tmpdir, waitFor, withLocalBareRemote, withTempGraph, writeCommittingWorkerRunner, writeFile, writeNoopWorkerRunner, writeWorkerIsolationGraph } from "./helpers/plan-scheduler-harness.mjs";
 
 test("worker report formatting includes auditable fields and stable volatile normalization", () => {
   const report = normalizeWorkerReport(formatWorkerReport({
@@ -3290,6 +3290,155 @@ test("git-isolated worker treats diffstat collection failure as a warning", asyn
     assert.match(report, /- Exit code: 0/);
     assert.match(report, /- Git footprint warning: .*forced diffstat failure/);
     assert.doesNotMatch(report, /worker output publication failed/);
+  });
+});
+
+test("git-isolated worker footprints are exposed in visualizer payloads with non-fatal warnings and aggregate totals", async () => {
+  await withLocalBareRemote(async ({ dir, remotePath }) => {
+    const graphDir = join(dir, "graph");
+    const graphPath = join(graphDir, "plan.graph.json");
+    const fakeRunnerPath = join(dir, "fake-isolated-runner.mjs");
+    const fakeGitPath = join(dir, "fake-bin", "git");
+    await mkdir(graphDir);
+    await mkdir(dirname(fakeGitPath), { recursive: true });
+    await writeWorkerIsolationGraph(graphPath, remotePath, {
+      graphVersion: 1,
+      title: "Git Footprint Visualizer Plan",
+      scheduler: { remote: remotePath, baseRef: "refs/heads/main", leaseSeconds: 5 },
+      graph: {
+        root: "ROOT",
+        nodes: {
+          ROOT: { title: "Root", kind: "series", status: "pending", children: ["A", "B", "W"] },
+          A: { title: "First change", kind: "task", status: "pending" },
+          B: { title: "Second change", kind: "task", status: "pending" },
+          W: { title: "Warning change", kind: "task", status: "pending" }
+        }
+      }
+    });
+    await writeCommittingWorkerRunner(fakeRunnerPath);
+    await writeDiffstatFailingGitWrapper(fakeGitPath);
+
+    const firstResult = await runWorker(graphPath, {
+      session: "iso-gui",
+      once: true,
+      isolation: "git",
+      stream: false,
+      codexCommand: process.execPath,
+      codexArgs: [fakeRunnerPath]
+    });
+    const secondResult = await runWorker(graphPath, {
+      session: "iso-gui",
+      once: true,
+      isolation: "git",
+      stream: false,
+      codexCommand: process.execPath,
+      codexArgs: [fakeRunnerPath]
+    });
+
+    const originalPath = process.env.PATH;
+    process.env.PATH = `${dirname(fakeGitPath)}:${originalPath}`;
+    let warningResult;
+    try {
+      warningResult = await runWorker(graphPath, {
+        session: "iso-gui",
+        once: true,
+        isolation: "git",
+        stream: false,
+        codexCommand: process.execPath,
+        codexArgs: [fakeRunnerPath]
+      });
+    } finally {
+      process.env.PATH = originalPath;
+    }
+
+    assert.equal(firstResult.results[0].nodeId, "A");
+    assert.equal(firstResult.results[0].status, "done");
+    assert.equal(secondResult.results[0].nodeId, "B");
+    assert.equal(secondResult.results[0].status, "done");
+    assert.equal(warningResult.results[0].nodeId, "W");
+    assert.equal(warningResult.results[0].status, "done");
+    assert.equal(warningResult.results[0].code, 0);
+
+    const graph = await readGraph(graphPath);
+    const root = graph.graph.nodes.ROOT;
+    const first = graph.graph.nodes.A;
+    const second = graph.graph.nodes.B;
+    const warning = graph.graph.nodes.W;
+    assert.equal(root.status, "done");
+    assert.equal(warning.status, "done");
+    assert.match(warning.gitFootprintWarning, /forced diffstat failure/);
+    assert.match(root.gitFootprintWarning, /forced diffstat failure/);
+    assert.deepEqual(first.gitFootprint.diffStat, { filesChanged: 2, additions: 5, deletions: 0, totalChanges: 5 });
+    assert.deepEqual(second.gitFootprint.diffStat, { filesChanged: 2, additions: 5, deletions: 1, totalChanges: 6 });
+    assert.deepEqual(root.gitFootprint.diffStat, { filesChanged: 3, additions: 10, deletions: 1, totalChanges: 11 });
+    assert.deepEqual(root.gitFootprint.aggregation.includedChildIds, ["A", "B"]);
+    assert.deepEqual(root.gitFootprint.aggregation.missingChildIds, ["W"]);
+    assert.equal(root.gitFootprint.aggregation.filesChangedKind, "unique-file-paths-with-stat-only-sum");
+
+    const payload = await buildVisualizerPayload(graphPath);
+    const detail = (id) => {
+      const node = payload.nodes.find((candidate) => candidate.id === id);
+      assert.ok(node, `missing visualizer node detail for ${id}`);
+      return node;
+    };
+    const rootDetail = detail("ROOT");
+    const firstDetail = detail("A");
+    const secondDetail = detail("B");
+    const warningDetail = detail("W");
+
+    assert.equal(payload.summary.totalNodes, 4);
+    assert.deepEqual(payload.summary.counts, { done: 4 });
+    assert.equal(firstDetail.git.commit, first.outputRef.commit);
+    assert.equal(firstDetail.git.baseRef.name, first.baseRef.name);
+    assert.equal(firstDetail.git.workRef.name, first.workRef.name);
+    assert.equal(firstDetail.git.outputRef.name, first.outputRef.name);
+    assert.equal(firstDetail.git.headRef.name, first.outputRef.name);
+    assert.deepEqual(firstDetail.git.diffStat, { filesChanged: 2, insertions: 5, deletions: 0, totalChanges: 5 });
+    assert.deepEqual(firstDetail.git.changedFiles.map((file) => [file.path, file.insertions, file.deletions]), [
+      ["shared-name.txt", 1, 0],
+      ["worker-output-A.txt", 4, 0]
+    ]);
+
+    assert.equal(secondDetail.git.commit, second.outputRef.commit);
+    assert.deepEqual(secondDetail.git.diffStat, { filesChanged: 2, insertions: 5, deletions: 1, totalChanges: 6 });
+    assert.deepEqual(secondDetail.git.changedFiles.map((file) => [file.path, file.insertions, file.deletions]), [
+      ["shared-name.txt", 1, 1],
+      ["worker-output-B.txt", 4, 0]
+    ]);
+
+    assert.equal(warningDetail.git.commit, warning.outputRef.commit);
+    assert.equal(warningDetail.git.outputRef.name, warning.outputRef.name);
+    assert.match(warningDetail.git.warning, /forced diffstat failure/);
+    assert.match(warningDetail.gitFootprintWarning, /forced diffstat failure/);
+    assert.equal(warningDetail.git.diffStat, undefined);
+    assert.deepEqual(warningDetail.git.changedFiles, []);
+
+    assert.equal(rootDetail.git.commit, root.outputRef.commit);
+    assert.equal(rootDetail.git.outputRef.name, warning.outputRef.name);
+    assert.match(rootDetail.git.warning, /forced diffstat failure/);
+    assert.deepEqual(rootDetail.git.diffStat, { filesChanged: 3, insertions: 10, deletions: 1, totalChanges: 11 });
+    assert.deepEqual(rootDetail.git.aggregation.includedChildIds, ["A", "B"]);
+    assert.deepEqual(rootDetail.git.aggregation.missingChildIds, ["W"]);
+    assert.deepEqual(rootDetail.git.changedFiles.map((file) => [file.path, file.insertions, file.deletions, file.childIds]), [
+      ["shared-name.txt", 2, 1, ["A", "B"]],
+      ["worker-output-A.txt", 4, 0, ["A"]],
+      ["worker-output-B.txt", 4, 0, ["B"]]
+    ]);
+
+    assert.deepEqual(payload.gitFootprint.diffStat, root.gitFootprint.diffStat);
+    assert.deepEqual(payload.gitFootprint.changedFiles.map((file) => file.path), [
+      "shared-name.txt",
+      "worker-output-A.txt",
+      "worker-output-B.txt"
+    ]);
+    assert.deepEqual(payload.diagnostics.gitFootprint.diffStat, payload.gitFootprint.diffStat);
+    assert.deepEqual(payload.diagnostics.gitFootprint.nodes.map((node) => node.nodeId), ["A", "B", "ROOT", "W"]);
+    assert.equal(payload.gitFootprint.diffStat.filesChanged, 3);
+    assert.notEqual(payload.gitFootprint.diffStat.filesChanged, first.gitFootprint.diffStat.filesChanged + second.gitFootprint.diffStat.filesChanged + root.gitFootprint.diffStat.filesChanged);
+
+    const parentPublishEvent = root.history.find((entry) => entry.event === "parent-ref-published");
+    assert.equal(parentPublishEvent.diffStatCollected, false);
+    assert.match(parentPublishEvent.gitFootprintWarning, /forced diffstat failure/);
   });
 });
 
