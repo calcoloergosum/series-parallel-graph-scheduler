@@ -90,6 +90,47 @@ export interface NodeOutputRefMetadata {
   [metadata: string]: unknown;
 }
 
+export interface NodeGoalMetadata {
+  text: string;
+  source?: "operator" | "planner" | "parent" | (string & {});
+  createdAt?: IsoDateString;
+  [metadata: string]: unknown;
+}
+
+export interface NodePlannerMetadata {
+  name?: string;
+  model?: string;
+  version?: string;
+  promptRef?: string;
+  requestId?: string;
+  plannedAt?: IsoDateString;
+  [metadata: string]: unknown;
+}
+
+export interface NodeContextRefMetadata {
+  type?: "file" | "url" | "node" | "report" | "git-ref" | (string & {});
+  ref: string;
+  title?: string;
+  nodeId?: NodeId;
+  [metadata: string]: unknown;
+}
+
+export interface NodeOutputContract {
+  format?: "markdown" | "json" | "patch" | "text" | (string & {});
+  requiredArtifacts?: string[];
+  acceptanceCriteria?: string[];
+  schemaRef?: string;
+  [metadata: string]: unknown;
+}
+
+export interface NodeResultSummary {
+  status?: "done" | "partial" | "blocked" | "failed" | (string & {});
+  summary: string;
+  artifacts?: string[];
+  completedAt?: IsoDateString;
+  [metadata: string]: unknown;
+}
+
 export interface NodeIntegrationInputRefMetadata {
   nodeId: NodeId;
   outputRef: string;
@@ -139,6 +180,11 @@ export interface GraphNode {
   description?: string;
   deliverables?: string[];
   acceptanceCriteria?: string[];
+  goal?: string | NodeGoalMetadata;
+  planner?: NodePlannerMetadata;
+  contextRefs?: NodeContextRefMetadata[];
+  resultSummary?: NodeResultSummary;
+  outputContract?: NodeOutputContract;
   lease?: GraphLease;
   history?: GraphHistoryEntry[];
   startedAt?: IsoDateString;
@@ -159,6 +205,75 @@ export interface GraphNode {
   integrationRef?: NodeIntegrationRefMetadata;
   workspace?: NodeWorkspaceMetadata;
   [metadata: string]: unknown;
+}
+
+export type PlannerOutputKind = "task" | "series" | "parallel";
+export type PlannerRequestMode = "goal" | "decompose" | (string & {});
+export type PlannerChildIdPolicy = "planner-deterministic" | "scheduler-generated";
+export type PlannerValidationSeverity = "error" | "warning";
+
+export interface PlannerRequest {
+  requestId?: string;
+  mode: PlannerRequestMode;
+  goal: string;
+  nodeId?: NodeId;
+  node?: GraphNode;
+  allowedKinds?: PlannerOutputKind[];
+  contextRefs?: NodeContextRefMetadata[];
+  outputContract?: NodeOutputContract;
+  planner?: NodePlannerMetadata;
+  [metadata: string]: unknown;
+}
+
+export interface PlannerProposalBase {
+  title: string;
+  description?: string;
+  deliverables?: string[];
+  acceptanceCriteria?: string[];
+  goal?: string | NodeGoalMetadata;
+  planner?: NodePlannerMetadata;
+  contextRefs?: NodeContextRefMetadata[];
+  outputContract?: NodeOutputContract;
+  [metadata: string]: unknown;
+}
+
+export interface PlannerChildProposal extends PlannerProposalBase {
+  id?: NodeId;
+  idHint?: string;
+  kind?: PlannerOutputKind;
+  children?: PlannerChildProposal[];
+}
+
+export interface PlannerResponseBase extends PlannerProposalBase {
+  requestId?: string;
+  kind: PlannerOutputKind;
+  rationale?: string;
+}
+
+export interface PlannerTaskResponse extends PlannerResponseBase {
+  kind: "task";
+}
+
+export interface PlannerCompositeResponse extends PlannerResponseBase {
+  kind: "series" | "parallel";
+  children: PlannerChildProposal[];
+  childIdPolicy?: PlannerChildIdPolicy;
+}
+
+export type PlannerResponse = PlannerTaskResponse | PlannerCompositeResponse;
+
+export interface PlannerValidationError {
+  path: string;
+  message: string;
+  code?: string;
+  severity?: PlannerValidationSeverity;
+  [metadata: string]: unknown;
+}
+
+export interface PlannerValidationResult {
+  valid: boolean;
+  errors: PlannerValidationError[];
+  warnings?: PlannerValidationError[];
 }
 
 export interface PlanGraphBody {

@@ -99,6 +99,18 @@ Missing `status` defaults operationally to `pending`. Custom status strings are 
 
 The validator is not a full schema lock. Unknown top-level fields, graph-level fields, and node-level fields are preserved unless a mutation command explicitly owns that field. This keeps metadata such as `schemaVersion`, `statusModel`, `scheduler`, `document`, labels, priority, owners, and links extensible.
 
+Goal-driven planner output is a proposal format, not graph state. The planner
+schema and examples are documented in
+[`docs/planner-output-schema.md`](planner-output-schema.md). Scheduler code must
+validate a planner response and materialize safe child node ids before writing
+new `graph.nodes` entries.
+
+Planner-created nodes may use additive metadata fields such as `goal`,
+`planner`, `contextRefs`, `outputContract`, and `resultSummary`. These fields
+are optional, remain unknown-metadata compatible for older readers, and are
+preserved by graph reads and writes unless a future mutation explicitly owns
+one of them.
+
 Git-only worker isolation uses optional node ref metadata fields named
 `baseRef`, `workRef`, `outputRef`, and `integrationRef`. Existing graphs do not
 need these fields, and ordinary graph validation does not require them. When

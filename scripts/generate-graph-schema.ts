@@ -82,6 +82,19 @@ export function buildPlanGraphJsonSchema(): Record<string, unknown> {
             type: "array",
             items: { type: "string" }
           },
+          goal: {
+            oneOf: [
+              { type: "string" },
+              { "$ref": "#/$defs/goalMetadata" }
+            ]
+          },
+          planner: { "$ref": "#/$defs/plannerMetadata" },
+          contextRefs: {
+            type: "array",
+            items: { "$ref": "#/$defs/contextRef" }
+          },
+          resultSummary: { "$ref": "#/$defs/resultSummary" },
+          outputContract: { "$ref": "#/$defs/outputContract" },
           lease: { "$ref": "#/$defs/lease" },
           history: {
             type: "array",
@@ -196,6 +209,69 @@ export function buildPlanGraphJsonSchema(): Record<string, unknown> {
           resolvedAt: { "$ref": "#/$defs/timestamp" },
           createdAt: { "$ref": "#/$defs/timestamp" },
           producedAt: { "$ref": "#/$defs/timestamp" }
+        }
+      },
+      goalMetadata: {
+        type: "object",
+        required: ["text"],
+        additionalProperties: true,
+        properties: {
+          text: { type: "string" },
+          source: { type: "string" },
+          createdAt: { "$ref": "#/$defs/timestamp" }
+        }
+      },
+      plannerMetadata: {
+        type: "object",
+        additionalProperties: true,
+        properties: {
+          name: { type: "string" },
+          model: { type: "string" },
+          version: { type: "string" },
+          promptRef: { type: "string" },
+          requestId: { type: "string" },
+          plannedAt: { "$ref": "#/$defs/timestamp" }
+        }
+      },
+      contextRef: {
+        type: "object",
+        required: ["ref"],
+        additionalProperties: true,
+        properties: {
+          type: { type: "string" },
+          ref: { type: "string" },
+          title: { type: "string" },
+          nodeId: { type: "string" }
+        }
+      },
+      resultSummary: {
+        type: "object",
+        required: ["summary"],
+        additionalProperties: true,
+        properties: {
+          status: { type: "string" },
+          summary: { type: "string" },
+          artifacts: {
+            type: "array",
+            items: { type: "string" }
+          },
+          completedAt: { "$ref": "#/$defs/timestamp" }
+        }
+      },
+      outputContract: {
+        type: "object",
+        additionalProperties: true,
+        properties: {
+          format: { type: "string" },
+          requiredArtifacts: {
+            type: "array",
+            items: { type: "string" }
+          },
+          acceptanceCriteria: {
+            type: "array",
+            items: { type: "string" }
+          },
+          schemaRef: { type: "string" }
         }
       },
       integrationRef: {

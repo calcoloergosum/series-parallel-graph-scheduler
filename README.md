@@ -18,7 +18,9 @@ for humans and agents is in
 [`docs/graph-authoring.md`](docs/graph-authoring.md). Maintainer module
 boundaries and extension points are mapped in
 [`docs/architecture.md`](docs/architecture.md). Operational recovery steps are
-in [`docs/runbook.md`](docs/runbook.md).
+in [`docs/runbook.md`](docs/runbook.md). Goal-driven planner response contracts
+are documented in
+[`docs/planner-output-schema.md`](docs/planner-output-schema.md).
 
 ## Quickstart
 

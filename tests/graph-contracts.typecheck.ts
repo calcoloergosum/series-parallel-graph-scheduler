@@ -9,10 +9,16 @@ import {
   type GraphNode,
   type JsonObject,
   type JsonValue,
+  type NodeOutputContract,
   type NodeStatus,
   type OperationalEventExportEntry,
   type ParsedArgs,
   type PlanGraphFile,
+  type PlannerChildProposal,
+  type PlannerRequest,
+  type PlannerResponse,
+  type PlannerValidationError,
+  type PlannerValidationResult,
   type PublicWorker,
   type ReachableDepthMap,
   type ReachableParentMap,
@@ -71,6 +77,24 @@ const extraMetadataNode: GraphNode = {
   title: "Task",
   kind: "task",
   status: "waiting-for-review",
+  goal: { text: "Keep planner-created nodes explainable", source: "planner" },
+  planner: {
+    name: "codex-planner",
+    model: "gpt-5",
+    requestId: "plan-contract",
+    plannedAt: "2026-05-27T00:00:00.000Z"
+  },
+  contextRefs: [{ type: "file", ref: "docs/planner-output-schema.md", title: "Planner contract" }],
+  outputContract: {
+    format: "markdown",
+    requiredArtifacts: ["summary"],
+    acceptanceCriteria: ["Unknown metadata stays preserved."]
+  },
+  resultSummary: {
+    status: "partial",
+    summary: "Planner metadata fields remain optional additive node metadata.",
+    artifacts: ["docs/planner-output-schema.md"]
+  },
   baseRef: {
     name: "refs/remotes/origin/main",
     commit: "0123456789abcdef0123456789abcdef01234567",
@@ -116,6 +140,50 @@ const vendorMetadata: JsonObject = {
   nested: { priority: 2, omitted: undefined }
 };
 const vendorJson: JsonValue = vendorMetadata;
+
+const plannerOutputContract: NodeOutputContract = {
+  format: "markdown",
+  requiredArtifacts: ["report", "test evidence"],
+  schemaRef: "docs/planner-output-schema.md"
+};
+const plannerRequest: PlannerRequest = {
+  requestId: "plan-contract-request",
+  mode: "decompose",
+  goal: "Define planner contracts",
+  nodeId: "A",
+  node: extraMetadataNode,
+  allowedKinds: ["task", "series", "parallel"],
+  contextRefs: [{ type: "node", ref: "A", nodeId: "A" }],
+  outputContract: plannerOutputContract,
+  planner: { name: "codex-planner", version: "0.1" }
+};
+const plannerChild: PlannerChildProposal = {
+  idHint: "SCHEMA",
+  kind: "task",
+  title: "Define schema",
+  deliverables: ["Types and examples"],
+  outputContract: plannerOutputContract,
+  customPlannerMetadata: { keep: true }
+};
+const _plannerResponse: PlannerResponse = {
+  requestId: plannerRequest.requestId,
+  kind: "series",
+  title: "Define planner schema",
+  childIdPolicy: "scheduler-generated",
+  children: [plannerChild],
+  rationale: "A validation boundary is easier to review before graph mutation."
+};
+const plannerValidationError: PlannerValidationError = {
+  path: "$.children[0].id",
+  code: "id-collision",
+  message: "Planner-provided id already exists.",
+  severity: "error"
+};
+const _plannerValidationResult: PlannerValidationResult = {
+  valid: false,
+  errors: [plannerValidationError],
+  warnings: []
+};
 
 const graph = {
   graphVersion: 1,
