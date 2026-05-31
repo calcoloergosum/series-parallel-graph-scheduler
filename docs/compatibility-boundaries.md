@@ -23,11 +23,11 @@ authoritative coverage that should fail when the surface regresses.
 | npm scripts | `ready`, `summary`, `serve`, `worker`, `render`, `schema:graph`, `smoke:migration`, `smoke:package`, `clean`, `format:check`, `audit:dependencies`, `lint`, `check`, `release:check`, `typecheck`, `build`, `test`, `coverage:core`, `test:visualizer`, `stress:deterministic`, `benchmark:lock-contention` | `README.md` "Command Entry Points"; `docs/testing.md`; `docs/lock-contention-benchmark.md` | `tests/package-smoke.test.mjs` "package npm scripts and bins target migrated build output"; `tests/fixtures/cli-goldens.json`; `scripts/migration-smoke.mjs`; `scripts/package-smoke.mjs` |
 | Package binaries | `spg-scheduler`, `spg-render-plan` | `README.md` "Command Entry Points" | `tests/package-smoke.test.mjs` "built package bin entry points smoke test scheduler and renderer CLIs" |
 | Compatibility wrappers | `node scripts/plan-scheduler.mjs ...`, `node scripts/render-plan.mjs ...`, `node scripts/sp-layout.mjs` as a layout wrapper | `README.md` "Command Entry Points"; this document "Stable CLI Surface" | `tests/package-smoke.test.mjs`; `scripts/migration-smoke.mjs` |
-| Scheduler commands | `ready`, `summary`, `diagnostics`, `events`, `claim`, `start`, `renew`, `reset`, `reset-subtree`, `reset-reachable`, `done`, `block`, `answer`, `fail`, `decompose`, `prompt`, `worker`, `reconcile`, `release-expired`, `serve`, `help` | `README.md` "Scheduler Commands"; `docs/operational-events.md`; this document "Stable CLI Surface" | `tests/fixtures/cli-goldens.json`; `tests/cli-goldens.test.mjs`; `tests/scheduler-mutations.test.mjs`; `tests/worker-runtime.test.mjs`; `tests/validation-contracts.test.mjs`; `tests/visualizer-renderer.test.mjs` |
-| Scheduler flags | `--graph`, `--node`, `--event`, `--limit`, `--session`, `--run`, `--lease`, `--reason`, `--report`, `--report-body`, `--question`, `--answer`, `--responder`, `--kind`, `--child`, `--child-json`, `--template`, `--cwd`, `--once`, `--quiet`, `--idle-ms`, `--timeout-ms`, `--codex-command`, repeated `--codex-arg`, `--isolation`, `--remote`, `--workspace-root`, `--workspace-retention`, `--port`, `--host`, `--visualizer-write-token`, `--unsafe-visualizer-write`, `--help` | `README.md`; `docs/operational-events.md`; this document "Stable CLI Surface" and "Worker Execution Contract" | `tests/fixtures/cli-goldens.json`; `tests/cli-goldens.test.mjs`; `tests/worker-runtime.test.mjs`; `tests/visualizer-renderer.test.mjs` |
+| Scheduler commands | `plan`, `ready`, `summary`, `diagnostics`, `events`, `claim`, `start`, `renew`, `reset`, `reset-subtree`, `reset-reachable`, `done`, `block`, `answer`, `fail`, `decompose`, `prompt`, `worker`, `reconcile`, `release-expired`, `serve`, `help` | `README.md` "Scheduler Commands" and "Goal-Driven Planning"; `docs/operational-events.md`; this document "Stable CLI Surface" | `tests/fixtures/cli-goldens.json`; `tests/cli-goldens.test.mjs`; `tests/scheduler-mutations.test.mjs`; `tests/worker-runtime.test.mjs`; `tests/validation-contracts.test.mjs`; `tests/visualizer-renderer.test.mjs` |
+| Scheduler flags | `--graph`, `--goal`, `--title`, `--dry-run`, `--plan-only`, `--then-run`, `--node`, `--event`, `--limit`, `--session`, `--run`, `--lease`, `--reason`, `--report`, `--report-body`, `--question`, `--answer`, `--responder`, `--kind`, `--child`, `--child-json`, `--template`, `--cwd`, `--once`, `--quiet`, `--idle-ms`, `--timeout-ms`, `--codex-command`, repeated `--codex-arg`, `--isolation`, `--remote`, `--workspace-root`, `--workspace-retention`, `--port`, `--host`, `--visualizer-write-token`, `--unsafe-visualizer-write`, `--help` | `README.md`; `docs/operational-events.md`; this document "Stable CLI Surface", "Goal-Driven Mode Compatibility Note", and "Worker Execution Contract" | `tests/fixtures/cli-goldens.json`; `tests/cli-goldens.test.mjs`; `tests/worker-runtime.test.mjs`; `tests/visualizer-renderer.test.mjs` |
 | Renderer flags and positional arguments | `--graph`, `--output`, `--out`, first positional graph path, second positional output path | `README.md` "Renderer Usage"; this document "Renderer Output Locations" | `tests/visualizer-renderer.test.mjs` static renderer tests; `scripts/migration-smoke.mjs` |
-| Environment variables | `PLAN_GRAPH`, `SLACK_WEBHOOK_URL`, `SPG_SLACK_TIMEOUT_MS`, `SPG_DEBUG`, `SPG_GRAPH_LOCK_TIMEOUT_MS` | `README.md`; `docs/security.md`; this document "Stable CLI Surface" | `tests/cli-goldens.test.mjs`; `tests/visualizer-renderer.test.mjs`; `tests/validation-contracts.test.mjs` |
-| JSON stdout shapes | Successful JSON from `ready`, `summary`, `diagnostics`, `events`, `claim`, `start`, `renew`, `reset`, `reset-subtree`, `reset-reachable`, `done`, `block`, `answer`, `fail`, `decompose`, `worker`, `reconcile`, and `release-expired` | This document "JSON Output Shapes"; `docs/operational-events.md` | `tests/fixtures/cli-goldens.json`; `tests/cli-goldens.test.mjs`; `tests/validation-contracts.test.mjs` |
+| Environment variables | `PLAN_GRAPH`, `SLACK_WEBHOOK_URL`, `SPG_SLACK_TIMEOUT_MS`, `SPG_DEBUG`, `SPG_GRAPH_LOCK_TIMEOUT_MS`, `SPG_GIT_CACHE_LOCK_TIMEOUT_MS` | `README.md`; `docs/security.md`; this document "Stable CLI Surface" | `tests/cli-goldens.test.mjs`; `tests/visualizer-renderer.test.mjs`; `tests/validation-contracts.test.mjs` |
+| JSON stdout shapes | Successful JSON from `plan`, `ready`, `summary`, `diagnostics`, `events`, `claim`, `start`, `renew`, `reset`, `reset-subtree`, `reset-reachable`, `done`, `block`, `answer`, `fail`, `decompose`, `worker`, `reconcile`, and `release-expired` | This document "JSON Output Shapes"; `docs/operational-events.md` | `tests/fixtures/cli-goldens.json`; `tests/cli-goldens.test.mjs`; `tests/validation-contracts.test.mjs` |
 | Graph JSON format | Top-level graph metadata, `scheduler`, `document`, `graph.root`, `graph.nodes`, node status/kind/lease/history/report/ref fields, unknown metadata preservation, validation errors and warnings | `README.md` "Graph Validation"; `docs/graph-authoring.md`; `docs/mutation-ownership.md`; this document "Graph State Semantics" | `tests/validation-contracts.test.mjs`; `tests/fixtures/graphs/*`; `tests/graph-contracts.typecheck.ts` |
 | Graph behavior | Series/parallel/gate readiness, busy and terminal statuses, lease ownership and expiry, status transitions, reset scopes, decomposition, reconciliation, composition output refs | `README.md` "Operating Model"; this document "Graph State Semantics"; `docs/mutation-ownership.md`; `docs/worker-isolation-remote-cache.md` | `tests/scheduler-mutations.test.mjs`; `tests/worker-runtime.test.mjs`; `tests/validation-contracts.test.mjs` |
 | Prompt variables | `cwd`, `graphPath`, `nodeId`, `runId`, `session`, `reportPath`, `schedulerCommand`, `planTitle`, `planDescription`, `nodeTitle`, `nodeKind`, `nodeStatus`, `nodeJson`, `readyJson`, `summaryJson` | `README.md` "Worker Usage"; this document "Worker Execution Contract"; `prompts/codex-worker-task.md` | `tests/worker-runtime.test.mjs` "prompt command renders an external template"; `scripts/migration-smoke.mjs` |
@@ -52,6 +52,7 @@ Keep these entry points working:
 
 Keep these scheduler command names compatible:
 
+- `plan`
 - `ready`
 - `summary`
 - `diagnostics`
@@ -74,13 +75,14 @@ Keep these scheduler command names compatible:
 - `serve`
 - `help`
 
-Stable scheduler flags include `--graph`, `--node`, `--event`, `--limit`,
-`--session`, `--run`, `--lease`, `--reason`, `--report`, `--report-body`,
-`--question`, `--answer`, `--responder`, `--kind`, `--child`, `--child-json`,
-`--template`, `--cwd`, `--once`, `--quiet`, `--idle-ms`, `--timeout-ms`,
-`--codex-command`, repeated `--codex-arg`, `--isolation`, `--remote`,
-`--workspace-root`, `--workspace-retention`, `--port`, `--host`,
-`--visualizer-write-token`, `--unsafe-visualizer-write`, and `--help`.
+Stable scheduler flags include `--graph`, `--goal`, `--title`, `--dry-run`,
+`--plan-only`, `--then-run`, `--node`, `--event`, `--limit`, `--session`,
+`--run`, `--lease`, `--reason`, `--report`, `--report-body`, `--question`,
+`--answer`, `--responder`, `--kind`, `--child`, `--child-json`, `--template`,
+`--cwd`, `--once`, `--quiet`, `--idle-ms`, `--timeout-ms`, `--codex-command`,
+repeated `--codex-arg`, `--isolation`, `--remote`, `--workspace-root`,
+`--workspace-retention`, `--port`, `--host`, `--visualizer-write-token`,
+`--unsafe-visualizer-write`, and `--help`.
 Stable renderer flags include `--graph`, `--output`, and `--out`.
 
 Stable environment variables:
@@ -91,6 +93,8 @@ Stable environment variables:
 - `SPG_DEBUG=1`: prints stack traces with CLI errors.
 - `SPG_GRAPH_LOCK_TIMEOUT_MS`: graph lock wait timeout in milliseconds;
   default `5000`.
+- `SPG_GIT_CACHE_LOCK_TIMEOUT_MS`: Git cache lock wait timeout in milliseconds;
+  default `60000`.
 
 CLI graph path resolution is stable:
 
@@ -99,17 +103,102 @@ CLI graph path resolution is stable:
 
 Changes that rename commands, remove flags, change flag meanings, remove package binaries, change npm-script entry-point behavior, or change environment variable meanings are breaking changes.
 
+### Goal-Driven Mode Compatibility Note
+
+Goal-driven planning is an opt-in mode layered on top of the existing graph
+executor. Existing static graph workflows do not need graph changes, and
+`plan.graph.json` remains a supported source of truth for operators that prefer
+to author or maintain the graph directly.
+
+The goal-driven contract separates graph creation from graph execution:
+
+- `plan --goal "..."` is the graph-creation command. It accepts a root goal,
+  asks the planner to produce an initial series-parallel graph, validates the
+  result with the existing graph validator, and writes a graph JSON file.
+- `worker`, `claim`, `start`, `done`, `block`, `fail`, `decompose`,
+  `reconcile`, `release-expired`, `serve`, and the read-only inspection
+  commands execute, inspect, recover, or mutate an existing graph file. They do
+  not create a new graph from `--goal`.
+
+When `plan --goal` is used without an explicit graph output path, it writes the
+generated graph under `runs/goals/<timestamp>-<safe-goal-slug>/plan.graph.json`
+relative to the package root. The timestamp makes repeated planning runs
+non-destructive; the slug is only an operator hint and must use the same safe
+path-token policy as reports and isolated worker paths. If the operator wants
+the generated graph to be the default graph for later commands, they must pass
+`--graph plan.graph.json` to the planning command intentionally.
+
+For the `plan` command only, `--graph PATH` names the graph file to create. This
+does not change existing graph-selection semantics for the already documented
+scheduler commands: for those commands, `--graph` still selects the input graph,
+then `PLAN_GRAPH`, then `plan.graph.json`. A later renderer still follows its
+separate `--graph`, positional graph path, `PLAN_GRAPH`, then
+`plan.graph.json` resolution order.
+
+Generated graph replay is ordinary static graph execution. After graph
+creation, operators can run existing commands against the generated file:
+
+```bash
+node scripts/plan-scheduler.mjs plan --goal "Ship a searchable audit log"
+node scripts/plan-scheduler.mjs summary --graph runs/goals/20260531T000000Z-ship-a-searchable-audit-log/plan.graph.json
+node scripts/plan-scheduler.mjs worker --graph runs/goals/20260531T000000Z-ship-a-searchable-audit-log/plan.graph.json --session codex-A --once
+```
+
+For immediate execution, operators can opt in with `--then-run`. The command
+writes the generated graph first, then invokes the same worker runtime used by
+the existing `worker` command. Plain `plan` and explicit `--plan-only` stop
+after writing the graph for review.
+
+Resume behavior also uses the generated graph file as the durable source of
+truth. If a worker stops, an operator resumes by passing the same generated
+graph path to `worker`, `serve`, `ready`, `diagnostics`, or recovery commands.
+The original `--goal` text is planner input, not a resume handle. Re-running
+`plan --goal` creates a new planning artifact by default and must not overwrite
+an existing graph unless a future explicit overwrite flag says so.
+
+| Mode | Opt-in signal | Graph path meaning | Default path | Creates graph? | Executes graph? | Resume or replay |
+| --- | --- | --- | --- | --- | --- | --- |
+| Static graph mode | Any existing scheduler command without `--goal` | `--graph` selects the input graph; fallback is `PLAN_GRAPH`, then `plan.graph.json` | `plan.graph.json` from the package root | No | Yes, for mutating and worker commands | Re-run the same command with the same graph path |
+| Goal planning mode | `plan --goal "..."` or `plan --goal "..." --plan-only` | `--graph` names the graph file to create for this command only | `runs/goals/<timestamp>-<safe-goal-slug>/plan.graph.json` | Yes | No | Resume by using the written graph path with existing commands |
+| Goal planning and execution mode | `plan --goal "..." --then-run` | `--graph` names the graph file to create, then the worker input graph | `runs/goals/<timestamp>-<safe-goal-slug>/plan.graph.json` | Yes | Yes, through the existing worker runtime | Resume by using the written graph path with existing commands |
+| Generated graph replay mode | Existing scheduler command with `--graph <generated-plan.graph.json>` | `--graph` selects the generated graph as input | None beyond the existing scheduler fallback if omitted | No | Yes | Re-run `worker`, `serve`, `diagnostics`, or recovery commands with the same generated graph path |
+
+Goal-driven behavior must remain additive. Introducing `--goal` must not make
+existing `--graph` commands plan implicitly, change the default graph selection
+for static workflows, or require existing `plan.graph.json` files to adopt
+planner metadata.
+
+Planner approval and execution boundaries are part of the compatibility
+contract. Dry-run planning must not mutate the graph or start workers.
+Auto-save may write only validated planner output through the normal locked
+graph writer. Worker execution requires either a separate approve-before-run
+step against a saved graph or the explicit `--then-run` opt-in on the planning
+command. Regenerate flows must create a new proposal instead of silently
+overwriting accepted graph state. Detailed failure and security rules live in
+[`planning-safety-and-approval.md`](planning-safety-and-approval.md).
+
 ## JSON Output Shapes
 
 Commands that currently print JSON should continue to print a single JSON value to stdout:
 
 - `ready`: array of ready leaf objects with at least `id`, `kind`, and `status`; `title`, `question`, `answer`, and `answeredAt` are present when known on the node.
+- `plan`: object with at least `graphPath`, `mode`, `dryRun`, `written`,
+  `rootId`, `nodeCount`, `nextCommands`, `validation`, `summary`, and `graph`.
+  Plain `plan` and `--plan-only` report `mode: "plan-only"` and do not start a
+  worker. `--then-run` reports `mode: "plan-then-run"` and includes
+  `execution`, using the same result shape as `worker` when execution starts.
+  If worker setup fails after the graph is written, the JSON result still
+  reports the graph path and an `execution.failed` error before the command
+  exits non-zero.
 - `summary`: object with at least `totalNodes`, `root`, and `counts`; `graphVersion`, `title`, and `description` are present when known on the graph.
 - `diagnostics`: object with at least `generatedAt`, `summary`,
   `nextReady`, `leases`, `blocked`, `failed`, `isolation`, and `actions`;
   `graphPath` and `lock` are present when known. `leases` has `active` and
   `expired`; `isolation` has `activeWorkers`, `missingOutputRefs`, and
-  `unresolvedBufferConflicts`.
+  `unresolvedBufferConflicts`. Diagnostic node `isolation` details may include
+  `gitFootprint`; consumers should apply the same `gitFootprint` then
+  `outputRef` fallback used by the visualizer when rendering commit and
+  line-change summaries.
 - `events`: array of newest-first event objects with at least `at`, `event`,
   `nodeId`, `status`, `timestamps`, and `details`; `session` and `runId` are
   present when known. `--node`, `--event`, and `--limit` filter the exported
@@ -141,7 +230,7 @@ The existing graph file format must remain compatible:
 - Top-level metadata such as `schemaVersion`, `graphVersion`, `title`, `description`, `statusModel`, `scheduler`, and `document` remains allowed.
 - `graph.root` points at a node id in `graph.nodes`.
 - `graph.nodes` is an object keyed by node id.
-- Nodes may include `title`, `kind`, `status`, `children`, `description`, `deliverables`, `acceptanceCriteria`, lease fields, timestamps, `question`, `answer`, `report`, `history`, and additional metadata.
+- Nodes may include `title`, `kind`, `status`, `children`, `description`, `deliverables`, `acceptanceCriteria`, lease fields, timestamps, `question`, `answer`, `report`, `history`, Git provenance metadata, and additional metadata.
 - Unknown top-level, graph-level, and node-level metadata should be preserved unless a mutation explicitly owns that field.
 - Missing node `kind` defaults operationally to `task`; missing `status` defaults operationally to `pending`.
 - Known node kinds are `task`, `series`, `parallel`, and `gate`; unknown kinds are tolerated as metadata, with traversal falling back to visiting children in order.
@@ -280,7 +369,7 @@ Mutation semantics are public behavior:
   sibling branches. Selecting the root resets every root-reachable node.
   Selecting a node that is not reachable from `graph.root` resets only that
   node's child-reachable subtree.
-- `decompose` replaces a claimed or running leaf with a `series` or `parallel` subtree and creates child nodes from `--child` or `--child-json`.
+- `decompose` replaces a claimed, running, or blocked leaf with a `series` or `parallel` subtree and creates child nodes from `--child` or `--child-json`.
 - `decompose --child ID=Title` and `--child ID:Title` create task/pending children.
 - `decompose --child-json` accepts an array of objects with string `id` and `title`; optional `kind`, `status`, string-array `children`, and additional child metadata are preserved on created child nodes.
 - Mutation ownership rules for preserving unknown metadata and documenting cleared fields are maintained in [Mutation Ownership](mutation-ownership.md).
@@ -299,7 +388,7 @@ Status transitions are defined by command. Worker-owned commands require matchin
 | `reset` | operator | leaf | any known status; custom statuses are also reset | `pending` | clears lease without owner credentials |
 | `reset-subtree` | operator | selected node and child-reachable descendants | any known status; custom statuses are also reset | `pending` | clears leases in the reset set without owner credentials |
 | `reset-reachable` | operator | selected node, descendants, and later execution-reachable series work | any known status; custom statuses are also reset | `pending` | clears leases in the reset set without owner credentials |
-| `decompose` | worker | leaf | `claimed`, `running` | selected node returns to `pending` as a `series`/`parallel` parent | requires owner if leased; clears lease and creates children |
+| `decompose` | worker | leaf | `claimed`, `running`, `blocked` | selected node returns to `pending` as a `series`/`parallel` parent | requires owner if leased; clears lease and creates children |
 | `reconcile` | system | non-leaf whose child subtrees are all `done`; composition buffers publish parent refs before downstream readiness | any non-`done` status except parked blocked/review/failed buffers until reset | `done`, `blocked`, or `review` | does not inspect leases |
 | `release-expired` | system | nodes with expired leases | `claimed`, `running` | `pending` | clears only expired `claimed`/`running` leases |
 
@@ -309,6 +398,8 @@ events use `claimed`, `running`, `renewed`, `done`, `blocked`, `answered`,
 Git isolation graph history events use `clone-prepared`, `branch-created`,
 `output-ref-recorded`, `merge-attempted`, `merge-conflicted`, and
 `parent-ref-published`.
+Planner preflight graph history events use `planner-failed` and
+`planner-preview-rejected`.
 Worker-manager events use `worker-started` and `worker-stopped`. Lock
 diagnostic events reserve `lock-acquired`, `lock-released`,
 `lock-stale-reaped`, and `lock-timeout`. Event names should not be renamed once
@@ -360,8 +451,16 @@ the SVG. Each entry keeps at least `id`, `title`, `kind`, `status`,
 `refs`, `workspace`, `report`, `question`, `answer`, `answeredBy`,
 `blockedReason`, `failureReason`, `timestamps`, `history`, `historyCount`, and
 `historyLimit` when those values are known on the graph node. `refs` groups
-`baseRef`, `workRef`, `outputRef`, and `integrationRef`. `timestamps` groups
-the node lifecycle timestamps such as `startedAt`, `completedAt`, `blockedAt`,
+`baseRef`, `workRef`, `outputRef`, `integrationRef`, and `gitFootprint`.
+Visualizer consumers that render commit ids, branch names, refs, line-change
+counts, or changed file rows should prefer the normalized `git` object. `git`
+uses `insertions` consistently even when older graph metadata used `additions`,
+sorts changed file rows deterministically, and caps the row payload with
+`changedFilesLimit`, `changedFilesTotal`, and `changedFilesTruncated` so browser
+renderers do not parse raw Git metadata or manage large lists themselves.
+`workspaceDisplay` and `git.remoteDisplay`, `git.workspaceDisplay`, and
+`git.bareRepoDisplay` are display-only redacted values. `timestamps` groups the
+node lifecycle timestamps such as `startedAt`, `completedAt`, `blockedAt`,
 `answeredAt`, `failedAt`, and `expiredAt`. The `history` array is the latest
 `historyLimit` entries, not the full node history; `historyCount` reports the
 full graph history length for that node. Detail fields are JSON data, not
@@ -596,6 +695,106 @@ should use one of `explicit`, `graph-default`, `parent-base`,
 `series-predecessor`, or `parent-output`. Future source strings are allowed and
 must be preserved by mutation commands.
 
+Git footprint metadata is additive graph state for diagnostics and visualizer
+consumers that need commit and line-change summaries without re-running Git for
+every payload. The canonical node field is `gitFootprint`; `outputRef` may carry
+the same `diffStat`, `files`, and `collectedAt` fields as compatibility and
+fallback metadata. This is intentionally "both": new producers should write
+`node.gitFootprint` when they can, and may mirror the small summary under
+`outputRef`; readers must fall back to `outputRef.commit`, `outputRef.diffStat`,
+`outputRef.files`, and `outputRef.collectedAt` when `gitFootprint` is absent.
+This lets older isolated runs show a commit and line-change counts when only
+`outputRef` metadata exists.
+
+The stable `node.gitFootprint` shape is:
+
+```json
+{
+  "gitFootprint": {
+    "baseRef": {
+      "name": "refs/remotes/origin/main",
+      "commit": "0123456789abcdef0123456789abcdef01234567"
+    },
+    "headRef": {
+      "name": "refs/heads/spg/node/NODE/run_20260527_000000_NODE_abc123",
+      "commit": "fedcba9876543210fedcba9876543210fedcba98"
+    },
+    "branch": "spg/node/NODE/run_20260527_000000_NODE_abc123",
+    "commit": "fedcba9876543210fedcba9876543210fedcba98",
+    "diffStat": {
+      "filesChanged": 2,
+      "insertions": 42,
+      "deletions": 7,
+      "totalChanges": 49,
+      "binaryFiles": 0
+    },
+    "files": [
+      {
+        "path": "scripts/contracts.ts",
+        "oldPath": "scripts/types.ts",
+        "changeType": "renamed",
+        "insertions": 20,
+        "deletions": 3,
+        "totalChanges": 23,
+        "binary": false
+      }
+    ],
+    "collectedAt": "2026-05-27T00:05:01.000Z"
+  }
+}
+```
+
+Stable field meanings:
+
+- `baseRef`: ref and commit used as the diff base. It normally matches
+  `node.baseRef`, or the parent composition base for aggregate nodes.
+- `headRef`: ref and commit used as the diff head. It normally matches
+  `node.outputRef` for completed leaves or published parent refs.
+- `branch`: display branch or short ref name for the head when available.
+- `commit`: display head commit. It should match `headRef.commit` and
+  `outputRef.commit` when those fields are present.
+- `diffStat.filesChanged`, `diffStat.insertions`, `diffStat.deletions`, and
+  `diffStat.totalChanges`: numeric summary fields for visualizer consumers.
+  `totalChanges` is `insertions + deletions`. `binaryFiles` is optional and
+  counts files whose line-level stats are unavailable. Legacy metadata may use
+  `additions` instead of `insertions`; readers should treat it as the same
+  line-increase count when `insertions` is absent.
+- `files`: file-level stats sorted by path unless a producer documents another
+  deterministic order. Stable field names are `path`, `oldPath`, `changeType`,
+  `insertions`, `deletions`, `totalChanges`, and `binary`. Binary file line
+  counts may be `null`; otherwise `totalChanges` is `insertions + deletions`.
+  Legacy file metadata may use `additions` instead of `insertions`.
+- `collectedAt`: timestamp for when Git metadata was collected. It may differ
+  slightly from `outputRef.producedAt` because collection can happen after the
+  output ref is recorded.
+
+Aggregate footprint rules:
+
+- Task leaves record the exact diff from their resolved `baseRef` commit/ref to
+  their `outputRef` commit/ref. If no worktree changes were committed, the
+  footprint can still record the commit with a zero-count `diffStat`.
+- Series parents use the first child subtree's resolved base as `baseRef` and
+  the final child subtree's published output as `headRef`, `branch`, and
+  `commit`. When Git can compute the parent range, `diffStat` and `files` are
+  the net diff from the series base to the final head. When only child
+  footprints are available, an implementation may publish a summed summary but
+  must preserve child footprints for audit; consumers must treat summed series
+  file stats as display metadata rather than an exact per-file net diff.
+- Parallel parents use the parent composition base as `baseRef` and the clean
+  integration output as `headRef`, `branch`, and `commit`. `diffStat` and
+  `files` describe the final integrated tree relative to the parent base, not
+  each child branch independently. While a parallel parent is `blocked` or
+  `review`, it may omit parent `gitFootprint` and rely on child footprints plus
+  `integrationRef` conflict metadata.
+- Gate parents do not create Git changes by themselves. A gate with one
+  upstream output may alias that upstream footprint; a gate that only controls
+  readiness may omit `gitFootprint`. If a future gate performs a concrete Git
+  validation or publication step, its footprint follows the same base/head rules
+  as a task leaf.
+- Resetting or rerunning a node invalidates its `gitFootprint` and any aggregate
+  parent footprints derived from it in the same way it invalidates derived
+  `outputRef` and `integrationRef` metadata.
+
 Task base refs are resolved at claim/start time in this order:
 
 - An explicit node `baseRef.name`, when already present, wins and is re-resolved
@@ -620,7 +819,9 @@ Task base refs are resolved at claim/start time in this order:
 Worker reports must include the node id, run id, report path, redacted remote,
 bare repository path, clone cwd, `baseRef.name`, `workRef.name`,
 `outputRef.name`, integration result when applicable, and resolved commits when
-known. This links a worker run to the clone and branch it used, records the
+known. When collected, reports should also include the same `diffStat` and
+file-level `files` summary recorded in `gitFootprint`. This links a worker run
+to the clone and branch it used, records the
 branch it produced, and gives downstream workers the exact ref to clone from.
 The raw remote string is allowed only for Git subprocesses; reports, graph
 history, diagnostics, visualizer payloads, and logs must use the redacted
@@ -750,8 +951,8 @@ not be treated as a non-Git isolation fallback.
 Existing graphs do not need a migration to keep using the scheduler in
 shared-cwd mode. When workers run with the default `--isolation off`, the
 presence or absence of `scheduler.remote`, `baseRef`, `workRef`, `outputRef`,
-or `integrationRef` must not change claim, prompt, worker cwd, report, reset,
-or manual status-command behavior.
+`integrationRef`, or `gitFootprint` must not change claim, prompt, worker cwd,
+report, reset, or manual status-command behavior.
 
 Graphs opt in to isolated workers by adding a concrete Git remote under
 `scheduler.remote`, then starting workers with `--isolation git`:

@@ -446,6 +446,178 @@ test("generated unknown kinds and custom statuses warn while remaining traversal
   }
 });
 
+test("graph validation accepts insertion and legacy addition git footprint metadata", () => {
+  const graph = {
+    graph: {
+      root: "ROOT",
+      nodes: {
+        ROOT: {
+          title: "Root",
+          kind: "parallel",
+          status: "pending",
+          children: ["NEW", "LEGACY"]
+        },
+        NEW: {
+          title: "New footprint",
+          kind: "task",
+          status: "done",
+          gitFootprint: {
+            diffStat: { filesChanged: 1, insertions: 12, deletions: 3, totalChanges: 15 },
+            files: [{ path: "scripts/contracts.ts", insertions: 12, deletions: 3, totalChanges: 15 }]
+          }
+        },
+        LEGACY: {
+          title: "Legacy footprint",
+          kind: "task",
+          status: "done",
+          gitFootprint: {
+            diffStat: { filesChanged: 1, additions: 12, deletions: 3, totalChanges: 15 },
+            files: [{ path: "scripts/contracts.ts", additions: 12, deletions: 3, totalChanges: 15 }]
+          }
+        }
+      }
+    }
+  };
+
+  assert.deepEqual(validatePlanGraphFileResult(graph).errors, []);
+});
+
+test("graph validation rejects malformed planner metadata shapes when present", () => {
+  const graph = {
+    graph: {
+      root: "ROOT",
+      nodes: {
+        ROOT: {
+          title: "Root",
+          kind: "parallel",
+          status: "pending",
+          children: ["BAD_PLANNER", "BAD_CONTEXT", "BAD_CONTRACT", "BAD_RESULT"]
+        },
+        BAD_PLANNER: {
+          title: "Bad planner",
+          kind: "task",
+          status: "pending",
+          planner: {
+            name: 42,
+            plannedAt: "not-a-date"
+          }
+        },
+        BAD_CONTEXT: {
+          title: "Bad context",
+          kind: "task",
+          status: "pending",
+          contextRefs: [{ type: "file", title: "Missing ref" }, "not-object"]
+        },
+        BAD_CONTRACT: {
+          title: "Bad contract",
+          kind: "task",
+          status: "pending",
+          outputContract: {
+            requiredArtifacts: ["reports/out.md", 7],
+            schemaRef: false
+          }
+        },
+        BAD_RESULT: {
+          title: "Bad result",
+          kind: "task",
+          status: "done",
+          resultSummary: {
+            artifacts: "reports/out.md",
+            completedAt: "yesterday"
+          }
+        }
+      }
+    }
+  };
+
+  const result = validatePlanGraphFileResult(graph);
+  assert.deepEqual(result.warnings, []);
+  assert.deepEqual(result.errors.map(({ path, message }) => `${path}: ${message}`), [
+    "$.graph.nodes.BAD_PLANNER.planner.name: Expected planner name string",
+    "$.graph.nodes.BAD_PLANNER.planner.plannedAt: Expected timestamp string",
+    "$.graph.nodes.BAD_CONTEXT.contextRefs[0].ref: Expected contextRef ref string",
+    "$.graph.nodes.BAD_CONTEXT.contextRefs[1]: Expected contextRef to be an object",
+    "$.graph.nodes.BAD_CONTRACT.outputContract.requiredArtifacts[1]: Expected outputContract requiredArtifacts strings",
+    "$.graph.nodes.BAD_CONTRACT.outputContract.schemaRef: Expected outputContract schemaRef string",
+    "$.graph.nodes.BAD_RESULT.resultSummary.summary: Expected resultSummary summary string",
+    "$.graph.nodes.BAD_RESULT.resultSummary.artifacts: Expected resultSummary artifact strings",
+    "$.graph.nodes.BAD_RESULT.resultSummary.completedAt: Expected timestamp string"
+  ]);
+});
+
+test("graph validation rejects malformed gitFootprint schema shapes when present", () => {
+  const graph = {
+    graph: {
+      root: "ROOT",
+      nodes: {
+        ROOT: {
+          title: "Root",
+          kind: "parallel",
+          status: "pending",
+          children: ["BAD_GIT"]
+        },
+        BAD_GIT: {
+          title: "Bad git footprint",
+          kind: "task",
+          status: "done",
+          gitFootprint: {
+            source: 12,
+            headRef: "refs/heads/bad",
+            diffStat: {
+              filesChanged: "1",
+              deletions: 1,
+              totalChanges: 1
+            },
+            files: [
+              {
+                path: 9,
+                insertions: "1",
+                deletions: null,
+                totalChanges: null,
+                binary: "yes",
+                childIds: ["A", 1]
+              },
+              {
+                path: "missing-lines.ts",
+                deletions: 0,
+                totalChanges: 0
+              }
+            ],
+            aggregation: {
+              source: "child-footprints",
+              childCount: "2",
+              includedChildIds: ["A"],
+              missingChildIds: "B",
+              duplicateFilePaths: [],
+              diffStatKind: "summed-child-stats",
+              filesChangedKind: "unique-file-paths-with-stat-only-sum"
+            },
+            collectedAt: "not-a-date"
+          }
+        }
+      }
+    }
+  };
+
+  const result = validatePlanGraphFileResult(graph);
+  assert.deepEqual(result.warnings, []);
+  assert.deepEqual(result.errors.map(({ path, message }) => `${path}: ${message}`), [
+    "$.graph.nodes.BAD_GIT.gitFootprint.source: Expected gitFootprint source string",
+    "$.graph.nodes.BAD_GIT.gitFootprint.headRef: Expected git ref footprint to be an object",
+    "$.graph.nodes.BAD_GIT.gitFootprint.diffStat.filesChanged: Expected git diffStat filesChanged number",
+    "$.graph.nodes.BAD_GIT.gitFootprint.diffStat: Expected git diffStat insertions or additions number",
+    "$.graph.nodes.BAD_GIT.gitFootprint.files[0].path: Expected git file path string",
+    "$.graph.nodes.BAD_GIT.gitFootprint.files[0].insertions: Expected git file insertions number or null",
+    "$.graph.nodes.BAD_GIT.gitFootprint.files[0].binary: Expected git file binary boolean",
+    "$.graph.nodes.BAD_GIT.gitFootprint.files[0].childIds[1]: Expected git file childIds strings",
+    "$.graph.nodes.BAD_GIT.gitFootprint.files[1]: Expected git file insertions or additions number",
+    "$.graph.nodes.BAD_GIT.gitFootprint.aggregation.childCount: Expected gitFootprint aggregation childCount number",
+    "$.graph.nodes.BAD_GIT.gitFootprint.aggregation.missingChildIds: Expected gitFootprint aggregation missingChildIds strings",
+    "$.graph.nodes.BAD_GIT.gitFootprint.aggregation.fileMergeRule: Expected gitFootprint aggregation fileMergeRule string",
+    "$.graph.nodes.BAD_GIT.gitFootprint.collectedAt: Expected timestamp string"
+  ]);
+});
+
 test("generated graph JSON Schema artifact is deterministic and maps validator invariants", async () => {
   const checkedInSchema = JSON.parse(await readFile(graphSchemaPath, "utf8"));
   assert.deepEqual(checkedInSchema, buildPlanGraphJsonSchema());
@@ -457,6 +629,20 @@ test("generated graph JSON Schema artifact is deterministic and maps validator i
   assert.equal(checkedInSchema.$defs.node.properties.children.uniqueItems, true);
   assert.deepEqual(checkedInSchema.$defs.lease.required, ["session", "runId", "claimedAt", "expiresAt"]);
   assert.deepEqual(checkedInSchema.$defs.historyEntry.required, ["at"]);
+  assert.deepEqual(checkedInSchema.$defs.gitDiffStat.anyOf, [
+    { required: ["filesChanged", "insertions", "deletions", "totalChanges"] },
+    { required: ["filesChanged", "additions", "deletions", "totalChanges"] }
+  ]);
+  assert.equal(checkedInSchema.$defs.gitDiffStat.properties.filesChanged.type, "number");
+  assert.equal(checkedInSchema.$defs.gitDiffStat.properties.insertions.type, "number");
+  assert.equal(checkedInSchema.$defs.gitDiffStat.properties.deletions.type, "number");
+  assert.deepEqual(checkedInSchema.$defs.gitFileFootprint.anyOf, [
+    { required: ["path", "insertions", "deletions", "totalChanges"] },
+    { required: ["path", "additions", "deletions", "totalChanges"] }
+  ]);
+  assert.equal(checkedInSchema.$defs.gitFileFootprint.properties.path.type, "string");
+  assert.deepEqual(checkedInSchema.$defs.gitFileFootprint.properties.insertions.type, ["number", "null"]);
+  assert.deepEqual(checkedInSchema.$defs.gitFileFootprint.properties.deletions.type, ["number", "null"]);
   assert.equal(
     checkedInSchema.$defs.timestamp.pattern,
     String.raw`^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})$`

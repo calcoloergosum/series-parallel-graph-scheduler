@@ -49,9 +49,13 @@ after(async () => {
 });
 
 export const {
+  aggregateChildGitFootprints,
   answerNode,
   attachReadyPriorityFields,
   blockNode,
+  buildGoalGraph,
+  buildPlannerPrompt,
+  buildPlannerRuntimeRequest,
   buildSlackNotificationText,
   buildNodeWorkBranchName,
   buildReachableDepthMap,
@@ -61,10 +65,13 @@ export const {
   buildWorkerPrompt,
   buildVisualizerPayload,
   claimNode,
+  collectGitDiffStat,
   compareReadyPriorityCandidates,
   completeNode,
   countSharedParentsWithCurrentTask,
   createRunClone,
+  createFixturePlannerRuntime,
+  createPromptPlannerRuntime,
   createWorkBranch,
   createVisualizerServer,
   defaultReportPath,
@@ -82,6 +89,9 @@ export const {
   parseArgs,
   parseCodexArgs,
   parseChildrenArgs,
+  parsePlannerResponse,
+  planNodeDecomposition,
+  plannerResponseToDecomposeMutation,
   prepareBareRepository,
   publishOutputRef,
   readGraph,
@@ -106,6 +116,7 @@ export const {
   startLeaseHeartbeat,
   redactOperationalEventDetails,
   summarizeGraph,
+  validatePlannerResponse,
   visualizerHostSecurityWarning,
   withGraphLock,
   writeGraphAtomic,
@@ -1071,34 +1082,102 @@ export function runVisualizerClientScript() {
   assert.equal(typeof script, "string");
 
   const elements = new Map();
+  function escapeTestHtml(value) {
+    return String(value)
+      .replaceAll("&", "&amp;")
+      .replaceAll("<", "&lt;")
+      .replaceAll(">", "&gt;")
+      .replaceAll('"', "&quot;");
+  }
+
+  function serializeElement(node) {
+    if (typeof node === "string") {
+      return escapeTestHtml(node);
+    }
+    const attrs = [];
+    if (node.className) {
+      attrs.push(`class="${escapeTestHtml(node.className)}"`);
+    }
+    for (const [name, value] of Object.entries(node.attributes || {})) {
+      attrs.push(`${name}="${escapeTestHtml(value)}"`);
+    }
+    const attrText = attrs.length ? ` ${attrs.join(" ")}` : "";
+    return `<${node.tagName}${attrText}>${node.innerHTML}</${node.tagName}>`;
+  }
+
+  function makeElement(id, tagName = "div") {
+    const state = {
+      id,
+      tagName,
+      value: "",
+      checked: false,
+      dataset: {},
+      attributes: {},
+      childNodes: [],
+      disabled: false,
+      addEventListener() {},
+      setAttribute(name, value) {
+        this.attributes[name] = String(value);
+      },
+      getAttribute(name) {
+        return this.attributes[name];
+      },
+      append(...children) {
+        this._innerHTML = undefined;
+        this._textContent = undefined;
+        this.childNodes.push(...children);
+      },
+      appendChild(child) {
+        this.append(child);
+        return child;
+      },
+      replaceChildren(...children) {
+        this._innerHTML = undefined;
+        this._textContent = undefined;
+        this.childNodes = [];
+        this.append(...children);
+      },
+      closest() {
+        return undefined;
+      },
+      querySelector() {
+        return element(`${id}:query`);
+      },
+      get innerHTML() {
+        if (this._innerHTML !== undefined) {
+          return this._innerHTML;
+        }
+        if (this._textContent !== undefined) {
+          return escapeTestHtml(this._textContent);
+        }
+        return this.childNodes.map(serializeElement).join("");
+      },
+      set innerHTML(value) {
+        this._innerHTML = String(value);
+        this._textContent = undefined;
+        this.childNodes = [];
+      },
+      get textContent() {
+        if (this._textContent !== undefined) {
+          return this._textContent;
+        }
+        if (this._innerHTML !== undefined) {
+          return this._innerHTML;
+        }
+        return this.childNodes.map((child) => typeof child === "string" ? child : child.textContent).join("");
+      },
+      set textContent(value) {
+        this._textContent = String(value);
+        this._innerHTML = undefined;
+        this.childNodes = [];
+      }
+    };
+    return state;
+  }
+
   function element(id) {
     if (!elements.has(id)) {
-      elements.set(id, {
-        id,
-        value: "",
-        checked: false,
-        dataset: {},
-        disabled: false,
-        addEventListener() {},
-        closest() {
-          return undefined;
-        },
-        querySelector() {
-          return element(`${id}:query`);
-        },
-        get innerHTML() {
-          return this._innerHTML || "";
-        },
-        set innerHTML(value) {
-          this._innerHTML = String(value);
-        },
-        get textContent() {
-          return this._textContent || "";
-        },
-        set textContent(value) {
-          this._textContent = String(value);
-        }
-      });
+      elements.set(id, makeElement(id));
     }
     return elements.get(id);
   }
@@ -1106,9 +1185,15 @@ export function runVisualizerClientScript() {
   const context = {
     document: {
       addEventListener() {},
+      createElement(tagName) {
+        return makeElement(`${tagName}:${Math.random()}`, String(tagName).toLowerCase());
+      },
       getElementById: element,
       querySelector(selector) {
         return element(`query:${selector}`);
+      },
+      querySelectorAll() {
+        return [];
       }
     },
     localStorage: {

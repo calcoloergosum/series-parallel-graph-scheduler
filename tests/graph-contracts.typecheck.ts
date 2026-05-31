@@ -3,16 +3,29 @@ import {
   isKnownNodeKind,
   isKnownNodeStatus,
   type CliCommand,
+  type GitDiffStatMetadata,
+  type GitFileFootprintMetadata,
   type GraphDiagnostics,
   type GraphLease,
   type GraphLockDiagnostics,
   type GraphNode,
   type JsonObject,
   type JsonValue,
+  type NodeOutputContract,
   type NodeStatus,
   type OperationalEventExportEntry,
   type ParsedArgs,
   type PlanGraphFile,
+  type PlannerChildProposal,
+  type PlannerOutputSchemaDescriptor,
+  type PlannerParentContext,
+  type PlannerRequest,
+  type PlannerResponse,
+  type PlannerRuntime,
+  type PlannerRuntimeRequest,
+  type PlannerRuntimeResponse,
+  type PlannerValidationError,
+  type PlannerValidationResult,
   type PublicWorker,
   type ReachableDepthMap,
   type ReachableParentMap,
@@ -24,6 +37,7 @@ import {
   type VisualizerPayload,
   type WorkerManagerProcess
 } from "../scripts/contracts.js";
+
 import {
   parseArgs,
   parseChildrenArgs,
@@ -54,6 +68,11 @@ import { type GraphLockOptions } from "../scripts/graph-io.js";
 import { runtimePathsFromModuleUrl, type RuntimePaths } from "../scripts/runtime-paths.js";
 import { type BuildWorkerPromptOptions, type RunCodexPromptOptions } from "../scripts/worker.js";
 
+const _insertionDiffStat: GitDiffStatMetadata = { filesChanged: 1, insertions: 2, deletions: 1, totalChanges: 3 };
+const _legacyAdditionDiffStat: GitDiffStatMetadata = { filesChanged: 1, additions: 2, deletions: 1, totalChanges: 3 };
+const _insertionFileFootprint: GitFileFootprintMetadata = { path: "scripts/contracts.ts", insertions: 2, deletions: 1, totalChanges: 3 };
+const _legacyAdditionFileFootprint: GitFileFootprintMetadata = { path: "scripts/contracts.ts", additions: 2, deletions: 1, totalChanges: 3 };
+
 const rendererDocument: RendererDocument = {
   pageTitle: "Typed graph",
   nav: [{ label: "README", href: "README.md" }],
@@ -71,6 +90,27 @@ const extraMetadataNode: GraphNode = {
   title: "Task",
   kind: "task",
   status: "waiting-for-review",
+  goal: { text: "Keep planner-created nodes explainable", source: "planner" },
+  planner: {
+    name: "codex-planner",
+    model: "gpt-5",
+    requestId: "plan-contract",
+    decision: "Keep as a single review task",
+    plannedAt: "2026-05-27T00:00:00.000Z"
+  },
+  plannerDecision: "Keep as a single review task",
+  decompositionReason: "Planner selected one focused review unit.",
+  contextRefs: [{ type: "file", ref: "docs/planner-output-schema.md", title: "Planner contract" }],
+  outputContract: {
+    format: "markdown",
+    requiredArtifacts: ["summary"],
+    acceptanceCriteria: ["Unknown metadata stays preserved."]
+  },
+  resultSummary: {
+    status: "partial",
+    summary: "Planner metadata fields remain optional additive node metadata.",
+    artifacts: ["docs/planner-output-schema.md"]
+  },
   baseRef: {
     name: "refs/remotes/origin/main",
     commit: "0123456789abcdef0123456789abcdef01234567",
@@ -88,7 +128,10 @@ const extraMetadataNode: GraphNode = {
     name: "refs/heads/spg/node/A/run_20260527_000000_A_abc123",
     commit: "fedcba9876543210fedcba9876543210fedcba98",
     report: "reports/A-run_20260527_000000_A_abc123.md",
-    producedAt: "2026-05-27T00:05:00.000Z"
+    producedAt: "2026-05-27T00:05:00.000Z",
+    diffStat: { filesChanged: 1, insertions: 12, deletions: 3, totalChanges: 15 },
+    files: [{ path: "scripts/contracts.ts", changeType: "modified", insertions: 12, deletions: 3, totalChanges: 15 }],
+    collectedAt: "2026-05-27T00:05:01.000Z"
   },
   integrationRef: {
     name: "refs/heads/spg/integration/P/run_20260527_000000_P_def456",
@@ -105,6 +148,18 @@ const extraMetadataNode: GraphNode = {
     session: "codex-A",
     preparedAt: "2026-05-27T00:00:00.000Z"
   },
+  gitFootprint: {
+    baseRef: { name: "refs/remotes/origin/main", commit: "0123456789abcdef0123456789abcdef01234567" },
+    headRef: {
+      name: "refs/heads/spg/node/A/run_20260527_000000_A_abc123",
+      commit: "fedcba9876543210fedcba9876543210fedcba98"
+    },
+    branch: "spg/node/A/run_20260527_000000_A_abc123",
+    commit: "fedcba9876543210fedcba9876543210fedcba98",
+    diffStat: { filesChanged: 1, insertions: 12, deletions: 3, totalChanges: 15 },
+    files: [{ path: "scripts/contracts.ts", changeType: "modified", insertions: 12, deletions: 3, totalChanges: 15 }],
+    collectedAt: "2026-05-27T00:05:01.000Z"
+  },
   documentField: ["extra metadata"],
   ui: { color: "teal", priority: 2 },
   reviewer: undefined
@@ -116,6 +171,82 @@ const vendorMetadata: JsonObject = {
   nested: { priority: 2, omitted: undefined }
 };
 const vendorJson: JsonValue = vendorMetadata;
+
+const plannerOutputContract: NodeOutputContract = {
+  format: "markdown",
+  requiredArtifacts: ["report", "test evidence"],
+  schemaRef: "docs/planner-output-schema.md"
+};
+const plannerRequest: PlannerRequest = {
+  requestId: "plan-contract-request",
+  mode: "decompose",
+  goal: "Define planner contracts",
+  nodeId: "A",
+  node: extraMetadataNode,
+  allowedKinds: ["task", "series", "parallel"],
+  contextRefs: [{ type: "node", ref: "A", nodeId: "A" }],
+  outputContract: plannerOutputContract,
+  planner: { name: "codex-planner", version: "0.1" }
+};
+const plannerChild: PlannerChildProposal = {
+  idHint: "SCHEMA",
+  kind: "task",
+  title: "Define schema",
+  deliverables: ["Types and examples"],
+  outputContract: plannerOutputContract,
+  customPlannerMetadata: { keep: true }
+};
+const _plannerResponse: PlannerResponse = {
+  requestId: plannerRequest.requestId,
+  kind: "series",
+  title: "Define planner schema",
+  childIdPolicy: "scheduler-generated",
+  children: [plannerChild],
+  rationale: "A validation boundary is easier to review before graph mutation."
+};
+const plannerValidationError: PlannerValidationError = {
+  path: "$.children[0].id",
+  code: "id-collision",
+  message: "Planner-provided id already exists.",
+  severity: "error"
+};
+const _plannerValidationResult: PlannerValidationResult = {
+  valid: false,
+  errors: [plannerValidationError],
+  warnings: []
+};
+const plannerParentContext: PlannerParentContext = {
+  nodeId: "A",
+  title: "Task",
+  kind: "task",
+  status: "pending",
+  parentIds: ["ROOT"]
+};
+const plannerOutputSchema: PlannerOutputSchemaDescriptor = {
+  schemaRef: "docs/planner-output-schema.md",
+  description: "Planner response JSON schema",
+  responseKinds: ["task", "series", "parallel"],
+  requiredFields: ["kind", "title"],
+  schema: { type: "object", required: ["kind", "title"] }
+};
+const plannerRuntimeRequest: PlannerRuntimeRequest = {
+  ...plannerRequest,
+  requestId: "plan-runtime-request",
+  parentContext: plannerParentContext,
+  currentGraphSummary: { graphVersion: 1, totalNodes: 2, root: "ROOT", counts: { pending: 2 } },
+  outputSchema: plannerOutputSchema
+};
+const plannerRuntimeResponse: PlannerRuntimeResponse = {
+  requestId: plannerRuntimeRequest.requestId,
+  response: _plannerResponse,
+  prompt: "Planner prompt",
+  rawText: JSON.stringify(_plannerResponse)
+};
+const plannerRuntime: PlannerRuntime = {
+  async plan(request) {
+    return { ...plannerRuntimeResponse, requestId: request.requestId };
+  }
+};
 
 const graph = {
   graphVersion: 1,
@@ -267,6 +398,14 @@ const visualizerNodeDetail: VisualizerNodeDetail = {
   kind: "task",
   status: permissiveStatus,
   description: "Typed detail payload",
+  goal: extraMetadataNode.goal,
+  goalText: "Keep planner-created nodes explainable",
+  planner: extraMetadataNode.planner,
+  plannerDecision: "Keep as a single review task",
+  decompositionReason: "Planner selected one focused review unit.",
+  contextRefs: extraMetadataNode.contextRefs,
+  outputContract: extraMetadataNode.outputContract,
+  resultSummary: extraMetadataNode.resultSummary,
   children: [],
   deliverables: ["Workspace ready"],
   acceptanceCriteria: ["Tests can run"],
@@ -280,7 +419,8 @@ const visualizerNodeDetail: VisualizerNodeDetail = {
     baseRef: extraMetadataNode.baseRef,
     workRef: extraMetadataNode.workRef,
     outputRef: extraMetadataNode.outputRef,
-    integrationRef: extraMetadataNode.integrationRef
+    integrationRef: extraMetadataNode.integrationRef,
+    gitFootprint: extraMetadataNode.gitFootprint
   },
   workspace: extraMetadataNode.workspace,
   report: "reports/A-run_20260527_000000_A_abc123.md",
@@ -413,6 +553,11 @@ const payload: VisualizerPayload = {
 
 void args;
 void vendorJson;
+void plannerParentContext;
+void plannerOutputSchema;
+void plannerRuntimeRequest;
+void plannerRuntimeResponse;
+void plannerRuntime;
 void payload;
 void invalidChildrenNode;
 void invalidLease;

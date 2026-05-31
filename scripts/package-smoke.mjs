@@ -19,6 +19,7 @@ const requiredPackageFiles = [
   "docs/compatibility-boundaries.md",
   "docs/release-checklist.md",
   "docs/testing.md",
+  "examples/goal-git-footprint.graph.json",
   "package.json",
   "plan-example.graph.json",
   "prompts/codex-worker-task.md",

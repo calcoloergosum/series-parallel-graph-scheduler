@@ -32,6 +32,7 @@ test("package npm scripts and bins target migrated build output", () => {
   assert.equal(packageJson.bin["spg-render-plan"], "./dist/scripts/render-plan.js");
   assert.ok(packageJson.files.includes("CHANGELOG.md"));
   assert.ok(packageJson.files.includes("schemas/"));
+  assert.ok(packageJson.files.includes("examples/"));
 });
 
 test("built shared graph IO defaults resolve to package graph path", () => {

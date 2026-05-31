@@ -6,6 +6,12 @@ import { dirname, join, resolve } from "node:path";
 import { promisify } from "node:util";
 
 import { redactOperationalEventDetails } from "./operational-events.js";
+import type {
+  GitDiffStatMetadata,
+  GitFileChangeType,
+  GitFileFootprintMetadata,
+  NodeGitFootprintMetadata
+} from "./contracts.js";
 
 const execFileAsync = promisify(execFile);
 const defaultBareRepositoryRelativePath = "runs/git/cache/repo.git";
@@ -87,6 +93,29 @@ export interface PublishOutputRefResult {
   commit: string;
   autoCommitted?: boolean;
 }
+
+export interface CollectGitDiffStatOptions {
+  cloneCwd?: string;
+  bareRepoPath?: string;
+  baseRef: string;
+  headRef: string;
+  baseRefName?: string;
+  headRefName?: string;
+  git?: GitRunner;
+  collectedAt?: string;
+}
+
+export type CollectGitDiffStatResult =
+  | {
+      ok: true;
+      footprint: NodeGitFootprintMetadata;
+      diffStat: GitDiffStatMetadata;
+      files: GitFileFootprintMetadata[];
+    }
+  | {
+      ok: false;
+      warning: string;
+    };
 
 export class GitRuntimeError extends Error {
   readonly args?: string[];
@@ -256,6 +285,79 @@ export async function publishOutputRef({
   return { workRef, outputRef, commit, ...(autoCommitted ? { autoCommitted } : {}) };
 }
 
+export async function collectGitDiffStat({
+  cloneCwd,
+  bareRepoPath,
+  baseRef,
+  headRef,
+  baseRefName,
+  headRefName,
+  git = runGitCommand,
+  collectedAt = new Date().toISOString()
+}: CollectGitDiffStatOptions): Promise<CollectGitDiffStatResult> {
+  const repoArgs = gitRepositoryArgs({ cloneCwd, bareRepoPath });
+  const [base, head] = await Promise.all([
+    resolveDiffCommit({ repoArgs, ref: baseRef, label: "base", git }),
+    resolveDiffCommit({ repoArgs, ref: headRef, label: "head", git })
+  ]);
+  if (base.warning) {
+    return { ok: false, warning: base.warning };
+  }
+  if (head.warning) {
+    return { ok: false, warning: head.warning };
+  }
+  if (!base.commit || !head.commit) {
+    return { ok: false, warning: `Git diffstat omitted: unresolved refs for ${baseRef}..${headRef}` };
+  }
+  const baseCommit = base.commit;
+  const headCommit = head.commit;
+
+  const numstat = await git({
+    args: [...repoArgs, "diff", "--numstat", "-z", "-M", baseCommit, headCommit, "--"],
+    failurePrefix: `Git diffstat collection failed for ${baseRef}..${headRef}:`
+  });
+  const nameStatus = await git({
+    args: [...repoArgs, "diff", "--name-status", "-z", "-M", baseCommit, headCommit, "--"],
+    failurePrefix: `Git diffstat file status collection failed for ${baseRef}..${headRef}:`
+  });
+  const statusEntries = parseGitNameStatusZ(nameStatus.stdout);
+  const files = parseGitNumstatZ(numstat.stdout).map((entry, index) => {
+    const status = statusEntries[index];
+    const changeType = status && samePathIdentity(entry, status) ? status.changeType : undefined;
+    return {
+      path: entry.path,
+      ...(entry.oldPath ? { oldPath: entry.oldPath } : {}),
+      ...(changeType ? { changeType } : {}),
+      additions: entry.additions,
+      deletions: entry.deletions,
+      totalChanges: entry.totalChanges,
+      ...(entry.binary ? { binary: true } : {})
+    };
+  });
+  const additions = files.reduce((sum, file) => sum + (file.additions ?? 0), 0);
+  const deletions = files.reduce((sum, file) => sum + (file.deletions ?? 0), 0);
+  const binaryFiles = files.filter((file) => file.binary).length;
+  const diffStat: GitDiffStatMetadata = {
+    filesChanged: files.length,
+    additions,
+    deletions,
+    totalChanges: additions + deletions,
+    ...(binaryFiles > 0 ? { binaryFiles } : {})
+  };
+  const footprint: NodeGitFootprintMetadata = {
+    source: "git-diff",
+    baseRef: { name: baseRefName || baseRef, commit: baseCommit },
+    headRef: { name: headRefName || headRef, commit: headCommit },
+    branch: displayBranchName(headRefName || headRef),
+    commit: headCommit,
+    diffStat,
+    files,
+    collectedAt
+  };
+
+  return { ok: true, footprint, diffStat, files };
+}
+
 export function buildNodeWorkBranchName(nodeId: string, runId: string): string {
   return `spg/node/${safeGitRefToken(nodeId)}/${safeGitRefToken(runId)}`;
 }
@@ -322,6 +424,138 @@ async function gitRefExists({
     : ["--git-dir", bareRepoPath || "", "show-ref", "--verify", "--quiet", ref];
   const result = await git({ args, allowedExitCodes: [0, 1] });
   return result.exitCode === 0;
+}
+
+function gitRepositoryArgs({ cloneCwd, bareRepoPath }: { cloneCwd?: string; bareRepoPath?: string }): string[] {
+  if (cloneCwd) {
+    return ["-C", cloneCwd];
+  }
+  if (bareRepoPath) {
+    return ["--git-dir", bareRepoPath];
+  }
+  throw new GitRuntimeError("Git diffstat collection requires cloneCwd or bareRepoPath");
+}
+
+async function resolveDiffCommit({
+  repoArgs,
+  ref,
+  label,
+  git
+}: {
+  repoArgs: string[];
+  ref: string;
+  label: "base" | "head";
+  git: GitRunner;
+}): Promise<{ commit: string; warning?: undefined } | { warning: string; commit?: undefined }> {
+  const result = await git({
+    args: [...repoArgs, "rev-parse", "--verify", "--quiet", `${ref}^{commit}`],
+    allowedExitCodes: [0, 1, 128],
+    failurePrefix: `Git diffstat ${label} ref resolution failed for ${ref}:`
+  });
+  const commit = result.stdout.trim();
+  if (result.exitCode === 0 && commit) {
+    return { commit };
+  }
+  return { warning: `Git diffstat omitted: missing ${label} ref ${ref}` };
+}
+
+interface ParsedNumstatEntry {
+  path: string;
+  oldPath?: string;
+  additions: number | null;
+  deletions: number | null;
+  totalChanges: number | null;
+  binary?: boolean;
+}
+
+interface ParsedNameStatusEntry {
+  path: string;
+  oldPath?: string;
+  changeType: GitFileChangeType;
+}
+
+function parseGitNumstatZ(output: string): ParsedNumstatEntry[] {
+  const tokens = splitGitZOutput(output);
+  const entries: ParsedNumstatEntry[] = [];
+  for (let index = 0; index < tokens.length;) {
+    const statToken = tokens[index++];
+    const parsed = /^([^\t]+)\t([^\t]+)\t([\s\S]*)$/.exec(statToken);
+    if (!parsed) {
+      continue;
+    }
+    const [, additionsRaw, deletionsRaw, pathPart] = parsed;
+    const binary = additionsRaw === "-" || deletionsRaw === "-";
+    const additions = binary ? null : Number(additionsRaw);
+    const deletions = binary ? null : Number(deletionsRaw);
+    const pathInfo = pathPart === ""
+      ? { oldPath: tokens[index++], path: tokens[index++] }
+      : { path: pathPart };
+    entries.push({
+      ...pathInfo,
+      additions,
+      deletions,
+      totalChanges: additions === null || deletions === null ? null : additions + deletions,
+      ...(binary ? { binary } : {})
+    });
+  }
+  return entries;
+}
+
+function parseGitNameStatusZ(output: string): ParsedNameStatusEntry[] {
+  const tokens = splitGitZOutput(output);
+  const entries: ParsedNameStatusEntry[] = [];
+  for (let index = 0; index < tokens.length;) {
+    const status = tokens[index++];
+    const changeType = gitStatusToChangeType(status);
+    if (status.startsWith("R") || status.startsWith("C")) {
+      entries.push({ oldPath: tokens[index++], path: tokens[index++], changeType });
+    } else {
+      entries.push({ path: tokens[index++], changeType });
+    }
+  }
+  return entries;
+}
+
+function splitGitZOutput(output: string): string[] {
+  if (!output) {
+    return [];
+  }
+  const tokens = output.split("\0");
+  if (tokens.at(-1) === "") {
+    tokens.pop();
+  }
+  return tokens;
+}
+
+function gitStatusToChangeType(status: string): GitFileChangeType {
+  const code = status.charAt(0);
+  switch (code) {
+    case "A":
+      return "added";
+    case "M":
+      return "modified";
+    case "D":
+      return "deleted";
+    case "R":
+      return "renamed";
+    case "C":
+      return "copied";
+    case "T":
+      return "typechange";
+    case "U":
+      return "unmerged";
+    default:
+      return "unknown";
+  }
+}
+
+function samePathIdentity(left: { path: string; oldPath?: string }, right: { path: string; oldPath?: string }): boolean {
+  return left.path === right.path && left.oldPath === right.oldPath;
+}
+
+function displayBranchName(ref: string): string {
+  const headPrefix = "refs/heads/";
+  return ref.startsWith(headPrefix) ? ref.slice(headPrefix.length) : ref;
 }
 
 async function resolveCloneCheckoutRef({

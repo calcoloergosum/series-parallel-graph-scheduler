@@ -99,10 +99,89 @@ Missing `status` defaults operationally to `pending`. Custom status strings are 
 
 The validator is not a full schema lock. Unknown top-level fields, graph-level fields, and node-level fields are preserved unless a mutation command explicitly owns that field. This keeps metadata such as `schemaVersion`, `statusModel`, `scheduler`, `document`, labels, priority, owners, and links extensible.
 
+## Generated Graphs Versus Input Graphs
+
+Hand-authored graphs and generated graphs share the same JSON shape after they
+are written. The difference is how the file is created.
+
+For ordinary scheduler, worker, renderer, and visualizer commands, `--graph`
+selects an existing input graph. If the flag is omitted, those commands fall
+back to `PLAN_GRAPH`, then `plan.graph.json` from the package root.
+
+For `node scripts/plan-scheduler.mjs plan --goal "..."`, `--graph` names the
+output file to create. If no output path is supplied, the planner writes a new
+artifact under `runs/goals/<timestamp>-<safe-goal-slug>/plan.graph.json`. After
+that file exists, treat it like any other input graph:
+
+```bash
+node scripts/plan-scheduler.mjs summary --graph runs/goals/20260531T000000Z-ship-a-searchable-audit-log/plan.graph.json
+npm run serve -- --graph runs/goals/20260531T000000Z-ship-a-searchable-audit-log/plan.graph.json --cwd "$PWD" --port 8787
+```
+
+Do not use the original goal text as a resume handle. Resume, inspect, render,
+or recover generated work by reusing the generated graph path.
+
+## Goal And Planner Metadata
+
+Goal-driven planner output is a proposal format, not graph state. The planner
+schema and examples are documented in
+[`docs/planner-output-schema.md`](planner-output-schema.md). Scheduler code must
+validate a planner response and materialize safe child node ids before writing
+new `graph.nodes` entries.
+Planning approval modes, dry-run behavior, regeneration, and invalid-output
+failure handling are documented in
+[`docs/planning-safety-and-approval.md`](planning-safety-and-approval.md).
+
+Planner-created nodes may use additive metadata fields such as `goal`,
+`planner`, `contextRefs`, `outputContract`, and `resultSummary`. These fields
+are optional, remain unknown-metadata compatible for older readers, and are
+preserved by graph reads and writes unless a future mutation explicitly owns
+one of them.
+
+Use `goal` to keep the operator or parent intent visible on a node. A string is
+accepted for compatibility, but the object form is preferred when the source and
+creation time are known:
+
+```json
+{
+  "goal": {
+    "text": "Ship a searchable audit log",
+    "source": "operator",
+    "createdAt": "2026-05-31T00:00:00.000Z"
+  }
+}
+```
+
+Use `planner` for provenance about the planner decision that created or refined
+a node. Stable fields include `name`, `model`, `version`, `promptRef`,
+`requestId`, `plannedAt`, `decision`, `rationale`, and
+`decompositionReason`. Keep values concise; detailed prompts and transcripts
+belong in reports or external artifacts referenced by `contextRefs`.
+
+```json
+{
+  "planner": {
+    "name": "codex",
+    "model": "gpt-5",
+    "requestId": "plan-20260531-audit-log",
+    "plannedAt": "2026-05-31T00:00:05.000Z",
+    "decision": "Split implementation and verification into series tasks"
+  }
+}
+```
+
+Use `contextRefs` for compact pointers that help a worker or visualizer explain
+why a node exists, `outputContract` for expected artifact shape, and
+`resultSummary` for a short completed-work summary. See
+[`../examples/goal-git-footprint.graph.json`](../examples/goal-git-footprint.graph.json)
+for a complete validating graph with goal and planner metadata.
+
+## Git Footprint Metadata
+
 Git-only worker isolation uses optional node ref metadata fields named
-`baseRef`, `workRef`, `outputRef`, and `integrationRef`. Existing graphs do not
-need these fields, and ordinary graph validation does not require them. When
-present, their compatibility contract is documented in
+`baseRef`, `workRef`, `outputRef`, `integrationRef`, and `gitFootprint`.
+Existing graphs do not need these fields, and ordinary graph validation does not
+require them. When present, their compatibility contract is documented in
 `docs/compatibility-boundaries.md`.
 
 To opt a graph into Git-isolated workers, add a concrete remote under
@@ -119,9 +198,60 @@ To opt a graph into Git-isolated workers, add a concrete remote under
 Do not add `workRef`, `outputRef`, or `integrationRef` by hand for new work.
 The isolated worker and composition reconciliation paths record those fields as
 they prepare clones, publish task output refs, and publish parent buffer refs.
+`gitFootprint` is likewise worker- or reconciler-produced provenance metadata;
+operators should only edit it when repairing a graph from externally verified
+Git refs and commits.
 Graphs without `scheduler.remote` remain valid for read-only commands and
 shared-cwd workers, but `--isolation git` fails before claim unless a concrete
 remote is supplied with `--remote`.
+
+The visualizer reads `gitFootprint` first and falls back to compatible
+`outputRef` commit, `diffStat`, `files`, and `collectedAt` fields. This means a
+node can still show changed files and line counts for older isolated worker
+runs that only recorded output-ref metadata. New producers should prefer this
+shape:
+
+```json
+{
+  "gitFootprint": {
+    "source": "git-diff",
+    "baseRef": {
+      "name": "refs/remotes/origin/main",
+      "commit": "0000000000000000000000000000000000000001"
+    },
+    "headRef": {
+      "name": "refs/heads/spg/node/IMPLEMENT/run_20260531_000010_IMPLEMENT_a1b2c3",
+      "commit": "0000000000000000000000000000000000000002"
+    },
+    "branch": "spg/node/IMPLEMENT/run_20260531_000010_IMPLEMENT_a1b2c3",
+    "commit": "0000000000000000000000000000000000000002",
+    "diffStat": {
+      "filesChanged": 1,
+      "insertions": 12,
+      "deletions": 2,
+      "totalChanges": 14,
+      "binaryFiles": 0
+    },
+    "files": [
+      {
+        "path": "docs/audit-log.md",
+        "changeType": "modified",
+        "insertions": 12,
+        "deletions": 2,
+        "totalChanges": 14,
+        "binary": false
+      }
+    ],
+    "collectedAt": "2026-05-31T00:10:30.000Z"
+  }
+}
+```
+
+For a finished leaf, `baseRef` and `headRef` describe the exact diff range.
+For series and parallel parent nodes, aggregate footprints describe the parent
+composition range or an explicitly marked child aggregate. Keep child
+footprints on the child nodes so operators can audit how a parent summary was
+assembled.
 
 Fields with scheduler meaning must keep the validated shape when present:
 

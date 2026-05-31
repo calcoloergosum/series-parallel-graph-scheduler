@@ -1,13 +1,16 @@
 import type {
+  GitDiffStatMetadata,
   GraphNode,
   LayoutBox,
   LayoutEdge,
   LayoutFrame,
   LayoutOptions,
   LayoutPoint,
+  LayoutRefLabel,
   PlanGraphFile,
   PlanarLayout
 } from "./contracts.js";
+import { gitFootprintFromNode } from "./git-footprint.js";
 import { classToken, escapeHtml } from "./shared-utils.js";
 
 type LayoutEdgeKind = "series" | "parallel" | "frame";
@@ -25,7 +28,7 @@ interface LayoutComponent {
 
 const defaultOptions = {
   nodeWidth: 190,
-  nodeHeight: 70,
+  nodeHeight: 84,
   portGap: 34,
   seriesGap: 64,
   parallelGap: 30,
@@ -97,6 +100,7 @@ export function buildPlanarLayout(graph: PlanGraphFile, options: LayoutOptions =
           title: node.title || nodeId,
           kind: node.kind || "task",
           status: node.status || "pending",
+          refLabel: compactRefLabel(node),
           x: opts.portGap,
           y: 0,
           width: opts.nodeWidth,
@@ -336,16 +340,99 @@ function renderBox(box: LayoutBox): string {
   const titleLines = wrapLabel(box.title, 22, 2);
   const className = `sp-node status-${classToken(box.status, "pending")}`;
   const idY = box.y + 20;
-  const titleY = box.y + 42;
+  const titleY = box.y + 38;
+  const refY = box.y + box.height - 11;
   const titleSpans = titleLines
-    .map((line, index) => `<tspan x="${round(box.x + 12)}" dy="${index === 0 ? 0 : 15}">${escapeHtml(line)}</tspan>`)
+    .map((line, index) => `<tspan x="${round(box.x + 12)}" dy="${index === 0 ? 0 : 14}">${escapeHtml(line)}</tspan>`)
     .join("");
+  const refLabel = renderRefLabel(box.refLabel, box.x + box.width - 12, refY);
 
   return `<g class="${className}" data-id="${escapeHtml(box.id)}">
   <rect x="${round(box.x)}" y="${round(box.y)}" width="${round(box.width)}" height="${round(box.height)}" rx="8"/>
   <text class="sp-node-id" x="${round(box.x + 12)}" y="${round(idY)}">${escapeHtml(box.id)} · ${escapeHtml(box.kind)}</text>
   <text class="sp-node-title" x="${round(box.x + 12)}" y="${round(titleY)}">${titleSpans}</text>
+  ${refLabel}
 </g>`;
+}
+
+function renderRefLabel(label: LayoutRefLabel | undefined, x: number, y: number): string {
+  if (!label) {
+    return "";
+  }
+  if (label.insertions || label.deletions || label.filesChanged) {
+    return `<text class="sp-node-ref" x="${round(x)}" y="${round(y)}">` +
+      (label.commit ? `<tspan class="sp-node-commit">${escapeHtml(label.commit)}</tspan>` : "") +
+      (label.insertions ? `<tspan class="sp-node-insertions"> ${escapeHtml(label.insertions)}</tspan>` : "") +
+      (label.deletions ? `<tspan class="sp-node-deletions"> ${escapeHtml(label.deletions)}</tspan>` : "") +
+      (label.filesChanged ? `<tspan class="sp-node-files"> ${escapeHtml(label.filesChanged)}</tspan>` : "") +
+      "</text>";
+  }
+  return `<text class="sp-node-ref" x="${round(x)}" y="${round(y)}">${escapeHtml(label.fallback || label.commit || "")}</text>`;
+}
+
+function compactRefLabel(node: GraphNode): LayoutRefLabel | undefined {
+  const footprint = gitFootprintFromNode(node);
+  const diffStat = footprint?.diffStat;
+  const commit = shortCommit(
+    footprint?.commit
+      || footprint?.headRef?.commit
+      || node.outputRef?.commit
+      || node.workRef?.commit
+      || node.baseRef?.commit
+  );
+
+  if (diffStat) {
+    return {
+      ...(commit ? { commit } : {}),
+      insertions: `+${compactCount(diffStatInsertions(diffStat))}`,
+      deletions: `-${compactCount(diffStat.deletions)}`,
+      filesChanged: `${compactCount(diffStat.filesChanged)}f`
+    };
+  }
+
+  const refName = footprint?.headRef?.name || node.outputRef?.name || node.workRef?.name || node.baseRef?.name;
+  if (!commit && !refName) {
+    return undefined;
+  }
+  return {
+    fallback: commit ? `${commit} ref` : `ref ${truncateEnd(compactRefName(refName || ""), 18)}`
+  };
+}
+
+function diffStatInsertions(diffStat: GitDiffStatMetadata): number {
+  return diffStat.insertions ?? diffStat.additions ?? 0;
+}
+
+function shortCommit(value: string | undefined): string | undefined {
+  const normalized = String(value || "").trim();
+  return /^[0-9a-f]{7,40}$/i.test(normalized) ? normalized.slice(0, 7) : undefined;
+}
+
+function compactRefName(refName: string): string {
+  return refName
+    .replace(/^refs\/heads\//, "")
+    .replace(/^refs\/remotes\/origin\//, "")
+    .replace(/^refs\/remotes\//, "")
+    .replace(/^refs\/tags\//, "");
+}
+
+function compactCount(value: number): string {
+  const count = Math.max(0, Math.floor(Number.isFinite(value) ? value : 0));
+  if (count < 1000) {
+    return String(count);
+  }
+  if (count < 1000000) {
+    return `${trimDecimal(count / 1000)}k`;
+  }
+  return `${trimDecimal(count / 1000000)}m`;
+}
+
+function trimDecimal(value: number): string {
+  return value >= 10 ? String(Math.round(value)) : value.toFixed(1).replace(/\.0$/, "");
+}
+
+function truncateEnd(value: string, maxChars: number): string {
+  return value.length <= maxChars ? value : `${value.slice(0, Math.max(0, maxChars - 3))}...`;
 }
 
 function wrapLabel(value: string, maxChars: number, maxLines: number): string[] {

@@ -1,11 +1,13 @@
 import { redactSecretText } from "./shared-utils.js";
 import type {
   GraphHistoryEntry,
+  GraphNode,
   JsonObject,
   JsonValue,
   OperationalEventExportEntry,
   PlanGraphFile
 } from "./contracts.js";
+import { gitFootprintFromNode } from "./git-footprint.js";
 
 export const operationalEvents = {
   claimed: "claimed",
@@ -26,6 +28,8 @@ export const operationalEvents = {
   mergeAttempted: "merge-attempted",
   mergeConflicted: "merge-conflicted",
   parentRefPublished: "parent-ref-published",
+  plannerFailed: "planner-failed",
+  plannerPreviewRejected: "planner-preview-rejected",
   workerStarted: "worker-started",
   workerStopped: "worker-stopped",
   lockAcquired: "lock-acquired",
@@ -65,7 +69,7 @@ export const operationalEventTaxonomy = [
   {
     name: operationalEvents.done,
     producer: "graph-history",
-    stableFields: ["at", "event", "previousStatus", "status", "session", "runId", "completedAt", "report", "clearedFields"],
+    stableFields: ["at", "event", "previousStatus", "status", "session", "runId", "completedAt", "report", "clearedFields", "diffStatCollected", "diffStat"],
     description: "A worker completed a leaf."
   },
   {
@@ -131,7 +135,7 @@ export const operationalEventTaxonomy = [
   {
     name: operationalEvents.outputRefRecorded,
     producer: "graph-history",
-    stableFields: ["at", "event", "session", "runId", "workRef", "outputRef", "commit", "report"],
+    stableFields: ["at", "event", "session", "runId", "workRef", "outputRef", "commit", "report", "diffStatCollected", "diffStat"],
     description: "An isolated worker recorded the output ref produced by a completed run."
   },
   {
@@ -149,8 +153,20 @@ export const operationalEventTaxonomy = [
   {
     name: operationalEvents.parentRefPublished,
     producer: "graph-history",
-    stableFields: ["at", "event", "parentId", "kind", "integrationRef", "outputRef", "commit", "result"],
+    stableFields: ["at", "event", "parentId", "kind", "integrationRef", "outputRef", "commit", "result", "diffStatCollected", "diffStat"],
     description: "A composition parent published the output ref used by downstream isolated work."
+  },
+  {
+    name: operationalEvents.plannerFailed,
+    producer: "graph-history",
+    stableFields: ["at", "event", "previousStatus", "status", "session", "runId", "requestId", "failurePolicy", "reason", "report"],
+    description: "Worker planner preflight failed validation or runtime execution and was converted to a controlled blocked or failed node."
+  },
+  {
+    name: operationalEvents.plannerPreviewRejected,
+    producer: "graph-history",
+    stableFields: ["at", "event", "previousStatus", "status", "session", "runId", "requestId", "proposedKind", "childIds", "reason", "report"],
+    description: "Worker planner preflight produced a valid decomposition preview, but automatic application was rejected pending operator approval."
   },
   {
     name: operationalEvents.workerStarted,
@@ -203,6 +219,7 @@ export interface ExportOperationalEventsOptions {
 interface IndexedHistoryEntry {
   nodeId: string;
   nodeStatus?: string;
+  node: GraphNode;
   historyIndex: number;
   entry: GraphHistoryEntry;
 }
@@ -228,6 +245,7 @@ export function exportOperationalEvents(
       events.push({
         nodeId: currentNodeId,
         nodeStatus: node.status,
+        node,
         historyIndex,
         entry
       });
@@ -268,9 +286,13 @@ function compareRecentHistoryEntries(left: IndexedHistoryEntry, right: IndexedHi
   return right.nodeId.localeCompare(left.nodeId) || right.historyIndex - left.historyIndex;
 }
 
-function formatOperationalEventExportEntry({ nodeId, nodeStatus, entry }: IndexedHistoryEntry): OperationalEventExportEntry {
+function formatOperationalEventExportEntry({ nodeId, nodeStatus, node, entry }: IndexedHistoryEntry): OperationalEventExportEntry {
   const redactedEntry = omitUndefined(redactOperationalEventDetails(entry) as Record<string, unknown>);
   const timestamps = eventTimestamps(redactedEntry);
+  const details = {
+    ...eventDetails(redactedEntry, timestamps),
+    ...eventGitFootprintDetails(node, redactedEntry)
+  };
   return omitUndefined({
     at: stringValue(redactedEntry.at) || "",
     event: stringValue(redactedEntry.event) || "",
@@ -279,9 +301,41 @@ function formatOperationalEventExportEntry({ nodeId, nodeStatus, entry }: Indexe
     session: stringValue(redactedEntry.session),
     runId: stringValue(redactedEntry.runId),
     timestamps,
-    details: eventDetails(redactedEntry, timestamps)
+    details: omitUndefined(details)
   }) as OperationalEventExportEntry;
 }
+
+function eventGitFootprintDetails(node: GraphNode, entry: Record<string, unknown>): JsonObject {
+  const event = stringValue(entry.event);
+  if (!event || !gitFootprintEventNames.has(event)) {
+    return {};
+  }
+
+  const footprint = gitFootprintFromNode(node);
+  if (!footprint) {
+    return {};
+  }
+
+  const redactedFootprint = redactOperationalEventDetails({ gitFootprint: footprint }).gitFootprint;
+  const details: JsonObject = {};
+  if (entry.gitFootprint === undefined) {
+    details.gitFootprint = jsonValue(redactedFootprint);
+  }
+  if (entry.diffStat === undefined && footprint.diffStat) {
+    details.diffStat = jsonValue(footprint.diffStat);
+  }
+  if (entry.files === undefined && footprint.files) {
+    details.files = jsonValue(footprint.files);
+  }
+  return omitUndefined(details);
+}
+
+const gitFootprintEventNames = new Set<string>([
+  operationalEvents.done,
+  operationalEvents.failed,
+  operationalEvents.outputRefRecorded,
+  operationalEvents.parentRefPublished
+]);
 
 function eventTimestamps(entry: Record<string, unknown>): JsonObject {
   const timestamps: JsonObject = {};

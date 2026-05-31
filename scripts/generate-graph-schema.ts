@@ -52,7 +52,22 @@ export function buildPlanGraphJsonSchema(): Record<string, unknown> {
           htmlView: { type: "string" },
           reportsDir: { type: "string" },
           leaseSeconds: { type: "number" },
-          remote: { type: "string" }
+          remote: { type: "string" },
+          workerPlanner: { "$ref": "#/$defs/workerPlannerConfig" }
+        }
+      },
+      workerPlannerConfig: {
+        type: "object",
+        additionalProperties: true,
+        properties: {
+          mode: { enum: ["off", "auto-decompose", "ask-approval"] },
+          failurePolicy: { enum: ["block", "fail"] },
+          allowedKinds: {
+            type: "array",
+            items: { enum: ["task", "series", "parallel"] }
+          },
+          requestIdPrefix: { type: "string" },
+          planner: { "$ref": "#/$defs/plannerMetadata" }
         }
       },
       node: {
@@ -82,6 +97,22 @@ export function buildPlanGraphJsonSchema(): Record<string, unknown> {
             type: "array",
             items: { type: "string" }
           },
+          goal: {
+            oneOf: [
+              { type: "string" },
+              { "$ref": "#/$defs/goalMetadata" }
+            ]
+          },
+          planner: { "$ref": "#/$defs/plannerMetadata" },
+          plannerDecision: { type: "string" },
+          decompositionReason: { type: "string" },
+          rationale: { type: "string" },
+          contextRefs: {
+            type: "array",
+            items: { "$ref": "#/$defs/contextRef" }
+          },
+          resultSummary: { "$ref": "#/$defs/resultSummary" },
+          outputContract: { "$ref": "#/$defs/outputContract" },
           lease: { "$ref": "#/$defs/lease" },
           history: {
             type: "array",
@@ -103,6 +134,8 @@ export function buildPlanGraphJsonSchema(): Record<string, unknown> {
           workRef: { "$ref": "#/$defs/namedRef" },
           outputRef: { "$ref": "#/$defs/namedRef" },
           integrationRef: { "$ref": "#/$defs/integrationRef" },
+          gitFootprint: { "$ref": "#/$defs/gitFootprint" },
+          gitFootprintWarning: { type: "string" },
           workspace: { "$ref": "#/$defs/workspace" }
         },
         allOf: [
@@ -195,7 +228,167 @@ export function buildPlanGraphJsonSchema(): Record<string, unknown> {
           report: { type: "string" },
           resolvedAt: { "$ref": "#/$defs/timestamp" },
           createdAt: { "$ref": "#/$defs/timestamp" },
-          producedAt: { "$ref": "#/$defs/timestamp" }
+          producedAt: { "$ref": "#/$defs/timestamp" },
+          diffStat: { "$ref": "#/$defs/gitDiffStat" },
+          files: {
+            type: "array",
+            items: { "$ref": "#/$defs/gitFileFootprint" }
+          },
+          collectedAt: { "$ref": "#/$defs/timestamp" }
+        }
+      },
+      gitFootprint: {
+        type: "object",
+        additionalProperties: true,
+        properties: {
+          source: { type: "string" },
+          baseRef: { "$ref": "#/$defs/gitFootprintRef" },
+          headRef: { "$ref": "#/$defs/gitFootprintRef" },
+          branch: { type: "string" },
+          commit: { type: "string" },
+          diffStat: { "$ref": "#/$defs/gitDiffStat" },
+          files: {
+            type: "array",
+            items: { "$ref": "#/$defs/gitFileFootprint" }
+          },
+          aggregation: { "$ref": "#/$defs/gitFootprintAggregation" },
+          childAggregate: { "$ref": "#/$defs/gitFootprint" },
+          collectedAt: { "$ref": "#/$defs/timestamp" }
+        }
+      },
+      gitFootprintAggregation: {
+        type: "object",
+        required: [
+          "source",
+          "childCount",
+          "includedChildIds",
+          "missingChildIds",
+          "duplicateFilePaths",
+          "diffStatKind",
+          "filesChangedKind",
+          "fileMergeRule"
+        ],
+        additionalProperties: true,
+        properties: {
+          source: { type: "string" },
+          parentId: { type: "string" },
+          parentKind: { type: "string" },
+          childCount: { type: "number" },
+          includedChildIds: { type: "array", items: { type: "string" } },
+          missingChildIds: { type: "array", items: { type: "string" } },
+          duplicateFilePaths: { type: "array", items: { type: "string" } },
+          diffStatKind: { type: "string" },
+          filesChangedKind: { type: "string" },
+          fileMergeRule: { type: "string" }
+        }
+      },
+      gitFootprintRef: {
+        type: "object",
+        additionalProperties: true,
+        properties: {
+          name: { type: "string" },
+          commit: { type: "string" }
+        }
+      },
+      gitDiffStat: {
+        type: "object",
+        anyOf: [
+          { required: ["filesChanged", "insertions", "deletions", "totalChanges"] },
+          { required: ["filesChanged", "additions", "deletions", "totalChanges"] }
+        ],
+        additionalProperties: true,
+        properties: {
+          filesChanged: { type: "number" },
+          insertions: { type: "number" },
+          additions: { type: "number" },
+          deletions: { type: "number" },
+          totalChanges: { type: "number" },
+          binaryFiles: { type: "number" }
+        }
+      },
+      gitFileFootprint: {
+        type: "object",
+        anyOf: [
+          { required: ["path", "insertions", "deletions", "totalChanges"] },
+          { required: ["path", "additions", "deletions", "totalChanges"] }
+        ],
+        additionalProperties: true,
+        properties: {
+          path: { type: "string" },
+          oldPath: { type: "string" },
+          changeType: { type: "string" },
+          insertions: { type: ["number", "null"] },
+          additions: { type: ["number", "null"] },
+          deletions: { type: ["number", "null"] },
+          totalChanges: { type: ["number", "null"] },
+          binary: { type: "boolean" },
+          childIds: { type: "array", items: { type: "string" } }
+        }
+      },
+      goalMetadata: {
+        type: "object",
+        required: ["text"],
+        additionalProperties: true,
+        properties: {
+          text: { type: "string" },
+          source: { type: "string" },
+          createdAt: { "$ref": "#/$defs/timestamp" }
+        }
+      },
+      plannerMetadata: {
+        type: "object",
+        additionalProperties: true,
+        properties: {
+          name: { type: "string" },
+          model: { type: "string" },
+          version: { type: "string" },
+          promptRef: { type: "string" },
+          requestId: { type: "string" },
+          plannedAt: { "$ref": "#/$defs/timestamp" },
+          decision: { type: "string" },
+          rationale: { type: "string" },
+          decompositionReason: { type: "string" }
+        }
+      },
+      contextRef: {
+        type: "object",
+        required: ["ref"],
+        additionalProperties: true,
+        properties: {
+          type: { type: "string" },
+          ref: { type: "string" },
+          title: { type: "string" },
+          nodeId: { type: "string" }
+        }
+      },
+      resultSummary: {
+        type: "object",
+        required: ["summary"],
+        additionalProperties: true,
+        properties: {
+          status: { type: "string" },
+          summary: { type: "string" },
+          artifacts: {
+            type: "array",
+            items: { type: "string" }
+          },
+          completedAt: { "$ref": "#/$defs/timestamp" }
+        }
+      },
+      outputContract: {
+        type: "object",
+        additionalProperties: true,
+        properties: {
+          format: { type: "string" },
+          requiredArtifacts: {
+            type: "array",
+            items: { type: "string" }
+          },
+          acceptanceCriteria: {
+            type: "array",
+            items: { type: "string" }
+          },
+          schemaRef: { type: "string" }
         }
       },
       integrationRef: {

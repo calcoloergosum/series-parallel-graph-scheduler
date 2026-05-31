@@ -7,6 +7,13 @@ operator documentation changes must be recorded here before a release is tagged.
 
 ### Added
 
+- Added `plan --goal` for goal-driven graph creation, with `--plan-only`,
+  `--dry-run`, and explicit `--then-run` execution modes.
+- Added goal and planner node metadata, the planner output schema docs, and a
+  validating goal/Git-footprint example graph.
+- Added Git-aware scheduler and visualizer metadata for isolated worker refs,
+  output refs, integration refs, aggregate `gitFootprint` summaries, and
+  redacted changed-file displays.
 - Added GUI operator-console parity through the local visualizer: read-only
   endpoints now mirror `summary`, `ready`, `diagnostics`, `events`, and
   `prompt`; protected write endpoints expose node mutations, graph recovery,
@@ -17,18 +24,31 @@ operator documentation changes must be recorded here before a release is tagged.
 
 ### Compatibility And Migration Notes
 
+- Goal-driven planning is additive. Existing static graph commands still read
+  `--graph` as an input graph selector; only `plan --goal` treats `--graph` as
+  the output graph path, and generated graphs replay through the existing
+  scheduler commands.
+- Goal, planner, ref, workspace, and `gitFootprint` fields are optional graph
+  metadata. Existing graphs do not need these fields for shared-cwd operation,
+  and readers can ignore them unless they opt into Git-isolated workers or
+  Git-aware visualizer details.
+- Git-isolated worker migration is opt-in through `--isolation git` plus
+  `--remote` or `scheduler.remote`. Mixed shared-cwd and isolated execution can
+  block at composition boundaries when completed predecessors do not have an
+  `outputRef.name`; operators should continue the affected subtree in the same
+  mode or reset/rerun the smallest downstream scope with isolation enabled.
 - Existing CLI commands, flags, graph mutation semantics, and successful JSON
   stdout shapes are unchanged. The GUI additions call the same scheduler
   mutation handlers and preserve the graph file as the source of truth.
 - The new visualizer routes and payload fields are additive. Existing clients
   that only consume `/api/graph`, `/api/workers`, or `/events` can ignore the
-  new action metadata.
+  new action, goal, planner, and Git metadata.
 - When `serve` is started with `--visualizer-write-token`, every visualizer
   `POST` route returns HTTP 403 unless the request includes
   `X-SPG-Visualizer-Token: TOKEN` or `Authorization: Bearer TOKEN`. Read-only
   visualizer routes remain unauthenticated, including on non-loopback binds.
-- No known breaking behavior is introduced by the GUI operator-console parity
-  work.
+- No known breaking behavior is introduced by the goal-driven, Git-aware, or
+  GUI operator-console parity work.
 
 ## 0.1.0 - 2026-05-27
 

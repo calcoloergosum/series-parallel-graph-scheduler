@@ -10,15 +10,21 @@ import type {
   NodeIsolationDetails,
   NodeMutationResult,
   PlanGraphFile,
+  PlannerOutputKind,
+  PlannerRuntime,
+  PlannerRuntimeResponse,
   ReadyNode,
   RenewLeaseResult,
   RunWorkerOptions,
   RunWorkerResult,
   SlackNotificationResult,
+  WorkerPlannerFailurePolicy,
+  WorkerPlannerMode,
   WorkerRunRefMetadata,
   WorkerOutcome
 } from "./contracts.js";
 import {
+  collectGitDiffStat,
   createWorkBranch,
   createRunClone,
   defaultBareRepositoryPath,
@@ -30,7 +36,8 @@ import {
 } from "./git-runtime.js";
 import { nodeIsolationDetails } from "./graph-traversal.js";
 import { numericArgumentRanges, parseNumericArgument } from "./numeric-args.js";
-import { operationalEvents } from "./operational-events.js";
+import { operationalEvents, type OperationalEventName } from "./operational-events.js";
+import { buildPlannerRuntimeRequest, plannerResponseToDecomposeMutation } from "./planner-runtime.js";
 import { runtimePathsFromModuleUrl } from "./runtime-paths.js";
 import { errorMessage, redactSecretText, safeFilePart, sleep } from "./shared-utils.js";
 
@@ -87,7 +94,31 @@ export interface WorkerRuntime extends WorkerPromptRuntime {
     session?: string;
     runId?: string;
     refMetadata?: WorkerRunRefMetadata;
+    extraHistoryEvents?: Array<{ event: OperationalEventName; details?: Record<string, unknown> }>;
   }): Promise<NodeMutationResult>;
+  blockNode(graphPath: string, options: {
+    nodeId?: string;
+    question?: string;
+    reason?: string;
+    report?: string;
+    session?: string;
+    runId?: string;
+    extraHistoryEvents?: Array<{ event: OperationalEventName; details?: Record<string, unknown> }>;
+  }): Promise<NodeMutationResult>;
+  decomposeNode(graphPath: string, options: {
+    nodeId?: string;
+    kind?: string;
+    children: Array<{
+      id: string;
+      title: string;
+      kind?: string;
+      status?: string;
+      children?: string[];
+      [metadata: string]: unknown;
+    }>;
+    session?: string;
+    runId?: string;
+  }): Promise<{ nodeId: string; children: string[]; summary: GraphSummary }>;
   publishResolvedIntegration(graphPath: string, options: {
     nodeId?: string;
     report?: string;
@@ -106,6 +137,7 @@ export interface WorkerRuntime extends WorkerPromptRuntime {
     details?: Record<string, string | undefined>
   ): Promise<SlackNotificationResult>;
   renderPlanAfterUpdate(graphPath: string): Promise<void>;
+  planner?: PlannerRuntime;
 }
 
 export interface BuildWorkerPromptOptions {
@@ -200,6 +232,7 @@ export async function runWorker(
   const idleMs = parseNumericArgument(options.idleMs, { flag: "--idle-ms", ...numericArgumentRanges.idleMs, defaultValue: 5000 })!;
   const leaseSeconds = parseNumericArgument(options.leaseSeconds, { flag: "--lease", ...numericArgumentRanges.leaseSeconds });
   validateCodexProcessOptions(options, graphPath);
+  await validateWorkerPlannerSettings(graphPath, options, runtime);
   const stream = options.stream !== false;
   const results: WorkerOutcome[] = [];
 
@@ -241,6 +274,17 @@ export async function runWorker(
     await runtime.startNode(graphPath, { nodeId: claim.nodeId, session, runId: claim.runId });
     await runtime.renderPlanAfterUpdate(graphPath);
 
+    const reportPath = options.reportPath || runtime.defaultReportPath(claim.nodeId, claim.runId);
+    const plannerOutcome = await runPlannerPreflight(graphPath, { claim, session, options, reportPath }, runtime);
+    if (plannerOutcome) {
+      results.push(plannerOutcome);
+      await runtime.renderPlanAfterUpdate(graphPath);
+      if (once) {
+        return { session, idle: false, results };
+      }
+      continue;
+    }
+
     const refMetadata = isolation.mode === "git"
       ? await prepareIsolatedRunClone(graphPath, { isolation, claim, session }, runtime)
       : undefined;
@@ -248,7 +292,6 @@ export async function runWorker(
       await runtime.renderPlanAfterUpdate(graphPath);
     }
 
-    const reportPath = options.reportPath || runtime.defaultReportPath(claim.nodeId, claim.runId);
     const workerCwd = refMetadata?.cloneCwd || options.cwd;
     const prompt = await buildWorkerPrompt(graphPath, {
       nodeId: claim.nodeId,
@@ -294,6 +337,381 @@ export async function runWorker(
       return { session, idle: false, results };
     }
   }
+}
+
+interface WorkerPlannerSettings {
+  mode: WorkerPlannerMode;
+  failurePolicy: WorkerPlannerFailurePolicy;
+  allowedKinds?: PlannerOutputKind[];
+  requestIdPrefix: string;
+}
+
+async function validateWorkerPlannerSettings(
+  graphPath: string,
+  options: RunWorkerOptions,
+  runtime: WorkerRuntime
+): Promise<void> {
+  const graph = await runtime.readGraph(graphPath);
+  resolveWorkerPlannerSettings(graph, options);
+}
+
+async function runPlannerPreflight(
+  graphPath: string,
+  {
+    claim,
+    session,
+    options,
+    reportPath
+  }: {
+    claim: LeaseClaimResult;
+    session: string;
+    options: RunWorkerOptions;
+    reportPath: string;
+  },
+  runtime: WorkerRuntime
+): Promise<WorkerOutcome | undefined> {
+  const graph = await runtime.readGraph(graphPath);
+  const settings = resolveWorkerPlannerSettings(graph, options);
+  if (settings.mode === "off") {
+    return undefined;
+  }
+
+  try {
+    const planner = activeWorkerPlanner(options, runtime);
+    if (!planner) {
+      throw new Error(`worker planner mode ${settings.mode} requires an injected planner runtime`);
+    }
+    const plan = await planWorkerNode(graph, graphPath, { claim, planner, settings }, runtime);
+    if (plan.response.kind === "task") {
+      return undefined;
+    }
+    if (!plan.decompose) {
+      throw new Error("Planner returned a composite response without a decompose mutation");
+    }
+    if (settings.mode === "ask-approval") {
+      return blockForPlannerApproval(graphPath, { claim, session, plan, reportPath }, runtime);
+    }
+    const result = await runtime.decomposeNode(graphPath, {
+      nodeId: claim.nodeId,
+      kind: plan.decompose.kind,
+      children: plan.decompose.children,
+      session,
+      runId: claim.runId
+    });
+    return {
+      nodeId: claim.nodeId,
+      runId: claim.runId,
+      status: "pending",
+      code: 0,
+      note: `planner decomposed node as ${plan.decompose.kind}`,
+      summary: result.summary,
+      slack: await runtime.sendSlackNotification(graphPath, operationalEvents.decomposed, { nodeId: claim.nodeId })
+    };
+  } catch (error) {
+    return handlePlannerFailure(graphPath, {
+      claim,
+      session,
+      error,
+      reportPath,
+      failurePolicy: settings.failurePolicy
+    }, runtime);
+  }
+}
+
+async function planWorkerNode(
+  graph: PlanGraphFile,
+  graphPath: string,
+  {
+    claim,
+    planner,
+    settings
+  }: {
+    claim: LeaseClaimResult;
+    planner: PlannerRuntime;
+    settings: WorkerPlannerSettings;
+  },
+  runtime: WorkerRuntime
+): Promise<PlannerRuntimeResponse> {
+  const node = runtime.getNode(graph, claim.nodeId);
+  const request = buildPlannerRuntimeRequest(graph, claim.nodeId, {
+    requestId: `${settings.requestIdPrefix}-${safeFilePart(claim.nodeId)}-${safeFilePart(claim.runId)}`,
+    allowedKinds: settings.allowedKinds,
+    planner: graph.scheduler?.workerPlanner?.planner || node.planner
+  });
+  let result: PlannerRuntimeResponse;
+  try {
+    result = await planner.plan(request);
+  } catch (error) {
+    throw attachPlannerRequestId(error, request.requestId);
+  }
+  let decompose: ReturnType<typeof plannerResponseToDecomposeMutation>;
+  try {
+    decompose = plannerResponseToDecomposeMutation(result.response, graph, claim.nodeId, {
+      allowedKinds: request.allowedKinds
+    });
+  } catch (error) {
+    throw attachPlannerRequestId(error, result.requestId || request.requestId);
+  }
+  return {
+    ...result,
+    validation: result.validation || { valid: true, errors: [] },
+    ...(decompose ? { decompose } : {})
+  };
+}
+
+async function blockForPlannerApproval(
+  graphPath: string,
+  {
+    claim,
+    session,
+    plan,
+    reportPath
+  }: {
+    claim: LeaseClaimResult;
+    session: string;
+    plan: PlannerRuntimeResponse;
+    reportPath: string;
+  },
+  runtime: WorkerRuntime
+): Promise<WorkerOutcome> {
+  await runtime.writeReportFile(graphPath, reportPath, formatPlannerPreflightReport({ claim, plan }));
+  const result = await runtime.blockNode(graphPath, {
+    nodeId: claim.nodeId,
+    session,
+    runId: claim.runId,
+    report: reportPath,
+    reason: `planner proposed ${plan.response.kind} decomposition`,
+    question: plannerApprovalQuestion(claim, plan),
+    extraHistoryEvents: [{
+      event: operationalEvents.plannerPreviewRejected,
+      details: {
+        requestId: plan.requestId,
+        proposedKind: plan.response.kind,
+        childIds: plan.decompose?.children.map((child) => child.id) || [],
+        reason: "planner approval required",
+        report: reportPath
+      }
+    }]
+  });
+  return {
+    ...result,
+    runId: claim.runId,
+    code: 0,
+    report: reportPath,
+    note: "planner decomposition requires approval",
+    slack: await runtime.sendSlackNotification(graphPath, operationalEvents.blocked, {
+      nodeId: claim.nodeId,
+      report: reportPath,
+      reason: `planner proposed ${plan.response.kind} decomposition`
+    })
+  };
+}
+
+async function handlePlannerFailure(
+  graphPath: string,
+  {
+    claim,
+    session,
+    error,
+    reportPath,
+    failurePolicy
+  }: {
+    claim: LeaseClaimResult;
+    session: string;
+    error: unknown;
+    reportPath: string;
+    failurePolicy: WorkerPlannerFailurePolicy;
+  },
+  runtime: WorkerRuntime
+): Promise<WorkerOutcome> {
+  const reason = `planner failed: ${errorMessage(error)}`;
+  await runtime.writeReportFile(graphPath, reportPath, formatPlannerFailureReport({ claim, error, reason }));
+  if (failurePolicy === "fail") {
+    const result = await runtime.failNode(graphPath, {
+      nodeId: claim.nodeId,
+      session,
+      runId: claim.runId,
+      reason,
+      report: reportPath,
+      extraHistoryEvents: [plannerFailureHistoryEvent({
+        reason,
+        reportPath,
+        failurePolicy,
+        requestId: requestIdFromPlannerError(error)
+      })]
+    });
+    return {
+      ...result,
+      runId: claim.runId,
+      code: 1,
+      report: reportPath,
+      slack: await runtime.sendSlackNotification(graphPath, operationalEvents.failed, {
+        nodeId: claim.nodeId,
+        reason,
+        report: reportPath
+      })
+    };
+  }
+
+  const result = await runtime.blockNode(graphPath, {
+    nodeId: claim.nodeId,
+    session,
+    runId: claim.runId,
+    report: reportPath,
+    reason,
+    question: `Planner failed before executing ${claim.nodeId}. Inspect ${reportPath}, then reset or fail the node.`,
+    extraHistoryEvents: [plannerFailureHistoryEvent({
+      reason,
+      reportPath,
+      failurePolicy,
+      requestId: requestIdFromPlannerError(error)
+    })]
+  });
+  return {
+    ...result,
+    runId: claim.runId,
+    code: 1,
+    report: reportPath,
+    note: "planner failure blocked execution",
+    slack: await runtime.sendSlackNotification(graphPath, operationalEvents.blocked, {
+      nodeId: claim.nodeId,
+      reason,
+      report: reportPath
+    })
+  };
+}
+
+function plannerFailureHistoryEvent({
+  reason,
+  reportPath,
+  failurePolicy,
+  requestId
+}: {
+  reason: string;
+  reportPath: string;
+  failurePolicy: WorkerPlannerFailurePolicy;
+  requestId?: string;
+}): { event: OperationalEventName; details: Record<string, unknown> } {
+  return {
+    event: operationalEvents.plannerFailed,
+    details: {
+      requestId,
+      failurePolicy,
+      reason,
+      report: reportPath
+    }
+  };
+}
+
+function attachPlannerRequestId(error: unknown, requestId: string): unknown {
+  if (typeof error === "object" && error !== null && !("requestId" in error)) {
+    (error as { requestId?: string }).requestId = requestId;
+  }
+  return error;
+}
+
+function requestIdFromPlannerError(error: unknown): string | undefined {
+  return typeof error === "object" && error !== null && typeof (error as { requestId?: unknown }).requestId === "string"
+    ? (error as { requestId: string }).requestId
+    : undefined;
+}
+
+function resolveWorkerPlannerSettings(graph: PlanGraphFile, options: RunWorkerOptions): WorkerPlannerSettings {
+  const config = graph.scheduler?.workerPlanner || {};
+  const mode = normalizeWorkerPlannerMode(options.plannerMode ?? config.mode);
+  const failurePolicy = normalizeWorkerPlannerFailurePolicy(options.plannerFailurePolicy ?? config.failurePolicy);
+  return {
+    mode,
+    failurePolicy,
+    allowedKinds: options.plannerAllowedKinds || config.allowedKinds,
+    requestIdPrefix: options.plannerRequestIdPrefix || stringConfigValue(config.requestIdPrefix) || "worker-plan"
+  };
+}
+
+function activeWorkerPlanner(options: RunWorkerOptions, runtime: WorkerRuntime): PlannerRuntime | undefined {
+  return options.planner || runtime.planner;
+}
+
+function normalizeWorkerPlannerMode(value: unknown): WorkerPlannerMode {
+  if (value === undefined || value === null || value === "") {
+    return "off";
+  }
+  if (value === "off" || value === "auto-decompose" || value === "ask-approval") {
+    return value;
+  }
+  throw new Error(`Invalid worker planner mode: expected off, auto-decompose, or ask-approval; received ${JSON.stringify(value)}`);
+}
+
+function normalizeWorkerPlannerFailurePolicy(value: unknown): WorkerPlannerFailurePolicy {
+  if (value === undefined || value === null || value === "") {
+    return "block";
+  }
+  if (value === "block" || value === "fail") {
+    return value;
+  }
+  throw new Error(`Invalid worker planner failure policy: expected block or fail; received ${JSON.stringify(value)}`);
+}
+
+function stringConfigValue(value: unknown): string | undefined {
+  return typeof value === "string" && value.trim() ? value.trim() : undefined;
+}
+
+function plannerApprovalQuestion(claim: LeaseClaimResult, plan: PlannerRuntimeResponse): string {
+  const childIds = plan.decompose?.children.map((child) => child.id).join(", ") || "none";
+  return `Planner proposed ${plan.response.kind} decomposition for ${claim.nodeId}: ${childIds}. Approve by decomposing the node from the report, or reset/fail it.`;
+}
+
+function formatPlannerPreflightReport({
+  claim,
+  plan
+}: {
+  claim: LeaseClaimResult;
+  plan: PlannerRuntimeResponse;
+}): string {
+  return [
+    `# Planner preflight: ${reportInlineValue(claim.nodeId)}`,
+    "",
+    `- Node: ${reportInlineValue(claim.nodeId)}`,
+    `- Run: ${reportInlineValue(claim.runId)}`,
+    `- Request: ${reportInlineValue(plan.requestId)}`,
+    `- Decision: ${reportInlineValue(plan.response.kind)}`,
+    `- Decomposition kind: ${reportInlineValue(plan.decompose?.kind || "none")}`,
+    `- Children: ${reportInlineValue(plan.decompose?.children.map((child) => child.id).join(", ") || "none")}`,
+    "",
+    "## Response",
+    "",
+    reportCodeBlock(JSON.stringify(plan.response, null, 2)),
+    "",
+    "## Decompose Mutation",
+    "",
+    reportCodeBlock(JSON.stringify(plan.decompose || null, null, 2))
+  ].join("\n");
+}
+
+function formatPlannerFailureReport({
+  claim,
+  error,
+  reason
+}: {
+  claim: LeaseClaimResult;
+  error: unknown;
+  reason: string;
+}): string {
+  const validation = validationFromPlannerError(error);
+  return [
+    `# Planner failure: ${reportInlineValue(claim.nodeId)}`,
+    "",
+    `- Node: ${reportInlineValue(claim.nodeId)}`,
+    `- Run: ${reportInlineValue(claim.runId)}`,
+    `- Reason: ${reportInlineValue(reason)}`,
+    ...(validation ? ["", "## Validation", "", reportCodeBlock(JSON.stringify(validation, null, 2))] : [])
+  ].join("\n");
+}
+
+function validationFromPlannerError(error: unknown): unknown {
+  return typeof error === "object" && error !== null && "validation" in error
+    ? (error as { validation?: unknown }).validation
+    : undefined;
 }
 
 interface IntegrationConflictTarget {
@@ -997,6 +1415,7 @@ export async function finalizeWorkerRun(
         noOp,
         ...(published.autoCommitted ? { autoCommitted: true } : {})
       };
+      await collectWorkerGitFootprint(currentRefMetadata);
     } catch (error) {
       finalizedRun = {
         ...run,
@@ -1033,7 +1452,11 @@ export async function finalizeWorkerRun(
 
   if (finalizedRun.code === 0) {
     const completionRefMetadata = currentRefMetadata?.outputRef
-      ? { outputRef: currentRefMetadata.outputRef }
+      ? {
+          outputRef: currentRefMetadata.outputRef,
+          ...(currentRefMetadata.gitFootprint ? { gitFootprint: currentRefMetadata.gitFootprint } : {}),
+          ...(currentRefMetadata.gitFootprintWarning ? { gitFootprintWarning: currentRefMetadata.gitFootprintWarning } : {})
+        }
       : currentRefMetadata;
     try {
       const result = await runtime.completeNode(graphPath, {
@@ -1073,6 +1496,36 @@ export async function finalizeWorkerRun(
     reportPath,
     refMetadata: currentRefMetadata
   }, runtime);
+}
+
+async function collectWorkerGitFootprint(refMetadata: WorkerRunRefMetadata): Promise<void> {
+  const baseRef = refMetadata.baseRef?.name;
+  const existingOutputRef = refMetadata.outputRef;
+  const outputRef = existingOutputRef?.name;
+  const cloneCwd = refMetadata.cloneCwd;
+  if (!baseRef || !outputRef || !cloneCwd) {
+    return;
+  }
+
+  const collected = await collectGitDiffStat({
+    cloneCwd,
+    baseRef: refMetadata.baseRef?.commit || baseRef,
+    baseRefName: baseRef,
+    headRef: outputRef
+  });
+  if (!collected.ok) {
+    refMetadata.gitFootprintWarning = collected.warning;
+    return;
+  }
+
+  refMetadata.gitFootprint = collected.footprint;
+  refMetadata.outputRef = {
+    ...existingOutputRef,
+    name: outputRef,
+    diffStat: collected.diffStat,
+    files: collected.files,
+    collectedAt: collected.footprint.collectedAt
+  };
 }
 
 async function failFinalizedWorkerRun(
@@ -1181,6 +1634,19 @@ export function formatWorkerReport({
     if (refMetadata?.outputRef?.autoCommitted === true) {
       sections.push(`- Auto-committed workspace changes: true`);
     }
+    if (isolation?.gitFootprint?.diffStat) {
+      const diffStat = isolation.gitFootprint.diffStat;
+      sections.push(`- Files changed: ${reportInlineValue(diffStat.filesChanged)}`);
+      sections.push(`- Insertions: ${reportInlineValue(diffStat.additions)}`);
+      sections.push(`- Deletions: ${reportInlineValue(diffStat.deletions)}`);
+      const files = isolation.gitFootprint.files || [];
+      if (files.length > 0) {
+        sections.push(`- Changed paths: ${reportInlineValue(files.map((file) => file.path).join(", "))}`);
+      }
+    }
+    if (refMetadata?.gitFootprintWarning) {
+      sections.push(`- Git footprint warning: ${reportInlineValue(refMetadata.gitFootprintWarning)}`);
+    }
     if (isolation?.integrationRef) {
       sections.push(`- Integration ref: ${reportInlineValue(isolation.integrationRef)}`);
       sections.push(`- Integration status: ${reportInlineValue(isolation.integrationStatus || "unknown")}`);
@@ -1223,6 +1689,7 @@ function mergeReportIsolationDetails(
     ...(refMetadata.workRef?.name ? { workRef: refMetadata.workRef.name } : {}),
     ...(refMetadata.outputRef?.name ? { outputRef: refMetadata.outputRef.name } : {}),
     ...(refMetadata.outputRef?.commit ? { outputCommit: refMetadata.outputRef.commit } : {}),
+    ...(refMetadata.gitFootprint ? { gitFootprint: refMetadata.gitFootprint } : {}),
     ...(refMetadata.integrationResult ? { integrationStatus: refMetadata.integrationResult } : {})
   };
 }

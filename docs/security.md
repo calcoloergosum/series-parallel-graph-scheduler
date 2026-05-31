@@ -54,6 +54,10 @@ Out of scope:
 - The visualizer does not provide TLS, login sessions, user roles, CSRF protection, origin checks, or per-route permissions.
 - Report redaction is best-effort for common secret shapes; it is not a guarantee that arbitrary sensitive data will be removed from graph text, stdout, stderr, logs, or generated HTML.
 - Graph validation prevents malformed scheduler structure from driving traversal, but it does not certify that task content, commands, remote URLs, or operator instructions are safe.
+- Planner validation treats generated plans as untrusted proposals. Approval
+  boundaries for dry-run, auto-save, regenerate, and approve-before-run flows
+  are documented in
+  [`planning-safety-and-approval.md`](planning-safety-and-approval.md).
 - Git-backed worker isolation does not contain malicious code, prevent network access, or hide repository contents from local filesystem readers.
 
 ## Trust Boundaries
@@ -78,7 +82,7 @@ The CLI mutates work through these commands:
 - `block`: marks work blocked, stores an operator question/reason, regenerates HTML, and may notify Slack.
 - `answer`: stores an operator answer, clears the lease, returns the leaf to pending, regenerates HTML, and may notify Slack.
 - `fail`: marks work failed, records reason/report, clears the lease, regenerates HTML, and may notify Slack.
-- `decompose`: replaces a claimed/running leaf with child nodes, clears the lease, reconciles the graph, regenerates HTML, and may notify Slack.
+- `decompose`: replaces a claimed/running/blocked leaf with child nodes, clears the lease, reconciles the graph, regenerates HTML, and may notify Slack.
 - `worker`: loops over `claim`, `start`, lease renewal, report writing, `done`, and `fail` while spawning the configured Codex command.
 - `reconcile`: marks completed internal subtrees done.
 - `release-expired`: clears expired leases and returns affected work to pending.
@@ -138,6 +142,7 @@ client can use unauthenticated write controls.
 | Graph corruption or lost updates | Concurrent commands could overwrite status transitions. | Mutating graph operations use a filesystem lock and atomic rename; stale locks are detected. Keep graph files on a local filesystem when possible and back them with version control. |
 | Slack webhook leakage | Webhook URL exposure allows unauthorized Slack posts; notification text may disclose node titles and report paths. | Store `SLACK_WEBHOOK_URL` outside committed files; rotate it if exposed; avoid putting secrets in node titles or report paths. |
 | Generated HTML/script injection | Malicious graph text rendered into the visualizer could execute in the browser if not escaped. | The live visualizer escapes dynamic text before inserting it. Treat generated HTML as sensitive output and avoid opening graph files from untrusted authors. |
+| Untrusted planner text | A generated plan, rationale, or prompt excerpt could contain misleading instructions, fake commands, hostile Markdown, or HTML-like text. | Parse only the documented planner JSON contract, render planner text with text-safe escaping, validate materialized graph state before writing, and require explicit approval before starting workers. |
 | Worker output volume | Large stdout/stderr can inflate reports or logs and expose data. | Use `--quiet` to suppress live streaming when appropriate; redirect daemon logs deliberately; prune reports/logs that are no longer needed. |
 
 ## Bind Address Risk Rating

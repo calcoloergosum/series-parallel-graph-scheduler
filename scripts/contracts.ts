@@ -87,6 +87,174 @@ export interface NodeOutputRefMetadata {
   session?: string;
   report?: string;
   producedAt?: IsoDateString;
+  diffStat?: GitDiffStatMetadata;
+  files?: GitFileFootprintMetadata[];
+  collectedAt?: IsoDateString;
+  [metadata: string]: unknown;
+}
+
+export interface GitRefFootprintMetadata {
+  name?: string;
+  commit?: string;
+  [metadata: string]: unknown;
+}
+
+export interface GitDiffStatBaseMetadata {
+  filesChanged: number;
+  deletions: number;
+  totalChanges: number;
+  binaryFiles?: number;
+  [metadata: string]: unknown;
+}
+
+export interface GitDiffStatInsertionsMetadata extends GitDiffStatBaseMetadata {
+  insertions: number;
+  additions?: number;
+}
+
+export interface GitDiffStatAdditionsMetadata extends GitDiffStatBaseMetadata {
+  additions: number;
+  insertions?: number;
+}
+
+export type GitDiffStatMetadata = GitDiffStatInsertionsMetadata | GitDiffStatAdditionsMetadata;
+
+export type GitFileChangeType =
+  | "added"
+  | "modified"
+  | "deleted"
+  | "renamed"
+  | "copied"
+  | "typechange"
+  | "unmerged"
+  | "unknown"
+  | (string & {});
+
+export interface GitFileFootprintBaseMetadata {
+  path: string;
+  oldPath?: string;
+  changeType?: GitFileChangeType;
+  deletions: number | null;
+  totalChanges: number | null;
+  binary?: boolean;
+  childIds?: NodeId[];
+  [metadata: string]: unknown;
+}
+
+export type GitFootprintSource =
+  | "git-diff"
+  | "child-aggregate"
+  | (string & {});
+
+export interface GitFootprintAggregationMetadata {
+  source: "child-footprints" | (string & {});
+  parentId?: NodeId;
+  parentKind?: NodeKind;
+  childCount: number;
+  includedChildIds: NodeId[];
+  missingChildIds: NodeId[];
+  duplicateFilePaths: string[];
+  diffStatKind: "summed-child-stats" | (string & {});
+  filesChangedKind: "unique-file-paths-with-stat-only-sum" | (string & {});
+  fileMergeRule: "sum-line-counts-by-path" | (string & {});
+  [metadata: string]: unknown;
+}
+
+export interface GitFileFootprintInsertionsMetadata extends GitFileFootprintBaseMetadata {
+  insertions: number | null;
+  additions?: number | null;
+}
+
+export interface GitFileFootprintAdditionsMetadata extends GitFileFootprintBaseMetadata {
+  additions: number | null;
+  insertions?: number | null;
+}
+
+export type GitFileFootprintMetadata = GitFileFootprintInsertionsMetadata | GitFileFootprintAdditionsMetadata;
+
+export interface NodeGitFootprintMetadata {
+  source?: GitFootprintSource;
+  baseRef?: GitRefFootprintMetadata;
+  headRef?: GitRefFootprintMetadata;
+  branch?: string;
+  commit?: string;
+  diffStat?: GitDiffStatMetadata;
+  files?: GitFileFootprintMetadata[];
+  aggregation?: GitFootprintAggregationMetadata;
+  childAggregate?: NodeGitFootprintMetadata;
+  collectedAt?: IsoDateString;
+  [metadata: string]: unknown;
+}
+
+export interface GitFootprintNodeSummary {
+  nodeId: NodeId;
+  title?: string;
+  kind: NodeKind;
+  status: NodeStatus;
+  source?: GitFootprintSource;
+  baseRef?: GitRefFootprintMetadata;
+  headRef?: GitRefFootprintMetadata;
+  branch?: string;
+  commit?: string;
+  diffStat?: GitDiffStatMetadata;
+  changedFiles: GitFileFootprintMetadata[];
+  collectedAt?: IsoDateString;
+}
+
+export interface GitFootprintRefSummary {
+  baseRefs: GitRefFootprintMetadata[];
+  headRefs: GitRefFootprintMetadata[];
+  commits: string[];
+}
+
+export interface GitFootprintSummary {
+  nodes: GitFootprintNodeSummary[];
+  refs: GitFootprintRefSummary;
+  diffStat: GitDiffStatMetadata;
+  changedFiles: GitFileFootprintMetadata[];
+}
+
+export interface NodeGoalMetadata {
+  text: string;
+  source?: "operator" | "planner" | "parent" | (string & {});
+  createdAt?: IsoDateString;
+  [metadata: string]: unknown;
+}
+
+export interface NodePlannerMetadata {
+  name?: string;
+  model?: string;
+  version?: string;
+  promptRef?: string;
+  requestId?: string;
+  plannedAt?: IsoDateString;
+  decision?: string;
+  rationale?: string;
+  decompositionReason?: string;
+  [metadata: string]: unknown;
+}
+
+export interface NodeContextRefMetadata {
+  type?: "file" | "url" | "node" | "report" | "git-ref" | (string & {});
+  ref: string;
+  title?: string;
+  nodeId?: NodeId;
+  [metadata: string]: unknown;
+}
+
+export interface NodeOutputContract {
+  format?: "markdown" | "json" | "patch" | "text" | (string & {});
+  requiredArtifacts?: string[];
+  acceptanceCriteria?: string[];
+  schemaRef?: string;
+  [metadata: string]: unknown;
+}
+
+export interface NodeResultSummary {
+  status?: "done" | "partial" | "blocked" | "failed" | (string & {});
+  summary: string;
+  artifacts?: string[];
+  completedAt?: IsoDateString;
   [metadata: string]: unknown;
 }
 
@@ -126,6 +294,8 @@ export interface WorkerRunRefMetadata {
   baseRef?: NodeBaseRefMetadata;
   workRef?: NodeWorkRefMetadata;
   outputRef?: NodeOutputRefMetadata;
+  gitFootprint?: NodeGitFootprintMetadata;
+  gitFootprintWarning?: string;
   integrationResult?: string;
   retained?: boolean;
   [metadata: string]: unknown;
@@ -139,6 +309,14 @@ export interface GraphNode {
   description?: string;
   deliverables?: string[];
   acceptanceCriteria?: string[];
+  goal?: string | NodeGoalMetadata;
+  planner?: NodePlannerMetadata;
+  plannerDecision?: string;
+  decompositionReason?: string;
+  rationale?: string;
+  contextRefs?: NodeContextRefMetadata[];
+  resultSummary?: NodeResultSummary;
+  outputContract?: NodeOutputContract;
   lease?: GraphLease;
   history?: GraphHistoryEntry[];
   startedAt?: IsoDateString;
@@ -157,8 +335,151 @@ export interface GraphNode {
   workRef?: NodeWorkRefMetadata;
   outputRef?: NodeOutputRefMetadata;
   integrationRef?: NodeIntegrationRefMetadata;
+  gitFootprint?: NodeGitFootprintMetadata;
+  gitFootprintWarning?: string;
   workspace?: NodeWorkspaceMetadata;
   [metadata: string]: unknown;
+}
+
+export type PlannerOutputKind = "task" | "series" | "parallel";
+export type PlannerRequestMode = "goal" | "decompose" | (string & {});
+export type PlannerChildIdPolicy = "planner-deterministic" | "scheduler-generated";
+export type PlannerValidationSeverity = "error" | "warning";
+
+export interface PlannerRequest {
+  requestId?: string;
+  mode: PlannerRequestMode;
+  goal: string;
+  nodeId?: NodeId;
+  node?: GraphNode;
+  parentContext?: PlannerParentContext;
+  currentGraphSummary?: GraphSummary;
+  outputSchema?: PlannerOutputSchemaDescriptor;
+  allowedKinds?: PlannerOutputKind[];
+  contextRefs?: NodeContextRefMetadata[];
+  outputContract?: NodeOutputContract;
+  planner?: NodePlannerMetadata;
+  [metadata: string]: unknown;
+}
+
+export interface PlannerParentContext {
+  nodeId: NodeId;
+  title?: string;
+  kind?: NodeKind;
+  status?: NodeStatus;
+  description?: string;
+  deliverables?: string[];
+  acceptanceCriteria?: string[];
+  goal?: string | NodeGoalMetadata;
+  contextRefs?: NodeContextRefMetadata[];
+  outputContract?: NodeOutputContract;
+  parentIds?: NodeId[];
+  [metadata: string]: unknown;
+}
+
+export interface PlannerOutputSchemaDescriptor {
+  schemaRef?: string;
+  description?: string;
+  responseKinds?: PlannerOutputKind[];
+  requiredFields?: string[];
+  schema?: JsonObject;
+  [metadata: string]: unknown;
+}
+
+export interface PlannerRuntimeRequest extends PlannerRequest {
+  requestId: string;
+  currentGraphSummary: GraphSummary;
+  outputSchema: PlannerOutputSchemaDescriptor;
+}
+
+export interface PlannerRuntimeResponse {
+  requestId: string;
+  response: PlannerResponse;
+  rawText?: string;
+  prompt?: string;
+  planner?: NodePlannerMetadata;
+  validation?: PlannerValidationResult;
+  decompose?: PlannerDecomposeMutation;
+  [metadata: string]: unknown;
+}
+
+export interface PlannerRuntime {
+  plan(request: PlannerRuntimeRequest): Promise<PlannerRuntimeResponse>;
+}
+
+export type WorkerPlannerMode = "off" | "auto-decompose" | "ask-approval";
+export type WorkerPlannerFailurePolicy = "block" | "fail";
+
+export interface WorkerPlannerConfig {
+  mode?: WorkerPlannerMode;
+  failurePolicy?: WorkerPlannerFailurePolicy;
+  allowedKinds?: PlannerOutputKind[];
+  requestIdPrefix?: string;
+  planner?: NodePlannerMetadata;
+  [metadata: string]: unknown;
+}
+
+export interface PlannerProposalBase {
+  title: string;
+  description?: string;
+  deliverables?: string[];
+  acceptanceCriteria?: string[];
+  goal?: string | NodeGoalMetadata;
+  planner?: NodePlannerMetadata;
+  contextRefs?: NodeContextRefMetadata[];
+  outputContract?: NodeOutputContract;
+  [metadata: string]: unknown;
+}
+
+export interface PlannerChildProposal extends PlannerProposalBase {
+  id?: NodeId;
+  idHint?: string;
+  kind?: PlannerOutputKind;
+  children?: PlannerChildProposal[];
+}
+
+export interface PlannerResponseBase extends PlannerProposalBase {
+  requestId?: string;
+  kind: PlannerOutputKind;
+  rationale?: string;
+}
+
+export interface PlannerTaskResponse extends PlannerResponseBase {
+  kind: "task";
+}
+
+export interface PlannerCompositeResponse extends PlannerResponseBase {
+  kind: "series" | "parallel";
+  children: PlannerChildProposal[];
+  childIdPolicy?: PlannerChildIdPolicy;
+}
+
+export type PlannerResponse = PlannerTaskResponse | PlannerCompositeResponse;
+
+export interface PlannerDecomposeChildSpec extends PlannerProposalBase {
+  id: NodeId;
+  kind?: PlannerOutputKind;
+  status?: NodeStatus;
+  children?: NodeId[];
+}
+
+export interface PlannerDecomposeMutation {
+  kind: "series" | "parallel";
+  children: PlannerDecomposeChildSpec[];
+}
+
+export interface PlannerValidationError {
+  path: string;
+  message: string;
+  code?: string;
+  severity?: PlannerValidationSeverity;
+  [metadata: string]: unknown;
+}
+
+export interface PlannerValidationResult {
+  valid: boolean;
+  errors: PlannerValidationError[];
+  warnings?: PlannerValidationError[];
 }
 
 export interface PlanGraphBody {
@@ -173,6 +494,7 @@ export interface SchedulerConfig {
   reportsDir?: string;
   leaseSeconds?: number;
   remote?: string;
+  workerPlanner?: WorkerPlannerConfig;
   [metadata: string]: unknown;
 }
 
@@ -328,6 +650,9 @@ export interface DiagnosticNode extends WorkingNode {
   blockedReason?: string;
   failureReason?: string;
   nextStep?: string;
+  gitFootprint?: NodeGitFootprintMetadata;
+  gitDiffStat?: GitDiffStatMetadata;
+  changedFiles?: GitFileFootprintMetadata[];
   remediation?: DiagnosticRemediation;
 }
 
@@ -340,6 +665,7 @@ export interface NodeIsolationDetails {
   workRef?: string;
   outputRef?: string;
   outputCommit?: string;
+  gitFootprint?: NodeGitFootprintMetadata;
   integrationRef?: string;
   integrationStatus?: string;
   publishedOutputRef?: string;
@@ -365,6 +691,7 @@ export interface GraphDiagnostics {
     missingOutputRefs: DiagnosticNode[];
     unresolvedBufferConflicts: DiagnosticNode[];
   };
+  gitFootprint?: GitFootprintSummary;
   lock?: GraphLockDiagnostics;
   actions: string[];
   remediation: DiagnosticRemediation[];
@@ -555,6 +882,69 @@ export interface VisualizerNodeRefs {
   workRef?: NodeWorkRefMetadata;
   outputRef?: NodeOutputRefMetadata;
   integrationRef?: NodeIntegrationRefMetadata;
+  gitFootprint?: NodeGitFootprintMetadata;
+}
+
+export interface VisualizerGitRefDisplay {
+  name?: string;
+  commit?: string;
+  display?: string;
+}
+
+export interface VisualizerGitChangedFileRow {
+  path: string;
+  oldPath?: string;
+  changeType?: GitFileChangeType;
+  insertions: number | null;
+  deletions: number | null;
+  totalChanges: number | null;
+  binary: boolean;
+  childIds?: NodeId[];
+}
+
+export interface VisualizerGitDiffStatDisplay {
+  filesChanged: number;
+  insertions: number;
+  deletions: number;
+  totalChanges: number;
+  binaryFiles?: number;
+}
+
+export interface VisualizerWorkspaceDisplay {
+  remote?: string;
+  cloneCwd?: string;
+  bareRepo?: string;
+  retained?: boolean;
+}
+
+export interface VisualizerGitFootprintDetail {
+  source?: GitFootprintSource;
+  commit?: string;
+  branch?: string;
+  baseRef?: VisualizerGitRefDisplay;
+  headRef?: VisualizerGitRefDisplay;
+  workRef?: VisualizerGitRefDisplay;
+  outputRef?: VisualizerGitRefDisplay;
+  integrationRef?: {
+    name?: string;
+    status?: string;
+    publishedOutputRef?: string;
+  };
+  diffStat?: VisualizerGitDiffStatDisplay;
+  filesChanged?: number;
+  insertions?: number;
+  deletions?: number;
+  totalChanges?: number;
+  binaryFiles?: number;
+  changedFiles: VisualizerGitChangedFileRow[];
+  changedFilesTotal: number;
+  changedFilesLimit: number;
+  changedFilesTruncated: number;
+  aggregation?: GitFootprintAggregationMetadata;
+  collectedAt?: IsoDateString;
+  remoteDisplay?: string;
+  workspaceDisplay?: string;
+  bareRepoDisplay?: string;
 }
 
 export interface VisualizerNodeTimestamps {
@@ -614,12 +1004,25 @@ export interface VisualizerNodeDetail {
   kind: NodeKind;
   status: NodeStatus;
   description?: string;
+  goal?: string | NodeGoalMetadata;
+  goalText?: string;
+  planner?: NodePlannerMetadata;
+  plannerDecision?: string;
+  decompositionReason?: string;
+  contextRefs?: NodeContextRefMetadata[];
+  outputContract?: NodeOutputContract;
+  resultSummary?: NodeResultSummary;
   children: NodeId[];
   deliverables: string[];
   acceptanceCriteria: string[];
   lease?: GraphLease;
   refs: VisualizerNodeRefs;
+  git?: VisualizerGitFootprintDetail;
+  gitFootprint?: NodeGitFootprintMetadata;
+  gitDiffStat?: GitDiffStatMetadata;
+  changedFiles?: GitFileFootprintMetadata[];
   workspace?: NodeWorkspaceMetadata;
+  workspaceDisplay?: VisualizerWorkspaceDisplay;
   report?: string;
   question?: string;
   answer?: string;
@@ -641,6 +1044,7 @@ export interface VisualizerPayload {
   actionPolicy: VisualizerActionPolicy;
   attention: VisualizerAttentionSummary;
   diagnostics: GraphDiagnostics;
+  gitFootprint?: GitFootprintSummary;
   recentEvents: OperationalEventExportEntry[];
   ready: ReadyNode[];
   working: WorkingNode[];
@@ -658,6 +1062,7 @@ export interface VisualizerServerHandle {
 export type VisualizerClient = ServerResponse;
 
 export type CliCommand =
+  | "plan"
   | "ready"
   | "summary"
   | "diagnostics"
@@ -712,6 +1117,11 @@ export interface StartWorkerOptions {
   remote?: string;
   workspaceRoot?: string;
   workspaceRetention?: "on-failure" | "always" | "never" | (string & {});
+  plannerMode?: WorkerPlannerMode | (string & {});
+  plannerFailurePolicy?: WorkerPlannerFailurePolicy | (string & {});
+  plannerAllowedKinds?: PlannerOutputKind[];
+  plannerRequestIdPrefix?: string;
+  planner?: PlannerRuntime;
 }
 
 export interface RunWorkerOptions extends StartWorkerOptions {
@@ -776,10 +1186,19 @@ export interface LayoutBox {
   title: string;
   kind: NodeKind;
   status: NodeStatus;
+  refLabel?: LayoutRefLabel;
   x: number;
   y: number;
   width: number;
   height: number;
+}
+
+export interface LayoutRefLabel {
+  commit?: string;
+  insertions?: string;
+  deletions?: string;
+  filesChanged?: string;
+  fallback?: string;
 }
 
 export interface LayoutFrame extends LayoutBox {
@@ -926,6 +1345,11 @@ export function validatePlanGraphFileResult(value: unknown): GraphValidationResu
     validateTimestampField(node.failedAt, `${nodePath}.failedAt`, errors);
     validateTimestampField(node.expiredAt, `${nodePath}.expiredAt`, errors);
     validateHistory(node.history, `${nodePath}.history`, errors);
+    validatePlannerMetadata(node.planner, `${nodePath}.planner`, errors);
+    validateContextRefs(node.contextRefs, `${nodePath}.contextRefs`, errors);
+    validateOutputContract(node.outputContract, `${nodePath}.outputContract`, errors);
+    validateResultSummary(node.resultSummary, `${nodePath}.resultSummary`, errors);
+    validateGitFootprint(node.gitFootprint, `${nodePath}.gitFootprint`, errors);
   }
 
   if (errors.length === 0 && typeof root === "string" && root.length > 0 && isRecord(nodes[root])) {
@@ -1055,9 +1479,236 @@ function validateHistory(history: unknown, path: string, errors: GraphValidation
   }
 }
 
+function validatePlannerMetadata(planner: unknown, path: string, errors: GraphValidationIssue[]): void {
+  if (planner === undefined) {
+    return;
+  }
+  if (!isRecord(planner)) {
+    errors.push({ path, message: "Expected planner metadata to be an object" });
+    return;
+  }
+  validateOptionalString(planner.name, `${path}.name`, "Expected planner name string", errors);
+  validateOptionalString(planner.model, `${path}.model`, "Expected planner model string", errors);
+  validateOptionalString(planner.version, `${path}.version`, "Expected planner version string", errors);
+  validateOptionalString(planner.promptRef, `${path}.promptRef`, "Expected planner promptRef string", errors);
+  validateOptionalString(planner.requestId, `${path}.requestId`, "Expected planner requestId string", errors);
+  validateTimestampField(planner.plannedAt, `${path}.plannedAt`, errors);
+  validateOptionalString(planner.decision, `${path}.decision`, "Expected planner decision string", errors);
+  validateOptionalString(planner.rationale, `${path}.rationale`, "Expected planner rationale string", errors);
+  validateOptionalString(planner.decompositionReason, `${path}.decompositionReason`, "Expected planner decompositionReason string", errors);
+}
+
+function validateContextRefs(contextRefs: unknown, path: string, errors: GraphValidationIssue[]): void {
+  if (contextRefs === undefined) {
+    return;
+  }
+  if (!Array.isArray(contextRefs)) {
+    errors.push({ path, message: "Expected contextRefs to be an array" });
+    return;
+  }
+  for (const [index, contextRef] of contextRefs.entries()) {
+    const entryPath = `${path}[${index}]`;
+    if (!isRecord(contextRef)) {
+      errors.push({ path: entryPath, message: "Expected contextRef to be an object" });
+      continue;
+    }
+    validateOptionalString(contextRef.type, `${entryPath}.type`, "Expected contextRef type string", errors);
+    validateRequiredString(contextRef.ref, `${entryPath}.ref`, "Expected contextRef ref string", errors);
+    validateOptionalString(contextRef.title, `${entryPath}.title`, "Expected contextRef title string", errors);
+    validateOptionalString(contextRef.nodeId, `${entryPath}.nodeId`, "Expected contextRef nodeId string", errors);
+  }
+}
+
+function validateOutputContract(outputContract: unknown, path: string, errors: GraphValidationIssue[]): void {
+  if (outputContract === undefined) {
+    return;
+  }
+  if (!isRecord(outputContract)) {
+    errors.push({ path, message: "Expected outputContract to be an object" });
+    return;
+  }
+  validateOptionalString(outputContract.format, `${path}.format`, "Expected outputContract format string", errors);
+  validateOptionalStringArray(outputContract.requiredArtifacts, `${path}.requiredArtifacts`, "Expected outputContract requiredArtifacts strings", errors);
+  validateOptionalStringArray(outputContract.acceptanceCriteria, `${path}.acceptanceCriteria`, "Expected outputContract acceptanceCriteria strings", errors);
+  validateOptionalString(outputContract.schemaRef, `${path}.schemaRef`, "Expected outputContract schemaRef string", errors);
+}
+
+function validateResultSummary(resultSummary: unknown, path: string, errors: GraphValidationIssue[]): void {
+  if (resultSummary === undefined) {
+    return;
+  }
+  if (!isRecord(resultSummary)) {
+    errors.push({ path, message: "Expected resultSummary to be an object" });
+    return;
+  }
+  validateOptionalString(resultSummary.status, `${path}.status`, "Expected resultSummary status string", errors);
+  validateRequiredString(resultSummary.summary, `${path}.summary`, "Expected resultSummary summary string", errors);
+  validateOptionalStringArray(resultSummary.artifacts, `${path}.artifacts`, "Expected resultSummary artifact strings", errors);
+  validateTimestampField(resultSummary.completedAt, `${path}.completedAt`, errors);
+}
+
+function validateGitFootprint(gitFootprint: unknown, path: string, errors: GraphValidationIssue[]): void {
+  if (gitFootprint === undefined) {
+    return;
+  }
+  if (!isRecord(gitFootprint)) {
+    errors.push({ path, message: "Expected gitFootprint to be an object" });
+    return;
+  }
+  validateOptionalString(gitFootprint.source, `${path}.source`, "Expected gitFootprint source string", errors);
+  validateGitFootprintRef(gitFootprint.baseRef, `${path}.baseRef`, errors);
+  validateGitFootprintRef(gitFootprint.headRef, `${path}.headRef`, errors);
+  validateOptionalString(gitFootprint.branch, `${path}.branch`, "Expected gitFootprint branch string", errors);
+  validateOptionalString(gitFootprint.commit, `${path}.commit`, "Expected gitFootprint commit string", errors);
+  validateGitDiffStat(gitFootprint.diffStat, `${path}.diffStat`, errors);
+  validateGitFiles(gitFootprint.files, `${path}.files`, errors);
+  validateGitFootprintAggregation(gitFootprint.aggregation, `${path}.aggregation`, errors);
+  validateGitFootprint(gitFootprint.childAggregate, `${path}.childAggregate`, errors);
+  validateTimestampField(gitFootprint.collectedAt, `${path}.collectedAt`, errors);
+}
+
+function validateGitFootprintRef(ref: unknown, path: string, errors: GraphValidationIssue[]): void {
+  if (ref === undefined) {
+    return;
+  }
+  if (!isRecord(ref)) {
+    errors.push({ path, message: "Expected git ref footprint to be an object" });
+    return;
+  }
+  validateOptionalString(ref.name, `${path}.name`, "Expected git ref name string", errors);
+  validateOptionalString(ref.commit, `${path}.commit`, "Expected git ref commit string", errors);
+}
+
+function validateGitDiffStat(diffStat: unknown, path: string, errors: GraphValidationIssue[]): void {
+  if (diffStat === undefined) {
+    return;
+  }
+  if (!isRecord(diffStat)) {
+    errors.push({ path, message: "Expected git diffStat to be an object" });
+    return;
+  }
+  validateRequiredNumber(diffStat.filesChanged, `${path}.filesChanged`, "Expected git diffStat filesChanged number", errors);
+  if (diffStat.insertions === undefined && diffStat.additions === undefined) {
+    errors.push({ path, message: "Expected git diffStat insertions or additions number" });
+  }
+  validateOptionalNumber(diffStat.insertions, `${path}.insertions`, "Expected git diffStat insertions number", errors);
+  validateOptionalNumber(diffStat.additions, `${path}.additions`, "Expected git diffStat additions number", errors);
+  validateRequiredNumber(diffStat.deletions, `${path}.deletions`, "Expected git diffStat deletions number", errors);
+  validateRequiredNumber(diffStat.totalChanges, `${path}.totalChanges`, "Expected git diffStat totalChanges number", errors);
+  validateOptionalNumber(diffStat.binaryFiles, `${path}.binaryFiles`, "Expected git diffStat binaryFiles number", errors);
+}
+
+function validateGitFiles(files: unknown, path: string, errors: GraphValidationIssue[]): void {
+  if (files === undefined) {
+    return;
+  }
+  if (!Array.isArray(files)) {
+    errors.push({ path, message: "Expected git files to be an array" });
+    return;
+  }
+  for (const [index, file] of files.entries()) {
+    const filePath = `${path}[${index}]`;
+    if (!isRecord(file)) {
+      errors.push({ path: filePath, message: "Expected git file footprint to be an object" });
+      continue;
+    }
+    validateRequiredString(file.path, `${filePath}.path`, "Expected git file path string", errors);
+    validateOptionalString(file.oldPath, `${filePath}.oldPath`, "Expected git file oldPath string", errors);
+    validateOptionalString(file.changeType, `${filePath}.changeType`, "Expected git file changeType string", errors);
+    if (file.insertions === undefined && file.additions === undefined) {
+      errors.push({ path: filePath, message: "Expected git file insertions or additions number" });
+    }
+    validateOptionalNullableNumber(file.insertions, `${filePath}.insertions`, "Expected git file insertions number or null", errors);
+    validateOptionalNullableNumber(file.additions, `${filePath}.additions`, "Expected git file additions number or null", errors);
+    validateRequiredNullableNumber(file.deletions, `${filePath}.deletions`, "Expected git file deletions number or null", errors);
+    validateRequiredNullableNumber(file.totalChanges, `${filePath}.totalChanges`, "Expected git file totalChanges number or null", errors);
+    if (file.binary !== undefined && typeof file.binary !== "boolean") {
+      errors.push({ path: `${filePath}.binary`, message: "Expected git file binary boolean" });
+    }
+    validateOptionalStringArray(file.childIds, `${filePath}.childIds`, "Expected git file childIds strings", errors);
+  }
+}
+
+function validateGitFootprintAggregation(aggregation: unknown, path: string, errors: GraphValidationIssue[]): void {
+  if (aggregation === undefined) {
+    return;
+  }
+  if (!isRecord(aggregation)) {
+    errors.push({ path, message: "Expected gitFootprint aggregation to be an object" });
+    return;
+  }
+  validateRequiredString(aggregation.source, `${path}.source`, "Expected gitFootprint aggregation source string", errors);
+  validateOptionalString(aggregation.parentId, `${path}.parentId`, "Expected gitFootprint aggregation parentId string", errors);
+  validateOptionalString(aggregation.parentKind, `${path}.parentKind`, "Expected gitFootprint aggregation parentKind string", errors);
+  validateRequiredNumber(aggregation.childCount, `${path}.childCount`, "Expected gitFootprint aggregation childCount number", errors);
+  validateRequiredStringArray(aggregation.includedChildIds, `${path}.includedChildIds`, "Expected gitFootprint aggregation includedChildIds strings", errors);
+  validateRequiredStringArray(aggregation.missingChildIds, `${path}.missingChildIds`, "Expected gitFootprint aggregation missingChildIds strings", errors);
+  validateRequiredStringArray(aggregation.duplicateFilePaths, `${path}.duplicateFilePaths`, "Expected gitFootprint aggregation duplicateFilePaths strings", errors);
+  validateRequiredString(aggregation.diffStatKind, `${path}.diffStatKind`, "Expected gitFootprint aggregation diffStatKind string", errors);
+  validateRequiredString(aggregation.filesChangedKind, `${path}.filesChangedKind`, "Expected gitFootprint aggregation filesChangedKind string", errors);
+  validateRequiredString(aggregation.fileMergeRule, `${path}.fileMergeRule`, "Expected gitFootprint aggregation fileMergeRule string", errors);
+}
+
 function validateRequiredString(value: unknown, path: string, message: string, errors: GraphValidationIssue[]): void {
   if (typeof value !== "string" || value.length === 0) {
     errors.push({ path, message });
+  }
+}
+
+function validateOptionalString(value: unknown, path: string, message: string, errors: GraphValidationIssue[]): void {
+  if (value !== undefined && typeof value !== "string") {
+    errors.push({ path, message });
+  }
+}
+
+function validateRequiredNumber(value: unknown, path: string, message: string, errors: GraphValidationIssue[]): void {
+  if (typeof value !== "number") {
+    errors.push({ path, message });
+  }
+}
+
+function validateOptionalNumber(value: unknown, path: string, message: string, errors: GraphValidationIssue[]): void {
+  if (value !== undefined && typeof value !== "number") {
+    errors.push({ path, message });
+  }
+}
+
+function validateRequiredNullableNumber(value: unknown, path: string, message: string, errors: GraphValidationIssue[]): void {
+  if (typeof value !== "number" && value !== null) {
+    errors.push({ path, message });
+  }
+}
+
+function validateOptionalNullableNumber(value: unknown, path: string, message: string, errors: GraphValidationIssue[]): void {
+  if (value !== undefined && typeof value !== "number" && value !== null) {
+    errors.push({ path, message });
+  }
+}
+
+function validateRequiredStringArray(value: unknown, path: string, message: string, errors: GraphValidationIssue[]): void {
+  if (!Array.isArray(value)) {
+    errors.push({ path, message });
+    return;
+  }
+  validateStringArrayItems(value, path, message, errors);
+}
+
+function validateOptionalStringArray(value: unknown, path: string, message: string, errors: GraphValidationIssue[]): void {
+  if (value === undefined) {
+    return;
+  }
+  if (!Array.isArray(value)) {
+    errors.push({ path, message });
+    return;
+  }
+  validateStringArrayItems(value, path, message, errors);
+}
+
+function validateStringArrayItems(value: unknown[], path: string, message: string, errors: GraphValidationIssue[]): void {
+  for (const [index, item] of value.entries()) {
+    if (typeof item !== "string") {
+      errors.push({ path: `${path}[${index}]`, message });
+    }
   }
 }
 

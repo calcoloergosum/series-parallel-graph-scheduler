@@ -81,6 +81,8 @@ by an installed package:
 - `schemas/`: checked-in JSON Schema artifacts for graph editor integration.
 - `docs/`, `README.md`, `CHANGELOG.md`, `package.json`, and
   `plan-example.graph.json`: operator documentation and a safe sample graph.
+- `examples/`: additional validating example graphs used by docs and operator
+  onboarding.
 
 The dry run must not include active operating graphs, generated renderer HTML,
 worker reports, run logs, temporary files, lock directories, source TypeScript,

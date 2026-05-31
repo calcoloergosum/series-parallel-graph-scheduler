@@ -7,16 +7,21 @@ import {
   knownNodeStatuses,
   type AnswerNodeResult,
   type DecomposeNodeResult,
+  type GitDiffStatMetadata,
   type GraphNode,
   type LeaseClaimResult,
   type NodeBaseRefMetadata,
   type NodeId,
   type NodeIntegrationInputRefMetadata,
   type NodeKind,
+  type NodePlannerMetadata,
   type NodeMutationResult,
   type NodeStatus,
   type NodeWorkspaceMetadata,
   type PlanGraphFile,
+  type PlannerOutputKind,
+  type PlannerRuntime,
+  type PlannerRuntimeResponse,
   type ReconcileGraphResult,
   type ReleaseExpiredLeasesResult,
   type RenewLeaseResult,
@@ -24,8 +29,11 @@ import {
   type ResetSubtreeResult,
   type WorkerRunRefMetadata
 } from "./contracts.js";
+import { validatePlanGraphFileResult } from "./contracts.js";
 
 import { defaultGraphPath, readGraph, withGraphLock, writeGraphAtomic, writeReportFile } from "./graph-io.js";
+import { aggregateChildGitFootprints, gitFootprintFromNode } from "./git-footprint.js";
+import { collectGitDiffStat } from "./git-runtime.js";
 import {
   findAncestorIds,
   getNode,
@@ -41,6 +49,7 @@ import {
   redactOperationalEventDetails,
   type OperationalEventName
 } from "./operational-events.js";
+import { buildPlannerRuntimeRequest, plannerResponseToDecomposeMutation } from "./planner-runtime.js";
 import { errorMessage, safeFilePart } from "./shared-utils.js";
 
 export interface ClaimNodeOptions {
@@ -65,6 +74,8 @@ export interface CompleteNodeOptions extends OwnedNodeOptions {
 export interface BlockNodeOptions extends OwnedNodeOptions {
   question?: string;
   reason?: string;
+  report?: string;
+  extraHistoryEvents?: ExtraNodeHistoryEvent[];
 }
 
 export interface AnswerNodeOptions {
@@ -77,6 +88,7 @@ export interface FailNodeOptions extends OwnedNodeOptions {
   reason?: string;
   report?: string;
   refMetadata?: WorkerRunRefMetadata;
+  extraHistoryEvents?: ExtraNodeHistoryEvent[];
 }
 
 export interface RenewNodeLeaseOptions extends OwnedNodeOptions {
@@ -112,6 +124,14 @@ export interface DecomposeNodeOptions extends OwnedNodeOptions {
   children?: DecomposeChildDefinition[];
 }
 
+export interface PlanNodeDecompositionOptions extends OwnedNodeOptions {
+  planner: PlannerRuntime;
+  requestId?: string;
+  goal?: string;
+  allowedKinds?: PlannerOutputKind[];
+  plannerMetadata?: NodePlannerMetadata;
+}
+
 interface LeaseOwner {
   session?: string;
   runId?: string;
@@ -122,7 +142,13 @@ interface UpdateNodeStatusOptions {
   status: NodeStatus;
   owner?: LeaseOwner;
   validate?: (graph: PlanGraphFile, node: GraphNode) => void;
-  patch?: (node: GraphNode, graph: PlanGraphFile) => Record<string, unknown> | void;
+  patch?: (node: GraphNode, graph: PlanGraphFile) => Record<string, unknown> | void | Promise<Record<string, unknown> | void>;
+  extraHistoryEvents?: ExtraNodeHistoryEvent[];
+}
+
+export interface ExtraNodeHistoryEvent {
+  event: OperationalEventName;
+  details?: Record<string, unknown>;
 }
 
 export type SchedulerTransitionActor = "worker" | "operator" | "system";
@@ -230,7 +256,7 @@ export const schedulerTransitionTable = {
     actor: "worker",
     implementation: "decomposeNode",
     scope: "leaf",
-    allowedFrom: ["claimed", "running"],
+    allowedFrom: ["claimed", "running", "blocked"],
     to: "pending",
     lease: "requires matching session or run id when the node is leased; clears any lease and creates child nodes"
   },
@@ -268,9 +294,11 @@ const resetClearedFields = [
   "workspace",
   "workRef",
   "outputRef",
-  "integrationRef"
+  "integrationRef",
+  "gitFootprint",
+  "gitFootprintWarning"
 ] as const;
-const compositionResetClearedFields = ["outputRef", "integrationRef"] as const;
+const compositionResetClearedFields = ["outputRef", "integrationRef", "gitFootprint", "gitFootprintWarning"] as const;
 
 export async function claimNode(
   graphPath: string,
@@ -385,9 +413,14 @@ export async function completeNode(
       assertStatus(node, schedulerTransitionTable.done.allowedFrom, "complete");
       assertOutputRefWhenIsolationRequired(graph, nodeId, node, refMetadata);
     },
-    patch: (node) => {
+    patch: async (node, graph) => {
       node.completedAt = new Date().toISOString();
       applyWorkerRefMetadata(node, refMetadata, { session, runId, report, now: node.completedAt });
+      const footprintDetails = await attachGitFootprintMetadata(graph, graphPath, nodeId as NodeId, node, {
+        now: node.completedAt,
+        cloneCwd: refMetadata?.cloneCwd,
+        bareRepoPath: refMetadata?.bareRepo
+      });
       if (report) {
         node.report = report;
       }
@@ -397,7 +430,8 @@ export async function completeNode(
       return {
         completedAt: node.completedAt,
         report,
-        clearedFields: ["lease", "blockedReason", "question"]
+        clearedFields: ["lease", "blockedReason", "question"],
+        ...footprintDetails
       };
     }
   });
@@ -405,12 +439,13 @@ export async function completeNode(
 
 export async function blockNode(
   graphPath: string,
-  { nodeId, question, reason, session, runId }: BlockNodeOptions = {}
+  { nodeId, question, reason, report, session, runId, extraHistoryEvents }: BlockNodeOptions = {}
 ): Promise<NodeMutationResult> {
   return updateNodeStatus(graphPath, {
     nodeId,
     status: "blocked",
     owner: { session, runId },
+    extraHistoryEvents,
     validate: (graph, node) => {
       assertLeafNode(graph, nodeId);
       assertStatus(node, schedulerTransitionTable.block.allowedFrom, "block");
@@ -421,7 +456,10 @@ export async function blockNode(
       if (question) {
         node.question = question;
       }
-      return { blockedAt: node.blockedAt, blockedReason: node.blockedReason, question };
+      if (report) {
+        node.report = report;
+      }
+      return { blockedAt: node.blockedAt, blockedReason: node.blockedReason, question, report };
     }
   });
 }
@@ -470,12 +508,13 @@ export async function answerNode(
 
 export async function failNode(
   graphPath: string,
-  { nodeId, reason, report, session, runId, refMetadata }: FailNodeOptions = {}
+  { nodeId, reason, report, session, runId, refMetadata, extraHistoryEvents }: FailNodeOptions = {}
 ): Promise<NodeMutationResult> {
   return updateNodeStatus(graphPath, {
     nodeId,
     status: "failed",
     owner: { session, runId },
+    extraHistoryEvents,
     validate: (graph, node) => {
       assertLeafNode(graph, nodeId);
       assertStatus(node, schedulerTransitionTable.fail.allowedFrom, "fail");
@@ -738,6 +777,11 @@ export async function publishResolvedIntegration(
     if (reportPath) {
       node.report = reportPath;
     }
+    const footprintDetails = await attachGitFootprintMetadata(graph, graphPath, nodeId, node, {
+      now: completedAt,
+      cloneCwd: typeof node.integrationRef.workspace === "string" ? node.integrationRef.workspace : undefined
+    });
+    applyAggregatedChildGitFootprint(graph, nodeId, node, completedAt);
     appendHistory(node, operationalEvents.parentRefPublished, {
       parentId: nodeId,
       kind: "parallel",
@@ -746,7 +790,8 @@ export async function publishResolvedIntegration(
       commit,
       result: "manual-resolution",
       ...(reportPath ? { report: reportPath } : {}),
-      ...(clearedFields.length > 0 ? { clearedFields } : {})
+      ...(clearedFields.length > 0 ? { clearedFields } : {}),
+      ...footprintDetails
     });
     appendHistory(node, operationalEvents.subtreeDone, {
       previousStatus,
@@ -760,6 +805,36 @@ export async function publishResolvedIntegration(
     await writeGraphAtomic(graph, graphPath);
     return { nodeId, status: node.status, title: node.title, summary: summarizeGraph(graph) };
   });
+}
+
+export async function planNodeDecomposition(
+  graphPath: string,
+  { nodeId, planner, requestId, goal, allowedKinds, plannerMetadata }: PlanNodeDecompositionOptions
+): Promise<PlannerRuntimeResponse> {
+  if (!nodeId) {
+    throw new Error("Missing node id");
+  }
+
+  const graph = await readGraph(graphPath);
+  const node = getNode(graph, nodeId);
+  if (!isLeaf(graph, nodeId)) {
+    throw new Error(`Cannot plan decomposition for non-leaf node: ${nodeId}`);
+  }
+  const request = buildPlannerRuntimeRequest(graph, nodeId, {
+    requestId,
+    goal,
+    allowedKinds,
+    planner: plannerMetadata || node.planner
+  });
+  const result = await planner.plan(request);
+  const decompose = plannerResponseToDecomposeMutation(result.response, graph, nodeId, {
+    allowedKinds: request.allowedKinds
+  });
+  return {
+    ...result,
+    validation: result.validation || { valid: true, errors: [] },
+    ...(decompose ? { decompose } : {})
+  };
 }
 
 export async function decomposeNode(
@@ -780,6 +855,11 @@ export async function decomposeNode(
     assertLeaseOwner(node, { session, runId });
 
     const normalizedChildren = normalizeChildDefinitions(children);
+    for (const child of normalizedChildren) {
+      if (graph.graph.nodes[child.id]) {
+        throw new Error(`Child node already exists: ${child.id}`);
+      }
+    }
 
     const previousStatus = node.status || "pending";
     const previousKind = node.kind;
@@ -803,9 +883,6 @@ export async function decomposeNode(
     });
 
     for (const child of normalizedChildren) {
-      if (graph.graph.nodes[child.id]) {
-        throw new Error(`Child node already exists: ${child.id}`);
-      }
       const { id: _id, ...childNode } = child;
       graph.graph.nodes[child.id] = {
         ...childNode
@@ -815,6 +892,7 @@ export async function decomposeNode(
       }
     }
 
+    assertValidGraphAfterMutation(graph);
     await reconcileCompletedSubtrees(graph, graphPath);
     graph.graphVersion = (graph.graphVersion || 0) + 1;
     await writeGraphAtomic(graph, graphPath);
@@ -822,7 +900,10 @@ export async function decomposeNode(
   });
 }
 
-async function updateNodeStatus(graphPath: string, { nodeId, status, owner, validate, patch }: UpdateNodeStatusOptions): Promise<NodeMutationResult> {
+async function updateNodeStatus(
+  graphPath: string,
+  { nodeId, status, owner, validate, patch, extraHistoryEvents }: UpdateNodeStatusOptions
+): Promise<NodeMutationResult> {
   if (!nodeId) {
     throw new Error("Missing node id");
   }
@@ -834,7 +915,7 @@ async function updateNodeStatus(graphPath: string, { nodeId, status, owner, vali
     assertLeaseOwner(node, owner);
     const previousStatus = node.status || "pending";
     node.status = status;
-    const patchDetails = patch?.(node, graph) || {};
+    const patchDetails = await patch?.(node, graph) || {};
     appendHistory(node, mutationEventForStatus(status), {
       previousStatus,
       status,
@@ -842,6 +923,15 @@ async function updateNodeStatus(graphPath: string, { nodeId, status, owner, vali
       runId: owner?.runId,
       ...patchDetails
     });
+    for (const extraEvent of extraHistoryEvents || []) {
+      appendHistory(node, extraEvent.event, {
+        previousStatus,
+        status,
+        session: owner?.session,
+        runId: owner?.runId,
+        ...extraEvent.details
+      });
+    }
     await reconcileCompletedSubtrees(graph, graphPath);
     graph.graphVersion = (graph.graphVersion || 0) + 1;
     await writeGraphAtomic(graph, graphPath);
@@ -892,8 +982,10 @@ async function reconcileCompletedSubtrees(graph: PlanGraphFile, graphPath: strin
         }
       }
       const previousStatus = node.status || "pending";
+      const completedAt = new Date().toISOString();
+      applyAggregatedChildGitFootprint(graph, nodeId, node, completedAt);
       node.status = "done";
-      node.completedAt ||= new Date().toISOString();
+      node.completedAt ||= completedAt;
       appendHistory(node, operationalEvents.subtreeDone, {
         previousStatus,
         status: node.status,
@@ -1010,6 +1102,11 @@ async function publishSeriesAliasIfRequired(
     source: "series-alias",
     aliasOfNodeId: finalChildId
   };
+  const footprintDetails = await attachGitFootprintMetadata(graph, graphPath, parentId, node, {
+    now: publishedAt,
+    bareRepoPath: parallelBareRepoPath(graphPath)
+  });
+  applyAggregatedChildGitFootprint(graph, parentId, node, publishedAt);
   appendHistory(node, operationalEvents.parentRefPublished, {
     parentId,
     kind: "series",
@@ -1018,7 +1115,8 @@ async function publishSeriesAliasIfRequired(
     commit: finalOutput.commit,
     result: "clean",
     finalChildId,
-    childOutputRef: finalOutput.name
+    childOutputRef: finalOutput.name,
+    ...footprintDetails
   });
   return "published";
 }
@@ -1177,6 +1275,7 @@ async function publishParallelIntegrationIfRequired(
 
   const commit = gitText(["-C", workspace, "rev-parse", "HEAD"]).trim();
   const reportPath = parallelIntegrationReportPath(parentId, reportAttemptId);
+  const producedAt = new Date().toISOString();
   node.integrationRef = {
     ...node.integrationRef,
     status: "clean",
@@ -1189,10 +1288,16 @@ async function publishParallelIntegrationIfRequired(
     commit,
     runId: reportAttemptId,
     report: reportPath,
-    producedAt: new Date().toISOString(),
+    producedAt,
     source: "parallel-integration"
   };
+  const footprintDetails = await attachGitFootprintMetadata(graph, graphPath, parentId, node, {
+    now: producedAt,
+    cloneCwd: workspace,
+    bareRepoPath: bareRepo
+  });
   const clearedFields = clearCompositionBlockState(node);
+  applyAggregatedChildGitFootprint(graph, parentId, node, producedAt);
   await writeReportFile(graphPath, reportPath, formatParallelIntegrationReport({
     parentId,
     result: "clean",
@@ -1213,7 +1318,8 @@ async function publishParallelIntegrationIfRequired(
     commit,
     result: "clean",
     report: reportPath,
-    ...(clearedFields.length > 0 ? { clearedFields } : {})
+    ...(clearedFields.length > 0 ? { clearedFields } : {}),
+    ...footprintDetails
   });
   return "published";
 }
@@ -1731,6 +1837,114 @@ function reopenUnresolvedCompositionAncestors(
   return reopened;
 }
 
+interface GitFootprintHistoryDetails {
+  diffStatCollected?: boolean;
+  diffStat?: GitDiffStatMetadata;
+  gitFootprintCollectedAt?: string;
+  gitFootprintWarning?: string;
+}
+
+async function attachGitFootprintMetadata(
+  graph: PlanGraphFile,
+  graphPath: string,
+  nodeId: NodeId,
+  node: GraphNode,
+  {
+    now,
+    cloneCwd,
+    bareRepoPath
+  }: {
+    now: string;
+    cloneCwd?: string;
+    bareRepoPath?: string;
+  }
+): Promise<GitFootprintHistoryDetails> {
+  if (!node.outputRef?.name) {
+    return {};
+  }
+
+  if (node.outputRef.diffStat && node.gitFootprint?.diffStat) {
+    return {
+      diffStatCollected: true,
+      diffStat: node.outputRef.diffStat,
+      gitFootprintCollectedAt: node.outputRef.collectedAt || node.gitFootprint.collectedAt
+    };
+  }
+
+  const baseRef = ensureNodeBaseRef(graph, nodeId, node, now);
+  if (!baseRef?.name) {
+    return recordGitFootprintWarning(node, `Git diffstat omitted: missing baseRef.name for ${nodeId}`);
+  }
+
+  const effectiveCloneCwd = cloneCwd || node.workspace?.cloneCwd;
+  const effectiveBareRepoPath = bareRepoPath || node.workspace?.bareRepo;
+  if (!effectiveCloneCwd && !effectiveBareRepoPath) {
+    return recordGitFootprintWarning(node, `Git diffstat omitted: missing cloneCwd or bareRepo for ${nodeId}`);
+  }
+
+  try {
+    const collected = await collectGitDiffStat({
+      cloneCwd: effectiveCloneCwd,
+      bareRepoPath: effectiveCloneCwd ? undefined : effectiveBareRepoPath,
+      baseRef: baseRef.commit || baseRef.name,
+      baseRefName: baseRef.name,
+      headRef: node.outputRef.commit || node.outputRef.name,
+      headRefName: node.outputRef.name,
+      collectedAt: now
+    });
+    if (!collected.ok) {
+      return recordGitFootprintWarning(node, collected.warning);
+    }
+
+    node.gitFootprint = mergeDefined(node.gitFootprint, collected.footprint);
+    node.outputRef = mergeDefined(node.outputRef, {
+      commit: node.outputRef.commit || collected.footprint.headRef?.commit,
+      diffStat: collected.diffStat,
+      files: collected.files,
+      collectedAt: collected.footprint.collectedAt
+    });
+    delete node.gitFootprintWarning;
+    return {
+      diffStatCollected: true,
+      diffStat: collected.diffStat,
+      gitFootprintCollectedAt: collected.footprint.collectedAt
+    };
+  } catch (error) {
+    return recordGitFootprintWarning(node, `Git diffstat collection failed: ${errorMessage(error)}`);
+  }
+}
+
+function ensureNodeBaseRef(
+  graph: PlanGraphFile,
+  nodeId: NodeId,
+  node: GraphNode,
+  now: string
+): NodeBaseRefMetadata | undefined {
+  if (node.baseRef?.name) {
+    return node.baseRef;
+  }
+
+  try {
+    const resolved = resolveNodeBaseRef(graph, nodeId);
+    node.baseRef = {
+      ...node.baseRef,
+      ...resolved,
+      resolvedAt: now
+    };
+    return node.baseRef;
+  } catch {
+    return undefined;
+  }
+}
+
+function recordGitFootprintWarning(node: GraphNode, warning: string): GitFootprintHistoryDetails {
+  node.gitFootprintWarning = warning;
+  return {
+    diffStatCollected: false,
+    gitFootprintWarning: warning
+  };
+}
+
 function applyWorkerRefMetadata(
   node: GraphNode,
   refMetadata: WorkerRunRefMetadata | undefined,
@@ -1765,6 +1979,12 @@ function applyWorkerRefMetadata(
       ...refMetadata.outputRef
     });
   }
+  if (refMetadata.gitFootprint) {
+    node.gitFootprint = mergeDefined(node.gitFootprint, refMetadata.gitFootprint);
+  }
+  if (refMetadata.gitFootprintWarning) {
+    node.gitFootprintWarning = refMetadata.gitFootprintWarning;
+  }
 
   if (workspace) {
     appendHistory(node, operationalEvents.clonePrepared, {
@@ -1786,15 +2006,37 @@ function applyWorkerRefMetadata(
     });
   }
   if (refMetadata.outputRef) {
+    const gitFootprint = gitFootprintFromNode(node);
     appendHistory(node, operationalEvents.outputRefRecorded, {
       session,
       runId,
       workRef: node.workRef?.name,
       outputRef: node.outputRef?.name,
       commit: node.outputRef?.commit,
-      report
+      report,
+      diffStat: gitFootprint?.diffStat,
+      files: gitFootprint?.files,
+      gitFootprint,
+      ...outputRefFootprintHistoryDetails(node)
     });
   }
+}
+
+function outputRefFootprintHistoryDetails(node: GraphNode): GitFootprintHistoryDetails {
+  if (node.outputRef?.diffStat) {
+    return {
+      diffStatCollected: true,
+      diffStat: node.outputRef.diffStat,
+      gitFootprintCollectedAt: node.outputRef.collectedAt || node.gitFootprint?.collectedAt
+    };
+  }
+  if (node.gitFootprintWarning) {
+    return {
+      diffStatCollected: false,
+      gitFootprintWarning: node.gitFootprintWarning
+    };
+  }
+  return {};
 }
 
 function buildWorkspaceMetadata(
@@ -1900,6 +2142,41 @@ function completionRequiresOutputRef(graph: PlanGraphFile, nodeId: NodeId, node:
   return false;
 }
 
+function applyAggregatedChildGitFootprint(
+  graph: PlanGraphFile,
+  parentId: NodeId,
+  node: GraphNode,
+  collectedAt: string
+): void {
+  const aggregate = aggregateChildGitFootprints({
+    parentId,
+    parentKind: node.kind,
+    children: (node.children || []).map((childId) => {
+      const child = getNode(graph, childId);
+      return {
+        nodeId: childId,
+        gitFootprint: child.gitFootprint,
+        outputRef: child.outputRef
+      };
+    }),
+    baseRef: node.baseRef,
+    headRef: node.outputRef ? { name: node.outputRef.name, commit: node.outputRef.commit } : undefined,
+    collectedAt
+  });
+  if (!aggregate) {
+    return;
+  }
+
+  if (node.gitFootprint?.diffStat && node.gitFootprint.source !== "child-aggregate") {
+    node.gitFootprint = {
+      ...node.gitFootprint,
+      childAggregate: aggregate
+    };
+    return;
+  }
+  node.gitFootprint = aggregate;
+}
+
 function mutationEventForStatus(status: NodeStatus): OperationalEventName {
   switch (status) {
     case "running":
@@ -1919,18 +2196,30 @@ function normalizeChildDefinitions(children: DecomposeChildDefinition[]): Decomp
   const normalized: DecomposeChildDefinition[] = [];
   const seen = new Set<NodeId>();
 
-  for (const child of children) {
+  for (const [index, child] of children.entries()) {
     if (!child || typeof child !== "object") {
       throw new Error("Each child must be an object");
     }
     if (!child.id || !child.title) {
       throw new Error("Each child requires id and title");
     }
+    assertSafeChildId(child.id, `children[${index}].id`);
     if (seen.has(child.id)) {
       throw new Error(`Duplicate child id in decomposition: ${child.id}`);
     }
     seen.add(child.id);
     const { id, title, kind, status, children: childIds, ...metadata } = child;
+    if (childIds !== undefined) {
+      if (!Array.isArray(childIds)) {
+        throw new Error(`Child children must be an array: ${child.id}`);
+      }
+      childIds.forEach((childId, childIndex) => {
+        if (typeof childId !== "string" || childId.trim().length === 0) {
+          throw new Error(`Child child id must be a non-empty string: ${child.id}.children[${childIndex}]`);
+        }
+        assertSafeChildId(childId, `${child.id}.children[${childIndex}]`);
+      });
+    }
     normalized.push({
       ...metadata,
       id: child.id,
@@ -1942,6 +2231,19 @@ function normalizeChildDefinitions(children: DecomposeChildDefinition[]): Decomp
   }
 
   return normalized;
+}
+
+function assertSafeChildId(id: string, path: string): void {
+  if (!/^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/.test(id) || id.includes("..")) {
+    throw new Error(`Unsafe child id at ${path}: ${id}`);
+  }
+}
+
+function assertValidGraphAfterMutation(graph: PlanGraphFile): void {
+  const validation = validatePlanGraphFileResult(graph);
+  if (validation.errors.length > 0) {
+    throw new Error(`Invalid graph after mutation: ${validation.errors.map((issue) => `${issue.path} ${issue.message}`).join("; ")}`);
+  }
 }
 
 function appendHistory(node: GraphNode, event: OperationalEventName, details: Record<string, unknown> = {}): void {

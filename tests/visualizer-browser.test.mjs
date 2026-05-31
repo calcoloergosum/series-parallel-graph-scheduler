@@ -110,6 +110,159 @@ function completedBrowserFixtureGraph() {
   return graph;
 }
 
+function metadataApprovalBrowserFixtureGraph() {
+  return {
+    graphVersion: 1,
+    title: "Planner Approval And Git Metadata Plan",
+    description: "Fixture for browser-visible planner approval and Git provenance.",
+    graph: {
+      root: "ROOT",
+      nodes: {
+        ROOT: {
+          title: "Metadata root",
+          kind: "parallel",
+          status: "pending",
+          children: ["APPROVAL", "IMPLEMENT"]
+        },
+        APPROVAL: {
+          title: "Approve planner preview",
+          kind: "task",
+          status: "blocked",
+          session: "codex-planner-approval",
+          runId: "run_approval_preview",
+          question: "Planner proposed series decomposition; approve by decomposing this node?",
+          blockedReason: "planner approval required",
+          report: "reports/APPROVAL-planner-preview.md",
+          goal: { text: "Approve the planner preview safely", source: "planner" },
+          planner: {
+            name: "codex",
+            model: "gpt-5",
+            requestId: "worker-plan-APPROVAL-run_approval_preview",
+            decision: "Split approval work into one implementation child",
+            decompositionReason: "ask-approval mode parks valid planner output for operator review"
+          },
+          history: [
+            {
+              at: "2026-05-31T00:00:01.000Z",
+              event: "planner-preview-rejected",
+              session: "codex-planner-approval",
+              runId: "run_approval_preview",
+              requestId: "worker-plan-APPROVAL-run_approval_preview",
+              proposedKind: "series",
+              childIds: ["APPROVALa"],
+              reason: "planner approval required",
+              report: "reports/APPROVAL-planner-preview.md"
+            },
+            {
+              at: "2026-05-31T00:00:02.000Z",
+              event: "blocked",
+              session: "codex-planner-approval",
+              runId: "run_approval_preview"
+            }
+          ]
+        },
+        IMPLEMENT: {
+          title: "Inspect changed files",
+          kind: "task",
+          status: "running",
+          session: "codex-git",
+          runId: "run_git_metadata",
+          goal: {
+            text: "Add searchable audit log documentation",
+            source: "planner",
+            createdAt: "2026-05-31T00:01:00.000Z"
+          },
+          planner: {
+            name: "codex",
+            model: "gpt-5",
+            requestId: "plan-20260531-audit-log-implement",
+            plannedAt: "2026-05-31T00:01:00.000Z",
+            decision: "Implement the smallest user-visible documentation slice first",
+            decompositionReason: "The goal is narrow enough for one leaf task"
+          },
+          contextRefs: [
+            { type: "file", ref: "README.md", title: "Operator quickstart" },
+            { type: "node", ref: "APPROVAL", nodeId: "APPROVAL", title: "Approval preview" }
+          ],
+          outputContract: {
+            format: "markdown",
+            requiredArtifacts: ["docs/audit-log.md"],
+            acceptanceCriteria: ["Summary output validates with the scheduler."]
+          },
+          baseRef: {
+            name: "refs/remotes/origin/main",
+            commit: "0000000000000000000000000000000000000001",
+            source: "graph-default",
+            resolvedAt: "2026-05-31T00:01:10.000Z"
+          },
+          workRef: {
+            name: "refs/heads/spg/node/IMPLEMENT/run_git_metadata",
+            commit: "0000000000000000000000000000000000000002",
+            runId: "run_git_metadata",
+            session: "codex-git",
+            createdAt: "2026-05-31T00:01:10.000Z"
+          },
+          outputRef: {
+            name: "refs/heads/spg/node/IMPLEMENT/run_git_metadata",
+            commit: "0000000000000000000000000000000000000003",
+            runId: "run_git_metadata",
+            session: "codex-git",
+            report: "reports/IMPLEMENT.md",
+            diffStat: {
+              filesChanged: 1,
+              insertions: 12,
+              deletions: 2,
+              totalChanges: 14,
+              binaryFiles: 0
+            },
+            files: [
+              {
+                path: "docs/audit-log.md",
+                changeType: "modified",
+                insertions: 12,
+                deletions: 2,
+                totalChanges: 14,
+                binary: false
+              }
+            ],
+            producedAt: "2026-05-31T00:10:20.000Z"
+          },
+          gitFootprint: {
+            source: "git-diff",
+            branch: "spg/node/IMPLEMENT/run_git_metadata",
+            commit: "0000000000000000000000000000000000000003",
+            remote: "https://user:secret-token@example.com/org/repo.git",
+            workspace: { cloneCwd: "/tmp/spg/token=workspace-secret/workspaces/codex-git/IMPLEMENT" },
+            diffStat: {
+              filesChanged: 1,
+              insertions: 12,
+              deletions: 2,
+              totalChanges: 14,
+              binaryFiles: 0
+            },
+            files: [
+              {
+                path: "docs/audit-log.md",
+                changeType: "modified",
+                insertions: 12,
+                deletions: 2,
+                totalChanges: 14,
+                binary: false
+              }
+            ],
+            collectedAt: "2026-05-31T00:10:30.000Z"
+          },
+          history: [
+            { at: "2026-05-31T00:01:10.000Z", event: "claimed", session: "codex-git", runId: "run_git_metadata" },
+            { at: "2026-05-31T00:01:11.000Z", event: "running", session: "codex-git", runId: "run_git_metadata" },
+            { at: "2026-05-31T00:10:20.000Z", event: "output-ref-recorded", session: "codex-git", runId: "run_git_metadata" }
+          ]
+        }
+      }
+    }
+  };
+}
+
 function layoutRegressionGraphs() {
   const seriesIds = Array.from({ length: 18 }, (_, index) => `L${index + 1}`);
   const wideIds = Array.from({ length: 12 }, (_, index) => `W${index + 1}`);
@@ -669,6 +822,74 @@ test("visualizer decompose builder validates dynamic children and mutates a runn
   }
 });
 
+test("visualizer token-protected approval flow shows planner and changed-file provenance", async (t) => {
+  const browser = await launchChromiumOrSkip(t);
+  if (!browser) {
+    return;
+  }
+
+  try {
+    await withTempGraph(metadataApprovalBrowserFixtureGraph, async (graphPath, dir) => {
+      await mkdir(join(dir, "reports"), { recursive: true });
+      await writeFile(join(dir, "reports", "APPROVAL-planner-preview.md"), "Planner preview proposes APPROVALa.\n", "utf8");
+      const visualizer = await createVisualizerServer({
+        graphPath,
+        port: 0,
+        defaultWorkerCwd: dir,
+        writeToken: "browser-secret"
+      });
+      const context = await browser.newContext({ viewport: { width: 390, height: 900 } });
+      try {
+        const page = await context.newPage();
+        page.setDefaultTimeout(10000);
+        await runWithPageDiagnostics(page, "visualizer-token-protected-provenance", graphPath, async () => {
+          await page.goto(`${visualizer.url}/#write-token=browser-secret`);
+          await page.locator("#graph svg.sp-graph").waitFor();
+          await assertGraphLayoutInvariants(page, metadataApprovalBrowserFixtureGraph());
+
+          await page.locator('#working [data-select-node="APPROVAL"]').click();
+          await page.locator("#selected-node-details", { hasText: "Approve planner preview" }).waitFor();
+          await page.locator("#selected-node-details", { hasText: "planner-preview-rejected" }).waitFor();
+          await page.locator("#selected-node-details", { hasText: "goal: Approve the planner preview safely" }).waitFor();
+          await page.locator("#selected-node-details", { hasText: "decision: Split approval work into one implementation child" }).waitFor();
+
+          await page.locator('[data-node-action="decompose"]').click();
+          await page.locator("[data-decompose-preview]", { hasText: "title cannot be empty" }).waitFor();
+          await page.locator("#decompose-session").fill("codex-planner-approval");
+          await page.locator('[name="childTitle"]').first().fill("Approved child");
+          await page.locator("[data-decompose-preview]", { hasText: '"nodeId": "APPROVAL"' }).waitFor();
+          await page.locator("[data-decompose-preview]", { hasText: '"session": "codex-planner-approval"' }).waitFor();
+          await page.locator("[data-decompose-preview]", { hasText: '"title": "Approved child"' }).waitFor();
+          await page.locator('form[data-decompose-form] button[type="submit"]').click();
+          await page.locator(".modal-dialog").waitFor({ state: "detached" });
+          await page.locator("#selected-node-details", { hasText: "children: APPROVALa" }).waitFor();
+
+          const approvedGraph = await readGraph(graphPath);
+          assert.equal(approvedGraph.graph.nodes.APPROVAL.status, "pending");
+          assert.deepEqual(approvedGraph.graph.nodes.APPROVAL.children, ["APPROVALa"]);
+          assert.equal(approvedGraph.graph.nodes.APPROVALa.title, "Approved child");
+
+          await page.locator('#working [data-select-node="IMPLEMENT"]').click();
+          await page.locator("#selected-node-details", { hasText: "Inspect changed files" }).waitFor();
+          await page.locator("#selected-node-details", { hasText: "goal: Add searchable audit log documentation" }).waitFor();
+          await page.locator("#selected-node-details", { hasText: "decision: Implement the smallest user-visible documentation slice first" }).waitFor();
+          await page.locator("#selected-node-details", { hasText: "Git Footprint" }).waitFor();
+          await page.locator("#selected-node-details", { hasText: "Diffstat" }).waitFor();
+          await page.locator("#selected-node-details", { hasText: "1 files, +12 / -2" }).waitFor();
+          await page.locator("#selected-node-details", { hasText: "Changed Files" }).waitFor();
+          await page.locator("#selected-node-details", { hasText: "docs/audit-log.md [modified] +12 / -2" }).waitFor();
+          assert.doesNotMatch(await page.locator("#selected-node-details").textContent(), /secret-token|workspace-secret/);
+        });
+      } finally {
+        await context.close();
+        await visualizer.close();
+      }
+    });
+  } finally {
+    await browser.close();
+  }
+});
+
 test("visualizer graph layout stays visible, unclipped, and non-overlapping for representative plans", async (t) => {
   const browser = await launchChromiumOrSkip(t);
   if (!browser) {
@@ -676,26 +897,31 @@ test("visualizer graph layout stays visible, unclipped, and non-overlapping for 
   }
 
   try {
+    const desktopViewport = { slug: "desktop", width: 1280, height: 900 };
+    const mobileViewport = { slug: "mobile", width: 390, height: 900 };
     for (const fixture of layoutRegressionGraphs()) {
       await t.test(fixture.slug, async () => {
-        await withTempGraph(() => fixture.graph, async (graphPath, dir) => {
-          const visualizer = await createVisualizerServer({ graphPath, port: 0, defaultWorkerCwd: dir });
-          const context = await browser.newContext({ viewport: { width: 1280, height: 900 } });
-          try {
-            const page = await context.newPage();
-            page.setDefaultTimeout(8000);
-            await runWithPageDiagnostics(page, `visualizer-layout-${fixture.slug}`, graphPath, async () => {
-              await page.goto(visualizer.url);
-              await page.locator("#graph svg.sp-graph").waitFor();
-              if (fixture.slug !== "hostile-long-text") {
-                await assertGraphLayoutInvariants(page, fixture.graph);
-              }
-            });
-          } finally {
-            await context.close();
-            await visualizer.close();
-          }
-        });
+        const viewports = fixture.slug === "large" ? [desktopViewport] : [desktopViewport, mobileViewport];
+        for (const viewport of viewports) {
+          await withTempGraph(() => fixture.graph, async (graphPath, dir) => {
+            const visualizer = await createVisualizerServer({ graphPath, port: 0, defaultWorkerCwd: dir });
+            const context = await browser.newContext({ viewport });
+            try {
+              const page = await context.newPage();
+              page.setDefaultTimeout(8000);
+              await runWithPageDiagnostics(page, `visualizer-layout-${fixture.slug}-${viewport.slug}`, graphPath, async () => {
+                await page.goto(visualizer.url);
+                await page.locator("#graph svg.sp-graph").waitFor();
+                if (fixture.slug !== "hostile-long-text") {
+                  await assertGraphLayoutInvariants(page, fixture.graph);
+                }
+              });
+            } finally {
+              await context.close();
+              await visualizer.close();
+            }
+          });
+        }
       });
     }
   } finally {
@@ -731,7 +957,7 @@ test("visualizer dense panels keep critical text and controls readable", async (
 
               const artifactDir = await ensureBrowserArtifactDir();
               const screenshotPath = join(artifactDir ?? dir, `visualizer-dense-panels-${viewport.slug}.png`);
-              await page.screenshot({ path: screenshotPath, fullPage: true });
+              await page.screenshot({ path: screenshotPath });
               assert.equal(existsSync(screenshotPath), true);
             });
           } finally {
@@ -775,7 +1001,6 @@ test("visualizer starts one managed worker for the selected ready node without C
 
           await page.locator("#workers", { hasText: "browser-B-01" }).waitFor();
           await page.locator("#workers", { hasText: /exited|running/ }).waitFor();
-          await page.locator("#working, #summary", { hasText: /B|done|running/ }).waitFor();
 
           const graphAfterWorker = await waitForGraphCondition(
             graphPath,

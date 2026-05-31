@@ -1,0 +1,258 @@
+{
+  "$schema": "../schemas/plan-graph.schema.json",
+  "graphVersion": 1,
+  "title": "Goal And Git Footprint Example",
+  "description": "A compact graph showing goal metadata, planner provenance, and Git footprint metadata.",
+  "statusModel": ["pending", "claimed", "running", "blocked", "review", "failed", "done"],
+  "scheduler": {
+    "stateFile": "plan.graph.json",
+    "htmlView": "plan.html",
+    "reportsDir": "reports",
+    "leaseSeconds": 1800,
+    "remote": "git@github.com:example/series-parallel-graph-scheduler.git"
+  },
+  "graph": {
+    "root": "ROOT",
+    "nodes": {
+      "ROOT": {
+        "title": "Ship searchable audit log docs",
+        "kind": "series",
+        "status": "done",
+        "children": ["PLAN", "IMPLEMENT"],
+        "description": "Generated from an operator goal and completed through Git-isolated work.",
+        "goal": {
+          "text": "Ship a searchable audit log",
+          "source": "operator",
+          "createdAt": "2026-05-31T00:00:00.000Z"
+        },
+        "planner": {
+          "name": "codex",
+          "model": "gpt-5",
+          "requestId": "plan-20260531-audit-log",
+          "plannedAt": "2026-05-31T00:00:05.000Z",
+          "decision": "Create a short series plan before implementation"
+        },
+        "resultSummary": {
+          "status": "done",
+          "summary": "The generated plan and implementation task completed.",
+          "artifacts": ["reports/IMPLEMENT.md"],
+          "completedAt": "2026-05-31T00:12:00.000Z"
+        },
+        "completedAt": "2026-05-31T00:12:00.000Z",
+        "history": [
+          {
+            "at": "2026-05-31T00:00:00.000Z",
+            "event": "goal-planned",
+            "source": "cli"
+          },
+          {
+            "at": "2026-05-31T00:12:00.000Z",
+            "event": "subtree-done",
+            "source": "reconcile"
+          }
+        ]
+      },
+      "PLAN": {
+        "title": "Plan documentation slice",
+        "kind": "task",
+        "status": "done",
+        "description": "Turn the operator goal into a small implementation task.",
+        "goal": {
+          "text": "Decompose the searchable audit log goal",
+          "source": "parent",
+          "createdAt": "2026-05-31T00:00:00.000Z"
+        },
+        "planner": {
+          "name": "codex",
+          "model": "gpt-5",
+          "requestId": "plan-20260531-audit-log",
+          "plannedAt": "2026-05-31T00:00:05.000Z",
+          "decision": "A single docs implementation task is enough for the example graph"
+        },
+        "deliverables": ["One implementation task with a clear output contract."],
+        "acceptanceCriteria": ["The next task is ready to execute and keeps the original goal visible."],
+        "resultSummary": {
+          "status": "done",
+          "summary": "Created IMPLEMENT as the next series task.",
+          "completedAt": "2026-05-31T00:01:00.000Z"
+        },
+        "completedAt": "2026-05-31T00:01:00.000Z",
+        "history": [
+          {
+            "at": "2026-05-31T00:00:05.000Z",
+            "event": "created",
+            "source": "goal-graph-factory"
+          },
+          {
+            "at": "2026-05-31T00:01:00.000Z",
+            "event": "done",
+            "session": "planner"
+          }
+        ]
+      },
+      "IMPLEMENT": {
+        "title": "Document searchable audit log",
+        "kind": "task",
+        "status": "done",
+        "description": "Add the operator-facing audit log documentation slice.",
+        "goal": {
+          "text": "Add searchable audit log documentation",
+          "source": "planner",
+          "createdAt": "2026-05-31T00:01:00.000Z"
+        },
+        "planner": {
+          "name": "codex",
+          "model": "gpt-5",
+          "requestId": "plan-20260531-audit-log-implement",
+          "plannedAt": "2026-05-31T00:01:00.000Z",
+          "decision": "Implement the smallest user-visible documentation slice first",
+          "decompositionReason": "The goal is narrow enough for one leaf task"
+        },
+        "contextRefs": [
+          {
+            "type": "file",
+            "ref": "README.md",
+            "title": "Operator quickstart"
+          },
+          {
+            "type": "node",
+            "ref": "PLAN",
+            "nodeId": "PLAN",
+            "title": "Planner task"
+          }
+        ],
+        "outputContract": {
+          "format": "markdown",
+          "requiredArtifacts": ["docs/audit-log.md"],
+          "acceptanceCriteria": ["Summary output validates with the scheduler."]
+        },
+        "baseRef": {
+          "name": "refs/remotes/origin/main",
+          "commit": "0000000000000000000000000000000000000001",
+          "source": "graph-default",
+          "resolvedAt": "2026-05-31T00:01:10.000Z"
+        },
+        "workRef": {
+          "name": "refs/heads/spg/node/IMPLEMENT/run_20260531_000010_IMPLEMENT_a1b2c3",
+          "commit": "0000000000000000000000000000000000000002",
+          "runId": "run_20260531_000010_IMPLEMENT_a1b2c3",
+          "session": "codex-A",
+          "createdAt": "2026-05-31T00:01:10.000Z"
+        },
+        "outputRef": {
+          "name": "refs/heads/spg/node/IMPLEMENT/run_20260531_000010_IMPLEMENT_a1b2c3",
+          "commit": "0000000000000000000000000000000000000002",
+          "runId": "run_20260531_000010_IMPLEMENT_a1b2c3",
+          "session": "codex-A",
+          "report": "reports/IMPLEMENT.md",
+          "producedAt": "2026-05-31T00:10:20.000Z",
+          "diffStat": {
+            "filesChanged": 1,
+            "insertions": 12,
+            "deletions": 2,
+            "totalChanges": 14,
+            "binaryFiles": 0
+          },
+          "files": [
+            {
+              "path": "docs/audit-log.md",
+              "changeType": "modified",
+              "insertions": 12,
+              "deletions": 2,
+              "totalChanges": 14,
+              "binary": false
+            }
+          ],
+          "collectedAt": "2026-05-31T00:10:30.000Z"
+        },
+        "gitFootprint": {
+          "source": "git-diff",
+          "baseRef": {
+            "name": "refs/remotes/origin/main",
+            "commit": "0000000000000000000000000000000000000001"
+          },
+          "headRef": {
+            "name": "refs/heads/spg/node/IMPLEMENT/run_20260531_000010_IMPLEMENT_a1b2c3",
+            "commit": "0000000000000000000000000000000000000002"
+          },
+          "branch": "spg/node/IMPLEMENT/run_20260531_000010_IMPLEMENT_a1b2c3",
+          "commit": "0000000000000000000000000000000000000002",
+          "diffStat": {
+            "filesChanged": 1,
+            "insertions": 12,
+            "deletions": 2,
+            "totalChanges": 14,
+            "binaryFiles": 0
+          },
+          "files": [
+            {
+              "path": "docs/audit-log.md",
+              "changeType": "modified",
+              "insertions": 12,
+              "deletions": 2,
+              "totalChanges": 14,
+              "binary": false
+            }
+          ],
+          "collectedAt": "2026-05-31T00:10:30.000Z"
+        },
+        "resultSummary": {
+          "status": "done",
+          "summary": "Added the searchable audit log documentation.",
+          "artifacts": ["docs/audit-log.md", "reports/IMPLEMENT.md"],
+          "completedAt": "2026-05-31T00:11:00.000Z"
+        },
+        "report": "reports/IMPLEMENT.md",
+        "completedAt": "2026-05-31T00:11:00.000Z",
+        "history": [
+          {
+            "at": "2026-05-31T00:01:10.000Z",
+            "event": "claimed",
+            "session": "codex-A",
+            "runId": "run_20260531_000010_IMPLEMENT_a1b2c3"
+          },
+          {
+            "at": "2026-05-31T00:01:11.000Z",
+            "event": "running",
+            "session": "codex-A",
+            "runId": "run_20260531_000010_IMPLEMENT_a1b2c3"
+          },
+          {
+            "at": "2026-05-31T00:10:20.000Z",
+            "event": "output-ref-recorded",
+            "session": "codex-A",
+            "runId": "run_20260531_000010_IMPLEMENT_a1b2c3"
+          },
+          {
+            "at": "2026-05-31T00:11:00.000Z",
+            "event": "done",
+            "session": "codex-A",
+            "runId": "run_20260531_000010_IMPLEMENT_a1b2c3"
+          }
+        ]
+      }
+    }
+  },
+  "document": {
+    "pageTitle": "Goal And Git Footprint Example",
+    "meta": [
+      {
+        "label": "Goal",
+        "value": "Ship a searchable audit log"
+      },
+      {
+        "label": "Example",
+        "value": "Goal metadata and Git footprint metadata"
+      }
+    ],
+    "intro": ["A compact example graph for validating goal-first and Git-aware visualizer metadata."],
+    "sections": [
+      {
+        "heading": "Metadata",
+        "paragraphs": [
+          "Nodes include goal, planner, contextRefs, outputContract, resultSummary, outputRef, and gitFootprint fields."
+        ]
+      }
+    ]
+  }
+}
