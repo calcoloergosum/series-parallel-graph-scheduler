@@ -1812,6 +1812,9 @@ function applyWorkerRefMetadata(
       ...refMetadata.outputRef
     });
   }
+  if (refMetadata.gitFootprint) {
+    node.gitFootprint = mergeDefined(node.gitFootprint, refMetadata.gitFootprint);
+  }
 
   if (workspace) {
     appendHistory(node, operationalEvents.clonePrepared, {

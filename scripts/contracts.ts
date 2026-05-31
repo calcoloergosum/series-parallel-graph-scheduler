@@ -218,6 +218,8 @@ export interface WorkerRunRefMetadata {
   baseRef?: NodeBaseRefMetadata;
   workRef?: NodeWorkRefMetadata;
   outputRef?: NodeOutputRefMetadata;
+  gitFootprint?: NodeGitFootprintMetadata;
+  gitFootprintWarning?: string;
   integrationResult?: string;
   retained?: boolean;
   [metadata: string]: unknown;

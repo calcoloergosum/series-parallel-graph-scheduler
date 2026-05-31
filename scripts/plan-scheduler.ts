@@ -125,6 +125,7 @@ export {
 export {
   GitRuntimeError,
   buildNodeWorkBranchName,
+  collectGitDiffStat,
   createRunClone,
   createWorkBranch,
   defaultBareRepositoryPath,
