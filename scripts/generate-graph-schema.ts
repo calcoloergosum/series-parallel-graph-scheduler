@@ -223,6 +223,7 @@ export function buildPlanGraphJsonSchema(): Record<string, unknown> {
         type: "object",
         additionalProperties: true,
         properties: {
+          source: { type: "string" },
           baseRef: { "$ref": "#/$defs/gitFootprintRef" },
           headRef: { "$ref": "#/$defs/gitFootprintRef" },
           branch: { type: "string" },
@@ -232,7 +233,35 @@ export function buildPlanGraphJsonSchema(): Record<string, unknown> {
             type: "array",
             items: { "$ref": "#/$defs/gitFileFootprint" }
           },
+          aggregation: { "$ref": "#/$defs/gitFootprintAggregation" },
+          childAggregate: { "$ref": "#/$defs/gitFootprint" },
           collectedAt: { "$ref": "#/$defs/timestamp" }
+        }
+      },
+      gitFootprintAggregation: {
+        type: "object",
+        required: [
+          "source",
+          "childCount",
+          "includedChildIds",
+          "missingChildIds",
+          "duplicateFilePaths",
+          "diffStatKind",
+          "filesChangedKind",
+          "fileMergeRule"
+        ],
+        additionalProperties: true,
+        properties: {
+          source: { type: "string" },
+          parentId: { type: "string" },
+          parentKind: { type: "string" },
+          childCount: { type: "number" },
+          includedChildIds: { type: "array", items: { type: "string" } },
+          missingChildIds: { type: "array", items: { type: "string" } },
+          duplicateFilePaths: { type: "array", items: { type: "string" } },
+          diffStatKind: { type: "string" },
+          filesChangedKind: { type: "string" },
+          fileMergeRule: { type: "string" }
         }
       },
       gitFootprintRef: {
@@ -274,7 +303,8 @@ export function buildPlanGraphJsonSchema(): Record<string, unknown> {
           additions: { type: ["number", "null"] },
           deletions: { type: ["number", "null"] },
           totalChanges: { type: ["number", "null"] },
-          binary: { type: "boolean" }
+          binary: { type: "boolean" },
+          childIds: { type: "array", items: { type: "string" } }
         }
       },
       goalMetadata: {

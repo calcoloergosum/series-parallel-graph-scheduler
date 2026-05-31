@@ -345,6 +345,7 @@ export async function collectGitDiffStat({
     ...(binaryFiles > 0 ? { binaryFiles } : {})
   };
   const footprint: NodeGitFootprintMetadata = {
+    source: "git-diff",
     baseRef: { name: baseRefName || baseRef, commit: baseCommit },
     headRef: { name: headRefName || headRef, commit: headCommit },
     branch: displayBranchName(headRefName || headRef),

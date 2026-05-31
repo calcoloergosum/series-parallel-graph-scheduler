@@ -1,11 +1,13 @@
 import { redactSecretText } from "./shared-utils.js";
 import type {
   GraphHistoryEntry,
+  GraphNode,
   JsonObject,
   JsonValue,
   OperationalEventExportEntry,
   PlanGraphFile
 } from "./contracts.js";
+import { gitFootprintFromNode } from "./git-footprint.js";
 
 export const operationalEvents = {
   claimed: "claimed",
@@ -203,6 +205,7 @@ export interface ExportOperationalEventsOptions {
 interface IndexedHistoryEntry {
   nodeId: string;
   nodeStatus?: string;
+  node: GraphNode;
   historyIndex: number;
   entry: GraphHistoryEntry;
 }
@@ -228,6 +231,7 @@ export function exportOperationalEvents(
       events.push({
         nodeId: currentNodeId,
         nodeStatus: node.status,
+        node,
         historyIndex,
         entry
       });
@@ -268,9 +272,13 @@ function compareRecentHistoryEntries(left: IndexedHistoryEntry, right: IndexedHi
   return right.nodeId.localeCompare(left.nodeId) || right.historyIndex - left.historyIndex;
 }
 
-function formatOperationalEventExportEntry({ nodeId, nodeStatus, entry }: IndexedHistoryEntry): OperationalEventExportEntry {
+function formatOperationalEventExportEntry({ nodeId, nodeStatus, node, entry }: IndexedHistoryEntry): OperationalEventExportEntry {
   const redactedEntry = omitUndefined(redactOperationalEventDetails(entry) as Record<string, unknown>);
   const timestamps = eventTimestamps(redactedEntry);
+  const details = {
+    ...eventDetails(redactedEntry, timestamps),
+    ...eventGitFootprintDetails(node, redactedEntry)
+  };
   return omitUndefined({
     at: stringValue(redactedEntry.at) || "",
     event: stringValue(redactedEntry.event) || "",
@@ -279,9 +287,41 @@ function formatOperationalEventExportEntry({ nodeId, nodeStatus, entry }: Indexe
     session: stringValue(redactedEntry.session),
     runId: stringValue(redactedEntry.runId),
     timestamps,
-    details: eventDetails(redactedEntry, timestamps)
+    details: omitUndefined(details)
   }) as OperationalEventExportEntry;
 }
+
+function eventGitFootprintDetails(node: GraphNode, entry: Record<string, unknown>): JsonObject {
+  const event = stringValue(entry.event);
+  if (!event || !gitFootprintEventNames.has(event)) {
+    return {};
+  }
+
+  const footprint = gitFootprintFromNode(node);
+  if (!footprint) {
+    return {};
+  }
+
+  const redactedFootprint = redactOperationalEventDetails({ gitFootprint: footprint }).gitFootprint;
+  const details: JsonObject = {};
+  if (entry.gitFootprint === undefined) {
+    details.gitFootprint = jsonValue(redactedFootprint);
+  }
+  if (entry.diffStat === undefined && footprint.diffStat) {
+    details.diffStat = jsonValue(footprint.diffStat);
+  }
+  if (entry.files === undefined && footprint.files) {
+    details.files = jsonValue(footprint.files);
+  }
+  return omitUndefined(details);
+}
+
+const gitFootprintEventNames = new Set<string>([
+  operationalEvents.done,
+  operationalEvents.failed,
+  operationalEvents.outputRefRecorded,
+  operationalEvents.parentRefPublished
+]);
 
 function eventTimestamps(entry: Record<string, unknown>): JsonObject {
   const timestamps: JsonObject = {};

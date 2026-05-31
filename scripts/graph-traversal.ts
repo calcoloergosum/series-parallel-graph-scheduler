@@ -19,6 +19,8 @@ import type {
   ReadyNodePriorityFields,
   WorkingNode
 } from "./contracts.js";
+import { buildGraphGitFootprintSummary, gitFootprintFromNode } from "./git-footprint.js";
+import { redactOperationalEventDetails } from "./operational-events.js";
 
 export const terminalStatuses = new Set<string>(["done"]);
 export const busyStatuses = new Set<string>(["claimed", "running", "blocked", "review", "failed"]);
@@ -419,6 +421,10 @@ export function buildGraphDiagnostics(
     actions: [],
     remediation: []
   };
+  const gitFootprint = buildGraphGitFootprintSummary(graph);
+  if (gitFootprint) {
+    diagnostics.gitFootprint = redactOperationalEventDetails({ gitFootprint }).gitFootprint as GraphDiagnostics["gitFootprint"];
+  }
 
   for (const [id, node] of Object.entries(graph.graph.nodes)) {
     const status = node.status || "pending";
@@ -575,7 +581,8 @@ function diagnosticNode(id: string, node: GraphNode, now: Date): DiagnosticNode 
   const status = node.status || "pending";
   const expiresAtTime = node.lease?.expiresAt ? Date.parse(node.lease.expiresAt) : Number.NaN;
   const expired = Number.isFinite(expiresAtTime) ? expiresAtTime <= now.getTime() : undefined;
-  return {
+  const gitFootprint = gitFootprintFromNode(node);
+  const details: DiagnosticNode = {
     id,
     title: node.title || id,
     kind: node.kind || "task",
@@ -589,9 +596,13 @@ function diagnosticNode(id: string, node: GraphNode, now: Date): DiagnosticNode 
     answeredAt: node.answeredAt,
     report: node.report,
     isolation: nodeIsolationDetails(node),
+    ...(gitFootprint ? { gitFootprint } : {}),
+    ...(gitFootprint?.diffStat ? { gitDiffStat: gitFootprint.diffStat } : {}),
+    ...(gitFootprint?.files ? { changedFiles: gitFootprint.files } : {}),
     ...(expired !== undefined ? { expired } : {}),
     ...(expired !== undefined ? { releasable: expired && autoReleasableStatuses.has(status) } : {})
   };
+  return redactOperationalEventDetails(details as unknown as Record<string, unknown>) as unknown as DiagnosticNode;
 }
 
 export function nodeIsolationDetails(node: GraphNode): NodeIsolationDetails | undefined {
@@ -613,7 +624,7 @@ export function nodeIsolationDetails(node: GraphNode): NodeIsolationDetails | un
       || integrationRef
       || node.outputRef?.commit
       || node.baseRef?.commit
-      || node.gitFootprint
+      || gitFootprintFromNode(node)
       || node.integrationRef?.status
       || history.some((entry) => isolationHistoryEvents.has(entry.event))
       || stringFromUnknown(node.workspace?.cloneCwd)
@@ -635,7 +646,7 @@ export function nodeIsolationDetails(node: GraphNode): NodeIsolationDetails | un
     workRef,
     outputRef,
     outputCommit: stringFromUnknown(node.outputRef?.commit) || historyString(history, "commit", "output-ref-recorded"),
-    gitFootprint: node.gitFootprint,
+    gitFootprint: gitFootprintFromNode(node),
     integrationRef,
     integrationStatus: stringFromUnknown(node.integrationRef?.status),
     publishedOutputRef: stringFromUnknown(node.integrationRef?.publishedOutputRef) || historyString(history, "publishedOutputRef"),
@@ -646,7 +657,7 @@ export function nodeIsolationDetails(node: GraphNode): NodeIsolationDetails | un
   if ((node.status === "done" || node.integrationRef?.status === "clean") && !details.outputRef && !details.publishedOutputRef) {
     details.missingOutputRef = true;
   }
-  return details;
+  return redactOperationalEventDetails(details as Record<string, unknown>) as unknown as NodeIsolationDetails;
 }
 
 function sortDiagnosticNodes(nodes: DiagnosticNode[]): void {
