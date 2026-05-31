@@ -132,13 +132,18 @@ separate `--graph`, positional graph path, `PLAN_GRAPH`, then
 `plan.graph.json` resolution order.
 
 Generated graph replay is ordinary static graph execution. After graph
-creation, operators run existing commands against the generated file:
+creation, operators can run existing commands against the generated file:
 
 ```bash
 node scripts/plan-scheduler.mjs plan --goal "Ship a searchable audit log"
 node scripts/plan-scheduler.mjs summary --graph runs/goals/20260531T000000Z-ship-a-searchable-audit-log/plan.graph.json
 node scripts/plan-scheduler.mjs worker --graph runs/goals/20260531T000000Z-ship-a-searchable-audit-log/plan.graph.json --session codex-A --once
 ```
+
+For immediate execution, operators can opt in with `--then-run`. The command
+writes the generated graph first, then invokes the same worker runtime used by
+the existing `worker` command. Plain `plan` and explicit `--plan-only` stop
+after writing the graph for review.
 
 Resume behavior also uses the generated graph file as the durable source of
 truth. If a worker stops, an operator resumes by passing the same generated
@@ -150,7 +155,8 @@ an existing graph unless a future explicit overwrite flag says so.
 | Mode | Opt-in signal | Graph path meaning | Default path | Creates graph? | Executes graph? | Resume or replay |
 | --- | --- | --- | --- | --- | --- | --- |
 | Static graph mode | Any existing scheduler command without `--goal` | `--graph` selects the input graph; fallback is `PLAN_GRAPH`, then `plan.graph.json` | `plan.graph.json` from the package root | No | Yes, for mutating and worker commands | Re-run the same command with the same graph path |
-| Goal planning mode | `plan --goal "..."` | `--graph` names the graph file to create for this command only | `runs/goals/<timestamp>-<safe-goal-slug>/plan.graph.json` | Yes | No, unless a future explicit plan-then-run flag invokes `worker` after a successful write | Resume by using the written graph path with existing commands |
+| Goal planning mode | `plan --goal "..."` or `plan --goal "..." --plan-only` | `--graph` names the graph file to create for this command only | `runs/goals/<timestamp>-<safe-goal-slug>/plan.graph.json` | Yes | No | Resume by using the written graph path with existing commands |
+| Goal planning and execution mode | `plan --goal "..." --then-run` | `--graph` names the graph file to create, then the worker input graph | `runs/goals/<timestamp>-<safe-goal-slug>/plan.graph.json` | Yes | Yes, through the existing worker runtime | Resume by using the written graph path with existing commands |
 | Generated graph replay mode | Existing scheduler command with `--graph <generated-plan.graph.json>` | `--graph` selects the generated graph as input | None beyond the existing scheduler fallback if omitted | No | Yes | Re-run `worker`, `serve`, `diagnostics`, or recovery commands with the same generated graph path |
 
 Goal-driven behavior must remain additive. Introducing `--goal` must not make
@@ -161,10 +167,10 @@ planner metadata.
 Planner approval and execution boundaries are part of the compatibility
 contract. Dry-run planning must not mutate the graph or start workers.
 Auto-save may write only validated planner output through the normal locked
-graph writer. Worker execution requires a separate approve-before-run step
-against a saved graph, and regenerate flows must create a new proposal instead
-of silently overwriting accepted graph state. Detailed failure and security
-rules live in
+graph writer. Worker execution requires either a separate approve-before-run
+step against a saved graph or the explicit `--then-run` opt-in on the planning
+command. Regenerate flows must create a new proposal instead of silently
+overwriting accepted graph state. Detailed failure and security rules live in
 [`planning-safety-and-approval.md`](planning-safety-and-approval.md).
 
 ## JSON Output Shapes
@@ -172,6 +178,14 @@ rules live in
 Commands that currently print JSON should continue to print a single JSON value to stdout:
 
 - `ready`: array of ready leaf objects with at least `id`, `kind`, and `status`; `title`, `question`, `answer`, and `answeredAt` are present when known on the node.
+- `plan`: object with at least `graphPath`, `mode`, `dryRun`, `written`,
+  `rootId`, `nodeCount`, `nextCommands`, `validation`, `summary`, and `graph`.
+  Plain `plan` and `--plan-only` report `mode: "plan-only"` and do not start a
+  worker. `--then-run` reports `mode: "plan-then-run"` and includes
+  `execution`, using the same result shape as `worker` when execution starts.
+  If worker setup fails after the graph is written, the JSON result still
+  reports the graph path and an `execution.failed` error before the command
+  exits non-zero.
 - `summary`: object with at least `totalNodes`, `root`, and `counts`; `graphVersion`, `title`, and `description` are present when known on the graph.
 - `diagnostics`: object with at least `generatedAt`, `summary`,
   `nextReady`, `leases`, `blocked`, `failed`, `isolation`, and `actions`;

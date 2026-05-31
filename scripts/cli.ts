@@ -184,7 +184,7 @@ export const cliCommands = [
   "help"
 ] as const satisfies readonly CliCommand[];
 
-const booleanFlags = new Set(["help", "once", "quiet", "unsafe-visualizer-write", "dry-run"]);
+const booleanFlags = new Set(["help", "once", "quiet", "unsafe-visualizer-write", "dry-run", "plan-only", "then-run"]);
 const repeatableValueFlags = new Set(["child", "codex-arg"]);
 
 export function parseArgs(argv: readonly string[]): ParsedArgs {
@@ -316,8 +316,9 @@ Graph selection:
 Commands:
   plan
     Required: --goal TEXT
-    Optional: --graph PATH (output graph path), --title TEXT, --dry-run
+    Optional: --graph PATH (output graph path), --title TEXT, --dry-run, --plan-only, --then-run, worker flags when --then-run is set
     Example: node scripts/plan-scheduler.mjs plan --goal "Ship a searchable audit log" --graph runs/goals/audit-log/plan.graph.json
+    Example: node scripts/plan-scheduler.mjs plan --goal "Ship a searchable audit log" --then-run --session codex-A --once
 
   ready
     Required: none
@@ -420,7 +421,7 @@ Commands:
     Example: node scripts/plan-scheduler.mjs serve --host 127.0.0.1 --port 8787
 
 Flag types:
-  Boolean flags take no value: --help, --dry-run, --once, --quiet, --unsafe-visualizer-write.
+  Boolean flags take no value: --help, --dry-run, --plan-only, --then-run, --once, --quiet, --unsafe-visualizer-write.
   Repeatable flags: --child ID=Title or ID:Title; --codex-arg ARG. Use --codex-arg=--flag when the value starts with "-".
   Numeric flags are integers: --lease 1..86400 seconds, --idle-ms 1..86400000, --timeout-ms 1..86400000, --port 0..65535, --limit 1..10000.
   Path flags: --graph selects the graph; for plan only, --graph is the output graph path. --report stays inside the graph directory; --template resolves from the graph directory; --cwd controls worker process cwd.
@@ -450,21 +451,35 @@ export async function dispatchCliCommand(options: CliDispatchOptions): Promise<v
     const goal = requiredTrimmedOptionString(args, "goal", "plan");
     const graphPath = resolvePlanGraphOutputPath(options.rootDir, args, goal);
     const graph = buildGoalGraph(goal, { title: optionString(args, "title") });
+    const planOnly = booleanArg(args, "plan-only");
+    const thenRun = booleanArg(args, "then-run");
+    if (planOnly && thenRun) {
+      throw new Error("Use either --plan-only or --then-run, not both");
+    }
+    if (booleanArg(args, "dry-run") && thenRun) {
+      throw new Error("Cannot combine --dry-run with --then-run");
+    }
     const validation = validatePlanGraphFileResult(graph);
     if (validation.errors.length > 0) {
       throw new Error(`Generated graph failed validation: ${formatGraphValidationIssues(validation.errors)}`);
     }
+    const summary = handlers.summarizeGraph(graph);
     const result = {
       graphPath,
+      mode: thenRun ? "plan-then-run" : "plan-only",
       dryRun: booleanArg(args, "dry-run"),
       written: false,
+      rootId: summary.root,
+      nodeCount: summary.totalNodes,
+      nextCommands: buildPlanNextCommands(graphPath, optionString(args, "session")),
       validation: {
         valid: true,
         errors: validation.errors,
         warnings: validation.warnings
       },
-      summary: handlers.summarizeGraph(graph),
-      graph
+      summary,
+      graph,
+      execution: undefined as RunWorkerResult | { failed: true; error: string } | undefined
     };
     if (result.dryRun) {
       await validateSafeGraphOutputPath(graphPath);
@@ -472,6 +487,18 @@ export async function dispatchCliCommand(options: CliDispatchOptions): Promise<v
       await ensureSafeGraphOutputPath(graphPath);
       await handlers.writeGraphFile(graphPath, graph);
       result.written = true;
+    }
+    if (thenRun) {
+      try {
+        result.execution = await handlers.runWorker(graphPath, {
+          ...buildWorkerOptionsFromArgs(args),
+          stream: false
+        });
+      } catch (error) {
+        result.execution = { failed: true, error: errorMessage(error) };
+        printJson(output, result);
+        throw error;
+      }
     }
     printJson(output, result);
     return;
@@ -636,28 +663,7 @@ export async function dispatchCliCommand(options: CliDispatchOptions): Promise<v
       return;
     }
     case "worker": {
-      const cwdArg = optionString(args, "cwd");
-      const isolationArg = optionString(args, "isolation");
-      if (cwdArg && isolationArg?.trim() === "git") {
-        throw new Error("Cannot combine --cwd with --isolation git; use --workspace-root to choose isolated clone placement.");
-      }
-      const result = await handlers.runWorker(graphPath, {
-        session: optionString(args, "session"),
-        nodeId: optionString(args, "node"),
-        isolation: isolationArg,
-        remote: optionString(args, "remote"),
-        workspaceRoot: optionString(args, "workspace-root"),
-        workspaceRetention: optionString(args, "workspace-retention"),
-        once: booleanArg(args, "once"),
-        idleMs: numberArg(args, "idle-ms", numericArgumentRanges.idleMs),
-        timeoutMs: numberArg(args, "timeout-ms", numericArgumentRanges.timeoutMs),
-        leaseSeconds: numberArg(args, "lease", numericArgumentRanges.leaseSeconds),
-        templatePath: optionString(args, "template"),
-        cwd: cwdArg ? resolve(cwdArg) : undefined,
-        stream: shouldStreamWorkerOutput(args),
-        codexCommand: optionString(args, "codex-command"),
-        codexArgs: parseCodexArgs(args, optionString(args, "codex-command"))
-      });
+      const result = await handlers.runWorker(graphPath, buildWorkerOptionsFromArgs(args));
       printJson(output, result);
       return;
     }
@@ -820,6 +826,49 @@ function goalSlug(goal: string): string {
   const normalized = goal.trim().toLowerCase().replaceAll(/[^a-z0-9._-]+/g, "-").replaceAll(/-+/g, "-").replaceAll(/^-|-$/g, "");
   const safe = safeFilePart(normalized).replaceAll(/^\.|\.$/g, "").slice(0, 80);
   return safe || "goal";
+}
+
+function buildWorkerOptionsFromArgs(args: ParsedArgs): Parameters<CliCommandHandlers["runWorker"]>[1] {
+  const cwdArg = optionString(args, "cwd");
+  const isolationArg = optionString(args, "isolation");
+  if (cwdArg && isolationArg?.trim() === "git") {
+    throw new Error("Cannot combine --cwd with --isolation git; use --workspace-root to choose isolated clone placement.");
+  }
+  return {
+    session: optionString(args, "session"),
+    nodeId: optionString(args, "node"),
+    isolation: isolationArg,
+    remote: optionString(args, "remote"),
+    workspaceRoot: optionString(args, "workspace-root"),
+    workspaceRetention: optionString(args, "workspace-retention"),
+    once: booleanArg(args, "once"),
+    idleMs: numberArg(args, "idle-ms", numericArgumentRanges.idleMs),
+    timeoutMs: numberArg(args, "timeout-ms", numericArgumentRanges.timeoutMs),
+    leaseSeconds: numberArg(args, "lease", numericArgumentRanges.leaseSeconds),
+    templatePath: optionString(args, "template"),
+    cwd: cwdArg ? resolve(cwdArg) : undefined,
+    stream: shouldStreamWorkerOutput(args),
+    codexCommand: optionString(args, "codex-command"),
+    codexArgs: parseCodexArgs(args, optionString(args, "codex-command"))
+  };
+}
+
+function buildPlanNextCommands(graphPath: string, session?: string): Record<string, string> {
+  const graphArg = shellQuote(graphPath);
+  const sessionArg = shellQuote(session || "codex-worker");
+  return {
+    summary: `node scripts/plan-scheduler.mjs summary --graph ${graphArg}`,
+    ready: `node scripts/plan-scheduler.mjs ready --graph ${graphArg}`,
+    run: `node scripts/plan-scheduler.mjs worker --graph ${graphArg} --session ${sessionArg}`,
+    serve: `node scripts/plan-scheduler.mjs serve --graph ${graphArg}`
+  };
+}
+
+function shellQuote(value: string): string {
+  if (/^[A-Za-z0-9_./:=@%+-]+$/.test(value)) {
+    return value;
+  }
+  return `'${value.replaceAll("'", "'\\''")}'`;
 }
 
 function formatGraphValidationIssues(issues: { path: string; message: string }[]): string {

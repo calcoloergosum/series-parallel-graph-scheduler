@@ -427,8 +427,13 @@ test("CLI plan creates a valid graph and rejects unsafe inputs", async () => {
     ]);
     const result = JSON.parse(cli.stdout);
     assert.equal(result.graphPath, graphPath);
+    assert.equal(result.mode, "plan-only");
     assert.equal(result.written, true);
     assert.equal(result.dryRun, false);
+    assert.equal(result.rootId, "ROOT");
+    assert.equal(result.nodeCount, 2);
+    assert.match(result.nextCommands.summary, /summary --graph /);
+    assert.match(result.nextCommands.run, /worker --graph /);
     assert.equal(result.summary.totalNodes, 2);
     assert.equal(result.summary.root, "ROOT");
     assert.deepEqual(result.summary.counts, { pending: 2 });
@@ -506,6 +511,118 @@ test("CLI plan creates a valid graph and rejects unsafe inputs", async () => {
     if (outsideDir) {
       await rm(outsideDir, { recursive: true, force: true });
     }
+  }
+});
+
+test("CLI plan-only mode writes a graph without worker execution", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "plan-only-cli-"));
+  try {
+    const graphPath = join(dir, "plan.graph.json");
+    const markerPath = join(dir, "worker-ran.txt");
+    const runnerPath = join(dir, "runner.mjs");
+    await writeFile(runnerPath, `import { writeFileSync } from "node:fs";\nwriteFileSync(${JSON.stringify(markerPath)}, "ran");\n`, "utf8");
+
+    const cli = await execFileAsync(process.execPath, [
+      schedulerScriptPath,
+      "plan",
+      "--goal",
+      "Review before execution",
+      "--graph",
+      graphPath,
+      "--plan-only",
+      "--codex-command",
+      process.execPath,
+      "--codex-arg",
+      runnerPath
+    ]);
+    const result = JSON.parse(cli.stdout);
+    assert.equal(result.mode, "plan-only");
+    assert.equal(result.written, true);
+    assert.equal(result.execution, undefined);
+    assert.equal(existsSync(graphPath), true);
+    assert.equal(existsSync(markerPath), false);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("CLI plan-then-run writes the graph and reuses worker execution", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "plan-then-run-cli-"));
+  try {
+    const graphPath = join(dir, "plan.graph.json");
+    const markerPath = join(dir, "worker-ran.txt");
+    const runnerPath = join(dir, "runner.mjs");
+    await writeFile(
+      runnerPath,
+      `import { writeFileSync } from "node:fs";\nconst prompt = process.argv.at(-1) || "";\nwriteFileSync(${JSON.stringify(markerPath)}, prompt.includes("Node: PLAN") ? "PLAN" : "missing");\nconsole.log("worker finished");\n`,
+      "utf8"
+    );
+
+    const cli = await execFileAsync(process.execPath, [
+      schedulerScriptPath,
+      "plan",
+      "--goal",
+      "Run immediately",
+      "--graph",
+      graphPath,
+      "--then-run",
+      "--once",
+      "--session",
+      "plan-runner",
+      "--cwd",
+      dir,
+      "--codex-command",
+      process.execPath,
+      "--codex-arg",
+      runnerPath
+    ]);
+    const result = JSON.parse(cli.stdout);
+    assert.equal(result.mode, "plan-then-run");
+    assert.equal(result.written, true);
+    assert.equal(result.execution.session, "plan-runner");
+    assert.equal(result.execution.idle, false);
+    assert.equal(result.execution.results[0].nodeId, "PLAN");
+    assert.equal(result.execution.results[0].code, 0);
+    assert.equal(existsSync(markerPath), true);
+
+    const graph = await readGraph(graphPath);
+    assert.equal(graph.graph.nodes.PLAN.status, "done");
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("CLI plan-then-run keeps the generated graph when execution setup fails", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "plan-then-run-fails-cli-"));
+  try {
+    const graphPath = join(dir, "plan.graph.json");
+    await assert.rejects(
+      execFileAsync(process.execPath, [
+        schedulerScriptPath,
+        "plan",
+        "--goal",
+        "Keep graph after execution failure",
+        "--graph",
+        graphPath,
+        "--then-run",
+        "--once",
+        "--isolation",
+        "invalid"
+      ]),
+      (error) => {
+        const result = JSON.parse(error.stdout);
+        assert.equal(result.graphPath, graphPath);
+        assert.equal(result.written, true);
+        assert.equal(result.execution.failed, true);
+        assert.match(result.execution.error, /Invalid --isolation/);
+        return true;
+      }
+    );
+    assert.equal(existsSync(graphPath), true);
+    const graph = await readGraph(graphPath);
+    assert.equal(graph.graph.root, "ROOT");
+  } finally {
+    await rm(dir, { recursive: true, force: true });
   }
 });
 
@@ -842,7 +959,7 @@ test("CLI help lists commands, flag kinds, defaults, environment variables, and 
   }
 
   assert.match(help, /--graph PATH\s+Optional for every command\. Default: PLAN_GRAPH, then plan\.graph\.json\./);
-  assert.match(help, /Boolean flags take no value: --help, --dry-run, --once, --quiet, --unsafe-visualizer-write\./);
+  assert.match(help, /Boolean flags take no value: --help, --dry-run, --plan-only, --then-run, --once, --quiet, --unsafe-visualizer-write\./);
   assert.match(help, /Repeatable flags: --child ID=Title or ID:Title; --codex-arg ARG\./);
   assert.match(help, /Use --codex-arg=--flag when the value starts with "-"\./);
   assert.match(help, /--lease 1\.\.86400 seconds, --idle-ms 1\.\.86400000, --timeout-ms 1\.\.86400000, --port 0\.\.65535, --limit 1\.\.10000/);
@@ -855,7 +972,7 @@ test("CLI help lists commands, flag kinds, defaults, environment variables, and 
   assert.match(help, /SPG_GIT_CACHE_LOCK_TIMEOUT_MS\s+Git cache lock wait timeout in milliseconds\. Default: 60000\./);
   assert.match(help, /Required: --node ID, --answer TEXT/);
   assert.match(help, /Required: --goal TEXT/);
-  assert.match(help, /--graph PATH \(output graph path\), --title TEXT, --dry-run/);
+  assert.match(help, /--graph PATH \(output graph path\), --title TEXT, --dry-run, --plan-only, --then-run/);
   assert.match(help, /--child ID=Title repeated, or --child-json JSON/);
   assert.match(help, /--session NAME \(default: codex-worker\)/);
   assert.match(help, /--codex-command PATH \(default: codex\), --codex-arg ARG repeated \(default: exec\)/);
