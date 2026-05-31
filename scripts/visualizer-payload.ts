@@ -11,6 +11,7 @@ import type {
   NodeWorkspaceMetadata,
   PlanGraphFile,
   VisualizerAttentionSummary,
+  VisualizerGitAction,
   VisualizerGitChangedFileRow,
   VisualizerGitDiffStatDisplay,
   VisualizerGitFootprintDetail,
@@ -108,6 +109,7 @@ function normalizeVisualizerNode(
     }),
     git,
     gitFootprint,
+    gitFootprintWarning: node.gitFootprintWarning,
     gitDiffStat: git?.diffStat,
     changedFiles: git?.changedFiles,
     workspace: node.workspace,
@@ -152,6 +154,14 @@ function normalizeVisualizerGitDetail(
   const workspace = workspaceDisplay(node.workspace);
   const commit = gitFootprint?.commit || gitFootprint?.headRef?.commit || node.outputRef?.commit || node.workRef?.commit;
   const branch = gitFootprint?.branch || branchName(gitFootprint?.headRef?.name || node.outputRef?.name || node.workRef?.name);
+  const actions = visualizerGitActions({
+    baseRef,
+    headRef,
+    outputRef,
+    integrationRef,
+    workRef,
+    remote: node.workspace?.remote
+  });
 
   return omitUndefined({
     source: gitFootprint?.source,
@@ -172,6 +182,7 @@ function normalizeVisualizerGitDetail(
     changedFilesTotal: allFiles.length,
     changedFilesLimit: visualizerChangedFilesLimit,
     changedFilesTruncated: Math.max(0, allFiles.length - changedFiles.length),
+    actions,
     aggregation: gitFootprint?.aggregation,
     collectedAt: gitFootprint?.collectedAt || node.outputRef?.collectedAt,
     remoteDisplay: workspace?.remote,
@@ -260,6 +271,89 @@ function sortedChangedFileRows(files: GitFileFootprintMetadata[]): VisualizerGit
       || String(left.oldPath || "").localeCompare(String(right.oldPath || ""))
       || String(left.changeType || "").localeCompare(String(right.changeType || ""))
     ));
+}
+
+function visualizerGitActions({
+  baseRef,
+  headRef,
+  outputRef,
+  integrationRef,
+  workRef,
+  remote
+}: {
+  baseRef?: VisualizerGitRefDisplay;
+  headRef?: VisualizerGitRefDisplay;
+  outputRef?: VisualizerGitRefDisplay;
+  integrationRef?: VisualizerGitFootprintDetail["integrationRef"];
+  workRef?: VisualizerGitRefDisplay;
+  remote?: string;
+}): VisualizerGitAction[] {
+  const base = compareToken(baseRef);
+  const head = compareToken(headRef || outputRef || integrationRef || workRef);
+  const missing = [];
+  if (!base) {
+    missing.push("base ref");
+  }
+  if (!head) {
+    missing.push("head ref");
+  }
+  const disabledReason = missing.length
+    ? `Missing ${missing.join(" and ")}.`
+    : !remote
+      ? "Missing git remote metadata."
+      : !githubProjectUrl(remote)
+        ? "Compare links require a GitHub remote."
+        : undefined;
+
+  if (disabledReason) {
+    return gitActionRows(undefined, disabledReason);
+  }
+
+  const range = `${encodeURIComponent(base)}...${encodeURIComponent(head)}`;
+  const compareUrl = `${githubProjectUrl(remote)}/compare/${range}`;
+  return gitActionRows(compareUrl);
+}
+
+function gitActionRows(compareUrl: string | undefined, disabledReason?: string): VisualizerGitAction[] {
+  return [
+    {
+      id: "open-diff",
+      label: "Open diff",
+      ...(compareUrl ? { href: `${compareUrl}.diff` } : { disabledReason })
+    },
+    {
+      id: "compare",
+      label: "Compare",
+      ...(compareUrl ? { href: compareUrl } : { disabledReason })
+    }
+  ];
+}
+
+function compareToken(ref: VisualizerGitRefDisplay | VisualizerGitFootprintDetail["integrationRef"] | undefined): string {
+  if (!ref) {
+    return "";
+  }
+  const candidate = ref as VisualizerGitRefDisplay & { publishedOutputRef?: string };
+  const value = candidate.commit || candidate.publishedOutputRef || candidate.name;
+  if (!value) {
+    return "";
+  }
+  return value
+    .replace(/^refs\/heads\//, "")
+    .replace(/^refs\/remotes\/origin\//, "")
+    .replace(/^refs\/remotes\/[^/]+\//, "");
+}
+
+function githubProjectUrl(remote: string | undefined): string {
+  const text = String(remote || "").trim();
+  const httpsMatch = text.match(/^https?:\/\/(?:[^/@]+@)?github\.com\/([^/\s]+)\/([^/\s]+?)(?:\.git)?\/?$/i);
+  const sshMatch = text.match(/^git@github\.com:([^/\s]+)\/([^/\s]+?)(?:\.git)?$/i)
+    || text.match(/^ssh:\/\/git@github\.com\/([^/\s]+)\/([^/\s]+?)(?:\.git)?\/?$/i);
+  const match = httpsMatch || sshMatch;
+  if (!match) {
+    return "";
+  }
+  return `https://github.com/${encodeURIComponent(match[1])}/${encodeURIComponent(match[2].replace(/\.git$/i, ""))}`;
 }
 
 function fileInsertions(file: GitFileFootprintMetadata): number | null {

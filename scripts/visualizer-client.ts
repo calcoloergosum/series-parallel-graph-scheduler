@@ -1449,9 +1449,40 @@ export function renderVisualizerHtml(): string {
   }
 
   function appendGitActionLinks(parent, detail) {
-    const availability = gitActionAvailability(detail);
+    const actions = Array.isArray(detail?.git?.actions) && detail.git.actions.length
+      ? detail.git.actions
+      : undefined;
     const row = document.createElement("div");
     row.className = "git-action-row";
+    if (actions) {
+      let disabledReason = "";
+      for (const action of actions) {
+        if (action.href) {
+          const link = document.createElement("a");
+          link.className = "git-action-link";
+          link.setAttribute("target", "_blank");
+          link.setAttribute("rel", "noreferrer");
+          link.setAttribute("href", action.href);
+          link.textContent = action.label;
+          row.append(link);
+          continue;
+        }
+        disabledReason ||= action.disabledReason || "Compare metadata is incomplete.";
+        const disabled = document.createElement("span");
+        disabled.className = "git-action-disabled";
+        disabled.setAttribute("aria-disabled", "true");
+        disabled.setAttribute("title", disabledReason);
+        disabled.textContent = action.label;
+        row.append(disabled);
+      }
+      parent.append(row);
+      if (disabledReason) {
+        appendMetaLine(parent, "compare disabled", disabledReason);
+      }
+      return;
+    }
+
+    const availability = gitActionAvailability(detail);
     if (availability.compareUrl && availability.diffUrl) {
       for (const [label, href] of [["Open diff", availability.diffUrl], ["Compare", availability.compareUrl]]) {
         const link = document.createElement("a");
@@ -1515,6 +1546,9 @@ export function renderVisualizerHtml(): string {
       summaryRows.push("+" + truncated + " more files");
     }
     appendMetaLine(parent, "changed files", summaryRows.join("\\n"));
+    if (truncated > 0) {
+      appendMetaLine(parent, "changed files truncated", "showing " + files.length + " of " + (files.length + truncated) + "; " + truncated + " omitted");
+    }
     const wrap = document.createElement("div");
     wrap.className = "git-file-table-wrap";
     const table = document.createElement("table");
@@ -1562,6 +1596,7 @@ export function renderVisualizerHtml(): string {
     const refs = detail?.refs || {};
     const footprint = detail?.gitFootprint || refs.gitFootprint || {};
     const git = detail?.git || {};
+    const warning = detail?.gitFootprintWarning || git.warning || refs.gitFootprintWarning;
     const section = document.createElement("section");
     section.className = "inspector-section";
     section.setAttribute("aria-label", "Git inspector");
@@ -1578,11 +1613,11 @@ export function renderVisualizerHtml(): string {
     if (hasGitMetadata) {
       appendMetaLine(section, "commit", git.commit || footprint.commit);
       appendMetaLine(section, "branch", git.branch || footprint.branch);
-      appendMetaLine(section, "base", refLabel(git.baseRef || footprint.baseRef || refs.baseRef || detail?.baseRef));
-      appendMetaLine(section, "work", refLabel(git.workRef || refs.workRef || detail?.workRef));
-      appendMetaLine(section, "head", refLabel(git.headRef || git.outputRef || footprint.headRef || refs.outputRef || refs.integrationRef || detail?.outputRef || detail?.integrationRef));
-      appendMetaLine(section, "output", refLabel(git.outputRef || refs.outputRef || detail?.outputRef));
-      appendMetaLine(section, "integration", git.integrationRef?.name || refs.integrationRef?.name || detail?.integrationRef?.name);
+      appendMetaLine(section, "base ref", refLabel(git.baseRef || footprint.baseRef || refs.baseRef || detail?.baseRef));
+      appendMetaLine(section, "work ref", refLabel(git.workRef || refs.workRef || detail?.workRef));
+      appendMetaLine(section, "head ref", refLabel(git.headRef || git.outputRef || footprint.headRef || refs.outputRef || refs.integrationRef || detail?.outputRef || detail?.integrationRef));
+      appendMetaLine(section, "output ref", refLabel(git.outputRef || refs.outputRef || detail?.outputRef));
+      appendMetaLine(section, "integration ref", git.integrationRef?.name || refs.integrationRef?.name || detail?.integrationRef?.name);
       appendMetaLine(section, "source", git.source || footprint.source);
       appendMetaLine(section, "collected", git.collectedAt || footprint.collectedAt || detail?.outputRef?.collectedAt);
       appendMetaLine(section, "remote", git.remoteDisplay);
@@ -1592,6 +1627,12 @@ export function renderVisualizerHtml(): string {
       empty.className = "meta";
       empty.textContent = "No git refs recorded for this node.";
       section.append(empty);
+    }
+    if (warning) {
+      const warningHeading = document.createElement("h3");
+      warningHeading.textContent = "Warning";
+      section.append(warningHeading);
+      appendMetaLine(section, "warning", warning);
     }
 
     appendGitActionLinks(section, detail || {});

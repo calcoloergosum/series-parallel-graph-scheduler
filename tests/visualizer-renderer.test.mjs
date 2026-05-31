@@ -1609,6 +1609,10 @@ test("visualizer normalizes git details for old, task, and aggregate nodes", asy
     assert.deepEqual(taskNode.git.diffStat, { filesChanged: 2, insertions: 9, deletions: 3, totalChanges: 12 });
     assert.deepEqual(taskNode.git.changedFiles.map((file) => file.path), ["a-first.ts", "z-last.ts"]);
     assert.equal(taskNode.git.remoteDisplay, "https://[REDACTED]@example.com/org/repo.git");
+    assert.deepEqual(taskNode.git.actions.map((action) => [action.id, action.disabledReason]), [
+      ["open-diff", "Compare links require a GitHub remote."],
+      ["compare", "Compare links require a GitHub remote."]
+    ]);
     assert.equal(taskNode.workspaceDisplay.remote, "https://[REDACTED]@example.com/org/repo.git");
 
     assert.equal(aggregateNode.git.source, "child-aggregate");
@@ -1623,6 +1627,11 @@ test("visualizer normalizes git details for old, task, and aggregate nodes", asy
     assert.deepEqual(aggregateNode.git.changedFiles[0].childIds, ["B", "C"]);
     assert.equal(aggregateNode.changedFiles.length, 50);
     assert.doesNotMatch(JSON.stringify(payload.nodes), /secret-token|workspace-secret|bare-secret/);
+
+    const { context, element } = runVisualizerClientScript();
+    context.render(payload);
+    context.selectNode("P");
+    assert.match(element("selected-node-details").textContent, /changed files truncated: showing 50 of 55; 5 omitted/);
   });
 });
 
@@ -1652,15 +1661,26 @@ test("visualizer selected-node inspector renders git refs, diffstat, and changed
       remote: "https://user:secret-token@github.com/example-org/example-repo.git",
       cloneCwd: "/tmp/spg/workspaces/codex-A/A/run-a"
     };
+    graph.graph.nodes.A.gitFootprintWarning = "Git diffstat collection used cached outputRef metadata.";
     await writeFile(graphPath, `${JSON.stringify(graph, null, 2)}\n`, "utf8");
 
     const payload = await buildVisualizerPayload(graphPath);
+    const detail = payload.nodes.find((node) => node.id === "A");
+    assert.equal(detail.gitFootprintWarning, "Git diffstat collection used cached outputRef metadata.");
+    assert.deepEqual(detail.git.actions.map((action) => [action.id, action.href]), [
+      ["open-diff", "https://github.com/example-org/example-repo/compare/1111111111111111111111111111111111111111...2222222222222222222222222222222222222222.diff"],
+      ["compare", "https://github.com/example-org/example-repo/compare/1111111111111111111111111111111111111111...2222222222222222222222222222222222222222"]
+    ]);
     const { context, element } = runVisualizerClientScript();
     context.render(payload);
     context.selectNode("A");
 
     let html = element("selected-node-details").innerHTML;
     assert.match(html, /Git Refs/);
+    assert.match(html, /base ref: refs\/remotes\/origin\/main/);
+    assert.match(html, /output ref: refs\/heads\/spg\/node\/A\/run-a/);
+    assert.match(html, /Warning/);
+    assert.match(html, /warning: Git diffstat collection used cached outputRef metadata/);
     assert.match(html, /Diffstat/);
     assert.match(html, /Changed Files/);
     assert.match(html, /src\/app\.ts/);
