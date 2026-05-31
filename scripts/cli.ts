@@ -729,6 +729,7 @@ function parseChildJson(child: unknown, index: number): DecomposeChildArg {
       if (!normalizedChildId) {
         throw new Error(`${location}.children[${childIndex}] cannot be empty`);
       }
+      validateChildId(normalizedChildId, `${location}.children[${childIndex}]`);
       return normalizedChildId;
     });
   }
@@ -942,6 +943,9 @@ function numberArg(
 function validateChildId(id: string, location: string): void {
   if (!id) {
     throw new Error(`${location} id cannot be empty`);
+  }
+  if (!/^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/.test(id) || id.includes("..")) {
+    throw new Error(`${location} id contains unsafe characters: ${id}`);
   }
 }
 

@@ -1,5 +1,5 @@
 import test from "node:test";
-import { addUnknownMetadata, answerNode, assert, assertUnknownMetadata, attachReadyPriorityFields, blockNode, buildReachableParentMap, buildReadyPrioritySelections, buildStableRootPathMap, buildVisualizerPayload, buildWorkerPrompt, checkSchedulerTransitionReference, claimNode, compareReadyPriorityCandidates, completeNode, completedDeepReadinessGraph, concurrentMutationGraph, countSharedParentsWithCurrentTask, decomposeNode, deepReadinessGraph, depthPriorityGraph, diagnoseGraph, dirname, escapeRegExp, execFileAsync, failNode, knownTransitionStatuses, lastHistory, leafOnlyChildCountPriorityGraph, listReadyLeafNodes, listWorkingNodes, lockArtifacts, mutationOwnershipDocsPath, nestedResetReachabilityGraph, readGraph, readyIds, reconcileGraphStatus, releaseExpiredLeases, renewNodeLease, resetNode, resetReachable, resetSubtree, schedulerScriptPath, schedulerTransitionTable, setNodeStatus, sharedParentPriorityGraph, startNode, stressScriptPath, validatePlanGraphFileResult, withTempGraph, writeFile } from "./helpers/plan-scheduler-harness.mjs";
+import { addUnknownMetadata, answerNode, assert, assertUnknownMetadata, attachReadyPriorityFields, blockNode, buildPlannerPrompt, buildPlannerRuntimeRequest, buildReachableParentMap, buildReadyPrioritySelections, buildStableRootPathMap, buildVisualizerPayload, buildWorkerPrompt, checkSchedulerTransitionReference, claimNode, compareReadyPriorityCandidates, completeNode, completedDeepReadinessGraph, concurrentMutationGraph, countSharedParentsWithCurrentTask, createFixturePlannerRuntime, createPromptPlannerRuntime, decomposeNode, deepReadinessGraph, depthPriorityGraph, diagnoseGraph, dirname, escapeRegExp, execFileAsync, failNode, knownTransitionStatuses, lastHistory, leafOnlyChildCountPriorityGraph, listReadyLeafNodes, listWorkingNodes, lockArtifacts, mutationOwnershipDocsPath, nestedResetReachabilityGraph, parsePlannerResponse, planNodeDecomposition, plannerResponseToDecomposeMutation, readGraph, readyIds, reconcileGraphStatus, releaseExpiredLeases, renewNodeLease, resetNode, resetReachable, resetSubtree, schedulerScriptPath, schedulerTransitionTable, setNodeStatus, sharedParentPriorityGraph, startNode, stressScriptPath, validatePlanGraphFileResult, validatePlannerResponse, withTempGraph, writeFile } from "./helpers/plan-scheduler-harness.mjs";
 
 function priorityCandidate(id, depth, childCount, sharedParentCountWithCurrentTask) {
   return {
@@ -1732,6 +1732,227 @@ test("decompose replaces a leaf with a child subgraph", async () => {
     await completeNode(graphPath, { nodeId: "A1", session: "codex-A1" });
     graph = await readGraph(graphPath);
     assert.deepEqual(listReadyLeafNodes(graph).map((node) => node.id), ["A2"]);
+  });
+});
+
+test("planner adapter builds decomposition requests without network access", async () => {
+  await withTempGraph(async (graphPath) => {
+    const graph = await readGraph(graphPath);
+    const request = buildPlannerRuntimeRequest(graph, "A", { requestId: "fixture-plan-A" });
+    const prompt = await buildPlannerPrompt(request, {
+      template: [
+        "Goal:",
+        "{{goal}}",
+        "Parent:",
+        "{{parentContextJson}}",
+        "Summary:",
+        "{{graphSummaryJson}}",
+        "Schema:",
+        "{{outputSchemaJson}}"
+      ].join("\n")
+    });
+
+    assert.match(prompt, /Goal:\nBootstrap/);
+    assert.match(prompt, /"nodeId": "A"/);
+    assert.match(prompt, /"totalNodes": 6/);
+    assert.match(prompt, /docs\/planner-output-schema\.md/);
+
+    const planner = createFixturePlannerRuntime({
+      "fixture-plan-A": {
+        kind: "series",
+        title: "Planned bootstrap split",
+        childIdPolicy: "planner-deterministic",
+        children: [
+          { id: "A1", kind: "task", title: "Prepare bootstrap contract" },
+          { id: "A2", kind: "task", title: "Implement bootstrap work" }
+        ]
+      }
+    });
+
+    const result = await planNodeDecomposition(graphPath, {
+      nodeId: "A",
+      planner,
+      requestId: "fixture-plan-A"
+    });
+
+    assert.equal(result.requestId, "fixture-plan-A");
+    assert.equal(result.response.requestId, "fixture-plan-A");
+    assert.equal(result.response.kind, "series");
+    assert.deepEqual(result.response.children.map((child) => child.id), ["A1", "A2"]);
+    assert.deepEqual(result.decompose.children.map((child) => child.id), ["A1", "A2"]);
+    assert.equal(result.decompose.kind, "series");
+    assert.equal((await readGraph(graphPath)).graphVersion, graph.graphVersion);
+  });
+});
+
+test("default planner prompt renders required variables and decision guidance", async () => {
+  await withTempGraph(async (graphPath) => {
+    const graph = await readGraph(graphPath);
+    const request = buildPlannerRuntimeRequest(graph, "A", {
+      requestId: "render-plan-A",
+      allowedKinds: ["task", "series", "parallel"]
+    });
+
+    const prompt = await buildPlannerPrompt(request, {
+      templatePath: "prompts/planner-decompose-task.md"
+    });
+
+    assert.match(prompt, /Return strict JSON only/);
+    assert.match(prompt, /top-level `kind` must be exactly one of `task`, `series`, or `parallel`/);
+    assert.match(prompt, /Stop and choose `task` when:/);
+    assert.match(prompt, /Choose `series` when children must run in order/);
+    assert.match(prompt, /Choose `parallel` when children can run independently/);
+    assert.match(prompt, /Root planning example:/);
+    assert.match(prompt, /Task refinement example:/);
+    assert.match(prompt, /Post-result re-planning example:/);
+    assert.match(prompt, /Goal:\nBootstrap/);
+    assert.match(prompt, /Parent context:\n\{\n {2}"nodeId": "A"/);
+    assert.match(prompt, /Current graph summary:\n\{\n {2}"graphVersion": 1,/);
+    assert.match(prompt, /"totalNodes": 6/);
+    assert.match(prompt, /"schemaRef": "docs\/planner-output-schema\.md"/);
+    assert.match(prompt, /Full request:\n\{\n {2}"requestId": "render-plan-A"/);
+    assert.doesNotMatch(prompt, /\{\{(?:goal|parentContextJson|graphSummaryJson|outputSchemaJson|requestJson)\}\}/);
+  });
+});
+
+test("planner response validation rejects malformed JSON without raw payload storage", async () => {
+  assert.throws(
+    () => parsePlannerResponse("not-json"),
+    (error) => {
+      assert.equal(error.name, "PlannerResponseValidationError");
+      assert.equal(error.validation.valid, false);
+      assert.equal(error.validation.errors[0].code, "malformed-json");
+      assert.ok(!("rawText" in error));
+      return true;
+    }
+  );
+
+  await withTempGraph(async (graphPath) => {
+    const before = await readGraph(graphPath);
+    const planner = createPromptPlannerRuntime({
+      templatePath: "prompts/planner-decompose-task.md",
+      adapter: {
+        async complete() {
+          return "not-json";
+        }
+      }
+    });
+
+    await assert.rejects(
+      planNodeDecomposition(graphPath, {
+        nodeId: "A",
+        planner,
+        requestId: "bad-json-plan"
+      }),
+      (error) => {
+        assert.equal(error.name, "PlannerResponseValidationError");
+        assert.equal(error.validation.errors[0].code, "malformed-json");
+        assert.doesNotMatch(error.message, /not-json/);
+        return true;
+      }
+    );
+
+    assert.equal((await readGraph(graphPath)).graphVersion, before.graphVersion);
+  });
+});
+
+test("planner response validation rejects unsafe decomposition proposals before mutation", async () => {
+  const cases = [
+    {
+      name: "unknown kind",
+      response: { kind: "gate", title: "Bad kind" },
+      code: "unknown-kind",
+      path: "$.kind"
+    },
+    {
+      name: "duplicate ids",
+      response: {
+        kind: "parallel",
+        title: "Duplicate children",
+        children: [
+          { id: "A1", title: "First" },
+          { id: "A1", title: "Second" }
+        ]
+      },
+      code: "duplicate-child-id",
+      path: "$.children[1].id"
+    },
+    {
+      name: "missing children",
+      response: { kind: "series", title: "Missing children" },
+      code: "missing-children",
+      path: "$.children"
+    },
+    {
+      name: "unsafe ids",
+      response: {
+        kind: "series",
+        title: "Unsafe children",
+        children: [{ id: "../A1", title: "Unsafe" }]
+      },
+      code: "unsafe-id",
+      path: "$.children[0].id"
+    }
+  ];
+
+  for (const testCase of cases) {
+    await withTempGraph(async (graphPath) => {
+      const before = await readGraph(graphPath);
+      const planner = {
+        async plan(request) {
+          return {
+            requestId: request.requestId,
+            response: testCase.response
+          };
+        }
+      };
+
+      await assert.rejects(
+        planNodeDecomposition(graphPath, {
+          nodeId: "A",
+          planner,
+          requestId: `bad-${testCase.name.replaceAll(" ", "-")}`
+        }),
+        (error) => {
+          assert.equal(error.name, "PlannerResponseValidationError", testCase.name);
+          assert.ok(error.validation.errors.some((issue) => issue.code === testCase.code && issue.path === testCase.path), testCase.name);
+          return true;
+        }
+      );
+      assert.equal((await readGraph(graphPath)).graphVersion, before.graphVersion, testCase.name);
+    });
+  }
+});
+
+test("valid planner output materializes existing decompose child specs", async () => {
+  await withTempGraph(async (graphPath) => {
+    const graph = await readGraph(graphPath);
+    const response = {
+      kind: "series",
+      title: "Generated ids",
+      children: [
+        {
+          idHint: "contract",
+          kind: "task",
+          title: "Define contract",
+          description: "Write the scheduler contract.",
+          acceptanceCriteria: ["The contract is documented."]
+        },
+        {
+          title: "Implement behavior",
+          deliverables: ["Runtime validation"]
+        }
+      ]
+    };
+
+    const validation = validatePlannerResponse(response, { graph, parentId: "A" });
+    assert.equal(validation.valid, true);
+
+    const decompose = plannerResponseToDecomposeMutation(response, graph, "A");
+    assert.deepEqual(decompose.children.map((child) => child.id), ["A_CONTRACT", "A_IMPLEMENT_BEHAVIOR"]);
+    assert.equal(decompose.children[0].kind, "task");
+    assert.equal(decompose.children[0].description, "Write the scheduler contract.");
+    assert.deepEqual(decompose.children[0].acceptanceCriteria, ["The contract is documented."]);
   });
 });
 
