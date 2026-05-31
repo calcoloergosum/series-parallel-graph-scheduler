@@ -1208,6 +1208,26 @@ test("visualizer builds graph payload and real-time HTML shell", async () => {
     await claimNode(graphPath, { session: "codex-A", nodeId: "A" });
     const graph = await readGraph(graphPath);
     graph.graph.nodes.A.description = "Bootstrap the workspace";
+    graph.graph.nodes.A.goal = { text: "Ship planner metadata", source: "planner" };
+    graph.graph.nodes.A.planner = {
+      name: "codex-planner",
+      model: "gpt-5",
+      requestId: "plan-A",
+      decision: "Split the task after setup completes.",
+      plannedAt: "2026-05-27T00:00:00.000Z"
+    };
+    graph.graph.nodes.A.decompositionReason = "Workspace bootstrap needs separate verification.";
+    graph.graph.nodes.A.contextRefs = [{ type: "file", ref: "docs/planner-output-schema.md", title: "Planner schema" }];
+    graph.graph.nodes.A.outputContract = {
+      format: "markdown",
+      requiredArtifacts: ["report"],
+      acceptanceCriteria: ["Planner metadata is visible."]
+    };
+    graph.graph.nodes.A.resultSummary = {
+      status: "partial",
+      summary: "Bootstrap metadata was prepared.",
+      artifacts: ["reports/A.md"]
+    };
     graph.graph.nodes.A.deliverables = ["Workspace ready"];
     graph.graph.nodes.A.acceptanceCriteria = ["Tests can run"];
     graph.graph.nodes.A.baseRef = { name: "refs/remotes/origin/main" };
@@ -1236,6 +1256,13 @@ test("visualizer builds graph payload and real-time HTML shell", async () => {
     assert.equal(detail.kind, "task");
     assert.equal(detail.status, "claimed");
     assert.equal(detail.description, "Bootstrap the workspace");
+    assert.equal(detail.goalText, "Ship planner metadata");
+    assert.equal(detail.planner.name, "codex-planner");
+    assert.equal(detail.plannerDecision, "Split the task after setup completes.");
+    assert.equal(detail.decompositionReason, "Workspace bootstrap needs separate verification.");
+    assert.deepEqual(detail.contextRefs, [{ type: "file", ref: "docs/planner-output-schema.md", title: "Planner schema" }]);
+    assert.deepEqual(detail.outputContract.requiredArtifacts, ["report"]);
+    assert.equal(detail.resultSummary.summary, "Bootstrap metadata was prepared.");
     assert.deepEqual(detail.children, []);
     assert.deepEqual(detail.deliverables, ["Workspace ready"]);
     assert.deepEqual(detail.acceptanceCriteria, ["Tests can run"]);
@@ -1251,6 +1278,12 @@ test("visualizer builds graph payload and real-time HTML shell", async () => {
     assert.equal(detail.history[0].at, "2026-05-27T00:00:02.000Z");
     assert.equal(detail.history.at(-1).remote, "https://[REDACTED]@example.com/org/repo.git");
     assert.deepEqual(payload.ready.map((node) => node.id), []);
+    const missingPlannerDetail = payload.nodes.find((node) => node.id === "B");
+    assert.equal(missingPlannerDetail.goalText, undefined);
+    assert.equal(missingPlannerDetail.plannerDecision, undefined);
+    assert.equal(missingPlannerDetail.decompositionReason, undefined);
+    assert.equal(missingPlannerDetail.outputContract, undefined);
+    assert.equal(missingPlannerDetail.resultSummary, undefined);
     assert.deepEqual(payload.working.map((node) => node.id), ["A"]);
     assert.equal(payload.working[0].session, "codex-A");
     assert.equal(payload.working[0].isolation.cloneCwd, "/tmp/spg/workspaces/codex-A/A/run-a");
@@ -1297,8 +1330,15 @@ test("visualizer and event payloads expose git footprints with redaction", async
     const payload = await buildVisualizerPayload(graphPath);
     const withFootprint = payload.nodes.find((node) => node.id === "A");
     const withoutFootprint = payload.nodes.find((node) => node.id === "B");
+    assert.equal(withFootprint.git.commit, "2222222222222222222222222222222222222222");
+    assert.equal(withFootprint.git.baseRef.display, "refs/remotes/origin/main @ 1111111111111111111111111111111111111111");
+    assert.equal(withFootprint.git.outputRef.display, "refs/heads/spg/node/A/run-a @ 2222222222222222222222222222222222222222");
+    assert.deepEqual(withFootprint.git.diffStat, { filesChanged: 1, insertions: 4, deletions: 1, totalChanges: 5 });
+    assert.deepEqual(withFootprint.git.changedFiles.map((file) => [file.path, file.insertions, file.deletions]), [["src/app.ts", 4, 1]]);
+    assert.equal(withFootprint.git.remoteDisplay, "https://[REDACTED]@example.com/org/repo.git");
+    assert.equal(withoutFootprint.git, undefined);
     assert.equal(withFootprint.refs.gitFootprint.headRef.commit, "2222222222222222222222222222222222222222");
-    assert.deepEqual(withFootprint.gitDiffStat, { filesChanged: 1, additions: 4, deletions: 1, totalChanges: 5 });
+    assert.deepEqual(withFootprint.gitDiffStat, { filesChanged: 1, insertions: 4, deletions: 1, totalChanges: 5 });
     assert.deepEqual(withFootprint.changedFiles.map((file) => file.path), ["src/app.ts"]);
     assert.equal(withoutFootprint.refs.gitFootprint, undefined);
     assert.equal(withoutFootprint.gitFootprint, undefined);
@@ -1309,6 +1349,103 @@ test("visualizer and event payloads expose git footprints with redaction", async
     assert.doesNotMatch(JSON.stringify(payload), /secret-token|workspace-secret/);
     assert.equal(payload.recentEvents[0].details.gitFootprint.headRef.commit, "2222222222222222222222222222222222222222");
     assert.deepEqual(payload.recentEvents[0].details.diffStat, { filesChanged: 1, additions: 4, deletions: 1, totalChanges: 5 });
+  });
+});
+
+test("visualizer normalizes git details for old, task, and aggregate nodes", async () => {
+  await withTempGraph(async (graphPath) => {
+    const graph = await readGraph(graphPath);
+    graph.graph.nodes.A.status = "done";
+    graph.graph.nodes.A.baseRef = {
+      name: "refs/remotes/origin/main",
+      commit: "a".repeat(40)
+    };
+    graph.graph.nodes.A.outputRef = {
+      name: "refs/heads/spg/node/A/run-a",
+      commit: "b".repeat(40),
+      diffStat: { filesChanged: 2, additions: 9, deletions: 3, totalChanges: 12 },
+      files: [
+        { path: "z-last.ts", changeType: "modified", additions: 5, deletions: 1, totalChanges: 6 },
+        { path: "a-first.ts", changeType: "added", additions: 4, deletions: 2, totalChanges: 6 }
+      ]
+    };
+    graph.graph.nodes.A.workspace = {
+      remote: "https://user:secret-token@example.com/org/repo.git",
+      bareRepo: "/tmp/spg/token=bare-secret/cache/repo.git",
+      cloneCwd: "/tmp/spg/token=workspace-secret/workspaces/codex-A/A/run-a"
+    };
+
+    graph.graph.nodes.P.status = "done";
+    graph.graph.nodes.P.integrationRef = {
+      name: "refs/heads/spg/parent/P/run-p",
+      status: "clean",
+      publishedOutputRef: "refs/heads/spg/parent/P/output"
+    };
+    graph.graph.nodes.P.outputRef = {
+      name: "refs/heads/spg/parent/P/output",
+      commit: "c".repeat(40)
+    };
+    graph.graph.nodes.P.gitFootprint = {
+      source: "child-aggregate",
+      baseRef: { name: "refs/remotes/origin/main", commit: "a".repeat(40) },
+      headRef: { name: "refs/heads/spg/parent/P/output", commit: "c".repeat(40) },
+      branch: "spg/parent/P/output",
+      commit: "c".repeat(40),
+      diffStat: { filesChanged: 55, additions: 110, deletions: 11, totalChanges: 121 },
+      files: Array.from({ length: 55 }, (_, index) => {
+        const number = String(54 - index).padStart(2, "0");
+        return {
+          path: `src/file-${number}.ts`,
+          changeType: "modified",
+          additions: index,
+          deletions: 1,
+          totalChanges: index + 1,
+          childIds: ["C", "B"]
+        };
+      }),
+      aggregation: {
+        source: "child-footprints",
+        parentId: "P",
+        parentKind: "parallel",
+        childCount: 2,
+        includedChildIds: ["B", "C"],
+        missingChildIds: [],
+        duplicateFilePaths: [],
+        diffStatKind: "summed-child-stats",
+        filesChangedKind: "unique-file-paths-with-stat-only-sum",
+        fileMergeRule: "sum-line-counts-by-path"
+      }
+    };
+
+    await writeFile(graphPath, `${JSON.stringify(graph, null, 2)}\n`, "utf8");
+
+    const payload = await buildVisualizerPayload(graphPath);
+    const oldNode = payload.nodes.find((node) => node.id === "B");
+    const taskNode = payload.nodes.find((node) => node.id === "A");
+    const aggregateNode = payload.nodes.find((node) => node.id === "P");
+
+    assert.equal(oldNode.git, undefined);
+    assert.equal(taskNode.git.commit, "b".repeat(40));
+    assert.equal(taskNode.git.branch, "spg/node/A/run-a");
+    assert.equal(taskNode.git.baseRef.name, "refs/remotes/origin/main");
+    assert.equal(taskNode.git.outputRef.name, "refs/heads/spg/node/A/run-a");
+    assert.deepEqual(taskNode.git.diffStat, { filesChanged: 2, insertions: 9, deletions: 3, totalChanges: 12 });
+    assert.deepEqual(taskNode.git.changedFiles.map((file) => file.path), ["a-first.ts", "z-last.ts"]);
+    assert.equal(taskNode.git.remoteDisplay, "https://[REDACTED]@example.com/org/repo.git");
+    assert.equal(taskNode.workspaceDisplay.remote, "https://[REDACTED]@example.com/org/repo.git");
+
+    assert.equal(aggregateNode.git.source, "child-aggregate");
+    assert.equal(aggregateNode.git.commit, "c".repeat(40));
+    assert.equal(aggregateNode.git.integrationRef.name, "refs/heads/spg/parent/P/run-p");
+    assert.equal(aggregateNode.git.integrationRef.publishedOutputRef, "refs/heads/spg/parent/P/output");
+    assert.deepEqual(aggregateNode.git.diffStat, { filesChanged: 55, insertions: 110, deletions: 11, totalChanges: 121 });
+    assert.equal(aggregateNode.git.changedFiles.length, 50);
+    assert.equal(aggregateNode.git.changedFilesTotal, 55);
+    assert.equal(aggregateNode.git.changedFilesTruncated, 5);
+    assert.equal(aggregateNode.git.changedFiles[0].path, "src/file-00.ts");
+    assert.deepEqual(aggregateNode.git.changedFiles[0].childIds, ["B", "C"]);
+    assert.equal(aggregateNode.changedFiles.length, 50);
+    assert.doesNotMatch(JSON.stringify(payload.nodes), /secret-token|workspace-secret|bare-secret/);
   });
 });
 
@@ -1541,6 +1678,90 @@ test("visualizer browser renderers escape graph text and worker logs", () => {
   assert.doesNotMatch(renderedHtml, /output\(\)/);
   assert.doesNotMatch(renderedHtml, /<script\b/);
   assert.doesNotMatch(renderedHtml, /<img\b/);
+});
+
+test("selected-node inspector renders planner metadata as text", () => {
+  const { context, element } = runVisualizerClientScript();
+  const hostileGoal = "Goal <img src=x onerror=alert(1)>";
+  const hostileDecision = "Use <script>decision()</script> safely.";
+  const hostileReason = "Reason <img src=x onerror=alert(2)>";
+
+  context.render({
+    summary: { graphVersion: 1, totalNodes: 1, counts: { pending: 1 } },
+    graphSvg: '<svg class="sp-graph"></svg>',
+    nodes: [{
+      id: "A",
+      title: "Planner metadata",
+      kind: "task",
+      status: "pending",
+      goal: { text: hostileGoal, source: "planner" },
+      goalText: hostileGoal,
+      planner: { name: "codex-planner", decision: hostileDecision },
+      plannerDecision: hostileDecision,
+      decompositionReason: hostileReason,
+      contextRefs: [{ type: "file", ref: "docs/<script>.md", title: "Schema <img>" }],
+      outputContract: {
+        format: "markdown",
+        requiredArtifacts: ["report <script>"],
+        acceptanceCriteria: ["No <img> injection"]
+      },
+      resultSummary: {
+        status: "partial",
+        summary: "Result <script>summary()</script>",
+        artifacts: ["reports/<img>.md"]
+      },
+      children: [],
+      deliverables: [],
+      acceptanceCriteria: [],
+      refs: {},
+      git: {
+        commit: "<script>commit()</script>",
+        branch: "spg/node/A/run-a",
+        baseRef: { display: "refs/remotes/origin/main @ aaaa" },
+        outputRef: { display: "refs/heads/spg/node/A/run-a @ bbbb" },
+        diffStat: { filesChanged: 1, insertions: 2, deletions: 1, totalChanges: 3 },
+        changedFiles: [{
+          path: "src/<img>.ts",
+          changeType: "modified",
+          insertions: 2,
+          deletions: 1,
+          totalChanges: 3,
+          binary: false
+        }],
+        changedFilesTotal: 1,
+        changedFilesLimit: 50,
+        changedFilesTruncated: 0,
+        remoteDisplay: "https://[REDACTED]@example.com/org/repo.git",
+        workspaceDisplay: "/tmp/token=[REDACTED]"
+      },
+      timestamps: {},
+      history: [],
+      historyCount: 0,
+      historyLimit: 10,
+      actions: []
+    }],
+    ready: [{ id: "A", title: "Planner metadata", status: "pending" }],
+    working: [],
+    workerManager: { defaults: { cwd: "", sessionPrefix: "codex", codexCommand: "codex" }, workers: [] },
+    attention: {},
+    diagnostics: {},
+    recentEvents: []
+  });
+  context.selectNode("A");
+
+  const inspector = element("selected-node-details");
+  assert.match(inspector.textContent, /goal: Goal <img src=x onerror=alert\(1\)>/);
+  assert.match(inspector.textContent, /decision: Use <script>decision\(\)<\/script> safely\./);
+  assert.match(inspector.textContent, /decomposition reason: Reason <img src=x onerror=alert\(2\)>/);
+  assert.match(inspector.textContent, /context: Schema <img> \/ file \/ docs\/<script>\.md/);
+  assert.match(inspector.textContent, /output contract: format: markdown/);
+  assert.match(inspector.textContent, /result: status: partial/);
+  assert.match(inspector.textContent, /Git Footprint/);
+  assert.match(inspector.textContent, /commit: <script>commit\(\)<\/script>/);
+  assert.match(inspector.textContent, /diffstat: 1 files, \+2 \/ -1/);
+  assert.match(inspector.textContent, /changed files: src\/<img>\.ts \[modified\] \+2 \/ -1/);
+  assert.doesNotMatch(inspector.innerHTML, /<script\b/);
+  assert.doesNotMatch(inspector.innerHTML, /<img\b/);
 });
 
 test("planar layout places series before parallel branches before final gate", () => {

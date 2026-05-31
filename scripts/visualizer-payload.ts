@@ -4,10 +4,20 @@ import type {
   GraphDiagnostics,
   GraphHistoryEntry,
   GraphNode,
+  GitDiffStatMetadata,
+  GitFileFootprintMetadata,
+  GitRefFootprintMetadata,
+  NodeIntegrationRefMetadata,
+  NodeWorkspaceMetadata,
   PlanGraphFile,
   VisualizerAttentionSummary,
+  VisualizerGitChangedFileRow,
+  VisualizerGitDiffStatDisplay,
+  VisualizerGitFootprintDetail,
+  VisualizerGitRefDisplay,
   VisualizerNodeDetail,
   VisualizerPayload,
+  VisualizerWorkspaceDisplay,
   WorkerManager,
   WorkerManagerStatus
 } from "./contracts.js";
@@ -20,6 +30,7 @@ import { buildVisualizerNodeActionMap, visualizerActionPolicy } from "./visualiz
 
 export const visualizerNodeHistoryLimit = 10;
 export const visualizerRecentEventLimit = 20;
+export const visualizerChangedFilesLimit = 50;
 
 export async function buildVisualizerPayload(
   graphPath = defaultGraphPath,
@@ -68,6 +79,7 @@ function normalizeVisualizerNode(
 ): VisualizerNodeDetail {
   const history = Array.isArray(node.history) ? node.history : [];
   const gitFootprint = gitFootprintFromNode(node);
+  const git = normalizeVisualizerGitDetail(node, gitFootprint);
   return redactNodeDetail(omitUndefined({
     id,
     title: node.title,
@@ -75,6 +87,13 @@ function normalizeVisualizerNode(
     status: node.status || "pending",
     description: node.description,
     goal: node.goal,
+    goalText: goalTextForNode(node.goal),
+    planner: node.planner,
+    plannerDecision: plannerDecisionForNode(node),
+    decompositionReason: decompositionReasonForNode(node),
+    contextRefs: Array.isArray(node.contextRefs) ? [...node.contextRefs] : undefined,
+    outputContract: node.outputContract,
+    resultSummary: node.resultSummary,
     children: Array.isArray(node.children) ? [...node.children] : [],
     deliverables: Array.isArray(node.deliverables) ? [...node.deliverables] : [],
     acceptanceCriteria: Array.isArray(node.acceptanceCriteria) ? [...node.acceptanceCriteria] : [],
@@ -86,10 +105,12 @@ function normalizeVisualizerNode(
       integrationRef: node.integrationRef,
       gitFootprint
     }),
+    git,
     gitFootprint,
-    gitDiffStat: gitFootprint?.diffStat,
-    changedFiles: gitFootprint?.files,
+    gitDiffStat: git?.diffStat,
+    changedFiles: git?.changedFiles,
     workspace: node.workspace,
+    workspaceDisplay: workspaceDisplay(node.workspace),
     report: node.report,
     question: node.question,
     answer: node.answer,
@@ -109,6 +130,202 @@ function normalizeVisualizerNode(
     historyLimit,
     actions
   }));
+}
+
+function normalizeVisualizerGitDetail(
+  node: GraphNode,
+  gitFootprint: ReturnType<typeof gitFootprintFromNode>
+): VisualizerGitFootprintDetail | undefined {
+  if (!gitFootprint && !node.baseRef && !node.workRef && !node.outputRef && !node.integrationRef) {
+    return undefined;
+  }
+
+  const baseRef = visualizerRef(gitFootprint?.baseRef || node.baseRef);
+  const headRef = visualizerRef(gitFootprint?.headRef || node.outputRef || node.workRef);
+  const workRef = visualizerRef(node.workRef);
+  const outputRef = visualizerRef(node.outputRef || gitFootprint?.headRef);
+  const integrationRef = visualizerIntegrationRef(node.integrationRef);
+  const diffStat = visualizerDiffStat(gitFootprint?.diffStat || node.outputRef?.diffStat, gitFootprint?.files || node.outputRef?.files || []);
+  const allFiles = sortedChangedFileRows(gitFootprint?.files || node.outputRef?.files || []);
+  const changedFiles = allFiles.slice(0, visualizerChangedFilesLimit);
+  const workspace = workspaceDisplay(node.workspace);
+  const commit = gitFootprint?.commit || gitFootprint?.headRef?.commit || node.outputRef?.commit || node.workRef?.commit;
+  const branch = gitFootprint?.branch || branchName(gitFootprint?.headRef?.name || node.outputRef?.name || node.workRef?.name);
+
+  return omitUndefined({
+    source: gitFootprint?.source,
+    commit,
+    branch,
+    baseRef,
+    headRef,
+    workRef,
+    outputRef,
+    integrationRef,
+    diffStat,
+    filesChanged: diffStat?.filesChanged,
+    insertions: diffStat?.insertions,
+    deletions: diffStat?.deletions,
+    totalChanges: diffStat?.totalChanges,
+    binaryFiles: diffStat?.binaryFiles,
+    changedFiles,
+    changedFilesTotal: allFiles.length,
+    changedFilesLimit: visualizerChangedFilesLimit,
+    changedFilesTruncated: Math.max(0, allFiles.length - changedFiles.length),
+    aggregation: gitFootprint?.aggregation,
+    collectedAt: gitFootprint?.collectedAt || node.outputRef?.collectedAt,
+    remoteDisplay: workspace?.remote,
+    workspaceDisplay: workspace?.cloneCwd,
+    bareRepoDisplay: workspace?.bareRepo
+  });
+}
+
+function visualizerRef(ref: GitRefFootprintMetadata | undefined): VisualizerGitRefDisplay | undefined {
+  if (!ref?.name && !ref?.commit) {
+    return undefined;
+  }
+  const display = [ref.name, ref.commit].filter(Boolean).join(" @ ");
+  return omitUndefined({
+    name: ref.name,
+    commit: ref.commit,
+    display
+  });
+}
+
+function visualizerIntegrationRef(ref: NodeIntegrationRefMetadata | undefined): VisualizerGitFootprintDetail["integrationRef"] {
+  if (!ref?.name && !ref?.status && !ref?.publishedOutputRef) {
+    return undefined;
+  }
+  return omitUndefined({
+    name: ref.name,
+    status: ref.status,
+    publishedOutputRef: ref.publishedOutputRef
+  });
+}
+
+function visualizerDiffStat(
+  stat: GitDiffStatMetadata | undefined,
+  files: GitFileFootprintMetadata[]
+): VisualizerGitDiffStatDisplay | undefined {
+  if (stat) {
+    const insertions = stat.insertions ?? stat.additions ?? 0;
+    return {
+      filesChanged: stat.filesChanged,
+      insertions,
+      deletions: stat.deletions,
+      totalChanges: stat.totalChanges,
+      ...(stat.binaryFiles !== undefined ? { binaryFiles: stat.binaryFiles } : {})
+    };
+  }
+
+  if (!files.length) {
+    return undefined;
+  }
+
+  let insertions = 0;
+  let deletions = 0;
+  let totalChanges = 0;
+  let binaryFiles = 0;
+  for (const file of files) {
+    insertions += fileInsertions(file) ?? 0;
+    deletions += file.deletions ?? 0;
+    totalChanges += file.totalChanges ?? 0;
+    if (file.binary) {
+      binaryFiles += 1;
+    }
+  }
+  return {
+    filesChanged: files.length,
+    insertions,
+    deletions,
+    totalChanges,
+    ...(binaryFiles > 0 ? { binaryFiles } : {})
+  };
+}
+
+function sortedChangedFileRows(files: GitFileFootprintMetadata[]): VisualizerGitChangedFileRow[] {
+  return files
+    .map((file) => omitUndefined({
+      path: file.path,
+      oldPath: file.oldPath,
+      changeType: file.changeType,
+      insertions: fileInsertions(file),
+      deletions: file.deletions,
+      totalChanges: file.totalChanges,
+      binary: Boolean(file.binary),
+      childIds: Array.isArray(file.childIds) ? [...file.childIds].sort() : undefined
+    }))
+    .sort((left, right) => (
+      left.path.localeCompare(right.path)
+      || String(left.oldPath || "").localeCompare(String(right.oldPath || ""))
+      || String(left.changeType || "").localeCompare(String(right.changeType || ""))
+    ));
+}
+
+function fileInsertions(file: GitFileFootprintMetadata): number | null {
+  return file.insertions ?? file.additions ?? null;
+}
+
+function workspaceDisplay(workspace: NodeWorkspaceMetadata | undefined): VisualizerWorkspaceDisplay | undefined {
+  if (!workspace) {
+    return undefined;
+  }
+  return omitUndefined({
+    remote: workspace.remote,
+    cloneCwd: workspace.cloneCwd,
+    bareRepo: workspace.bareRepo,
+    retained: workspace.retained
+  });
+}
+
+function branchName(refName: string | undefined): string | undefined {
+  if (!refName) {
+    return undefined;
+  }
+  return refName
+    .replace(/^refs\/heads\//, "")
+    .replace(/^refs\/remotes\//, "");
+}
+
+function goalTextForNode(goal: GraphNode["goal"]): string | undefined {
+  if (typeof goal === "string" && goal.trim()) {
+    return goal;
+  }
+  if (goal && typeof goal === "object" && typeof goal.text === "string" && goal.text.trim()) {
+    return goal.text;
+  }
+  return undefined;
+}
+
+function plannerDecisionForNode(node: GraphNode): string | undefined {
+  return firstString(
+    node.plannerDecision,
+    stringMetadata(node, "decision"),
+    node.planner?.decision,
+    node.planner?.rationale
+  );
+}
+
+function decompositionReasonForNode(node: GraphNode): string | undefined {
+  return firstString(
+    node.decompositionReason,
+    stringMetadata(node, "decomposeReason"),
+    node.planner?.decompositionReason,
+    node.rationale
+  );
+}
+
+function firstString(...values: unknown[]): string | undefined {
+  for (const value of values) {
+    if (typeof value === "string" && value.trim()) {
+      return value;
+    }
+  }
+  return undefined;
+}
+
+function stringMetadata(node: GraphNode, key: string): string | undefined {
+  const value = node[key];
+  return typeof value === "string" ? value : undefined;
 }
 
 function historyTail(history: GraphHistoryEntry[], limit: number): GraphHistoryEntry[] {

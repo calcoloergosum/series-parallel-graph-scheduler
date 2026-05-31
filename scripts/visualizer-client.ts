@@ -662,12 +662,12 @@ export function renderVisualizerHtml(): string {
         <h2 id="attention-heading">Attention</h2>
         <div id="attention-dashboard"></div>
       </section>
-      <section class="sidebar-section" aria-labelledby="diagnostics-heading">
-        <h2 id="diagnostics-heading">Diagnostics</h2>
+      <section class="sidebar-section" aria-labelledby="triage-heading">
+        <h2 id="triage-heading">Triage</h2>
         <div id="diagnostics-panel"></div>
       </section>
-      <section class="sidebar-section" aria-labelledby="events-heading">
-        <h2 id="events-heading">Events</h2>
+      <section class="sidebar-section" aria-labelledby="event-browser-heading">
+        <h2 id="event-browser-heading">Event Browser</h2>
         <div class="field-row">
           <div class="field">
             <label for="event-node-filter">Node</label>
@@ -725,6 +725,108 @@ export function renderVisualizerHtml(): string {
     return typeof goal === "string" ? goal : goal?.text;
   }
 
+  function detailGoalText(node) {
+    return node.goalText || goalText(node.goal);
+  }
+
+  function plannerDecisionText(node) {
+    return node.plannerDecision || node.decision || node.planner?.decision || node.planner?.rationale;
+  }
+
+  function decompositionReasonText(node) {
+    return node.decompositionReason || node.decomposeReason || node.planner?.decompositionReason || node.rationale;
+  }
+
+  function joinList(values) {
+    return Array.isArray(values) && values.length ? values.join(", ") : undefined;
+  }
+
+  function formatContextRefs(refs) {
+    if (!Array.isArray(refs) || !refs.length) {
+      return undefined;
+    }
+    return refs.map((ref) => [
+      ref.title,
+      ref.type,
+      ref.ref,
+      ref.nodeId ? "node " + ref.nodeId : ""
+    ].filter(Boolean).join(" / ")).join("\\n");
+  }
+
+  function formatOutputContract(contract) {
+    if (!contract || typeof contract !== "object") {
+      return undefined;
+    }
+    return [
+      contract.format ? "format: " + contract.format : "",
+      contract.schemaRef ? "schema: " + contract.schemaRef : "",
+      joinList(contract.requiredArtifacts) ? "required artifacts: " + joinList(contract.requiredArtifacts) : "",
+      joinList(contract.acceptanceCriteria) ? "acceptance: " + joinList(contract.acceptanceCriteria) : ""
+    ].filter(Boolean).join("\\n");
+  }
+
+  function formatResultSummary(result) {
+    if (!result || typeof result !== "object") {
+      return undefined;
+    }
+    return [
+      result.status ? "status: " + result.status : "",
+      result.summary,
+      joinList(result.artifacts) ? "artifacts: " + joinList(result.artifacts) : "",
+      result.completedAt ? "completed: " + result.completedAt : ""
+    ].filter(Boolean).join("\\n");
+  }
+
+  function gitRefText(ref) {
+    return ref?.display || [ref?.name, ref?.commit].filter(Boolean).join(" @ ");
+  }
+
+  function appendGitFootprintSection(parent, git) {
+    if (!git) {
+      return;
+    }
+    const section = document.createElement("section");
+    const heading = document.createElement("h3");
+    heading.textContent = "Git Footprint";
+    section.append(heading);
+
+    appendMetaLine(section, "commit", git.commit);
+    appendMetaLine(section, "branch", git.branch);
+    appendMetaLine(section, "base ref", gitRefText(git.baseRef));
+    appendMetaLine(section, "work ref", gitRefText(git.workRef));
+    appendMetaLine(section, "output ref", gitRefText(git.outputRef || git.headRef));
+    appendMetaLine(section, "integration ref", git.integrationRef?.name);
+    appendMetaLine(section, "remote", git.remoteDisplay);
+    appendMetaLine(section, "workspace", git.workspaceDisplay);
+
+    if (git.diffStat) {
+      appendMetaLine(
+        section,
+        "diffstat",
+        git.diffStat.filesChanged + " files, +" + git.diffStat.insertions + " / -" + git.diffStat.deletions
+      );
+    }
+
+    if (Array.isArray(git.changedFiles) && git.changedFiles.length) {
+      const fileList = document.createElement("div");
+      fileList.className = "meta";
+      const rows = git.changedFiles.map((file) => {
+        const oldPath = file.oldPath ? " from " + file.oldPath : "";
+        const type = file.changeType ? " [" + file.changeType + "]" : "";
+        const insertions = file.insertions === null ? "?" : file.insertions;
+        const deletions = file.deletions === null ? "?" : file.deletions;
+        return file.path + oldPath + type + " +" + insertions + " / -" + deletions;
+      });
+      if (git.changedFilesTruncated > 0) {
+        rows.push("+" + git.changedFilesTruncated + " more files");
+      }
+      fileList.textContent = "changed files: " + boundedText(rows.join("\\n"));
+      section.append(fileList);
+    }
+
+    parent.append(section);
+  }
+
   function nodeSearchText(node) {
     const isolation = node.isolation || {};
     return [
@@ -734,13 +836,26 @@ export function renderVisualizerHtml(): string {
       node.kind,
       node.session,
       node.runId,
-      goalText(node.goal),
+      detailGoalText(node),
+      plannerDecisionText(node),
+      decompositionReasonText(node),
+      formatContextRefs(node.contextRefs),
+      formatOutputContract(node.outputContract),
+      formatResultSummary(node.resultSummary),
       node.expiresAt,
       node.question,
       node.answer,
       node.blockedReason,
       node.failureReason,
       node.report,
+      node.git?.commit,
+      node.git?.branch,
+      node.git?.baseRef?.display,
+      node.git?.workRef?.display,
+      node.git?.outputRef?.display,
+      node.git?.remoteDisplay,
+      node.git?.workspaceDisplay,
+      ...(node.git?.changedFiles || []).map((file) => file.path),
       isolation.cloneCwd,
       isolation.baseRef,
       isolation.workRef,
@@ -850,6 +965,10 @@ export function renderVisualizerHtml(): string {
   }
 
   function selectedEntry() {
+    const detail = latestPayload?.nodes?.find((node) => node.id === selectedNodeId);
+    if (detail) {
+      return { id: detail.id, node: detail };
+    }
     return graphNodeEntries().find((entry) => entry.id === selectedNodeId);
   }
 
@@ -1153,7 +1272,10 @@ export function renderVisualizerHtml(): string {
     const summary = document.getElementById("selected-worker-summary");
     const entry = selectedEntry();
     if (!entry) {
-      details.innerHTML = '<p>Select a node to inspect it.</p>';
+      details.textContent = "";
+      const empty = document.createElement("p");
+      empty.textContent = "Select a node to inspect it.";
+      details.append(empty);
       summary.textContent = "No node selected.";
       document.getElementById("start-selected-worker").disabled = true;
       return;
@@ -1169,20 +1291,70 @@ export function renderVisualizerHtml(): string {
       ["block", "Block"],
       ["reset", "Reset"],
       ...((node.status === "claimed" || node.status === "running") && !children ? [["decompose", "Decompose"]] : [])
-    ].map(([action, label]) => '<button class="secondary" type="button" data-node-action="' + action + '">' + label + '</button>').join("");
+    ];
     const history = (node.history || []).slice().reverse().map((event) => event.event || "event").join(", ");
-    details.innerHTML =
-      '<div><span class="badge status-' + statusToken(node.status || "pending") + '">' + escapeHtml(node.status || "pending") + '</span></div>' +
-      '<p><strong>' + escapeHtml(id) + '</strong><br>' + escapeHtml(node.title || id) + '</p>' +
-      '<div class="selected-actions" aria-label="Selected node actions">' + actions + '</div>' +
-      metaLine("kind", node.kind || "task") +
-      metaLine("goal", goalText(node.goal)) +
-      metaLine("children", children) +
-      metaLine("session", node.lease?.session || node.session) +
-      metaLine("run", node.lease?.runId || node.runId) +
-      metaLine("question", node.question) +
-      metaLine("answer", node.answer) +
-      '<section><h3>History</h3><p>' + escapeHtml(history || "No history recorded for this node.") + '</p><p class="meta">Newest first from the events payload.</p></section>';
+    details.textContent = "";
+
+    const badgeWrap = document.createElement("div");
+    const badge = document.createElement("span");
+    badge.className = "badge status-" + statusToken(node.status || "pending");
+    badge.textContent = node.status || "pending";
+    badgeWrap.append(badge);
+    details.append(badgeWrap);
+
+    const heading = document.createElement("p");
+    const strong = document.createElement("strong");
+    strong.textContent = id;
+    heading.append(strong, document.createElement("br"), node.title || id);
+    details.append(heading);
+
+    const actionWrap = document.createElement("div");
+    actionWrap.className = "selected-actions";
+    actionWrap.setAttribute("aria-label", "Selected node actions");
+    for (const [action, label] of actions) {
+      const button = document.createElement("button");
+      button.className = "secondary";
+      button.type = "button";
+      button.dataset.nodeAction = action;
+      button.textContent = label;
+      actionWrap.append(button);
+    }
+    details.append(actionWrap);
+
+    appendMetaLine(details, "kind", node.kind || "task");
+    appendMetaLine(details, "goal", detailGoalText(node));
+    appendMetaLine(details, "decision", plannerDecisionText(node));
+    appendMetaLine(details, "decomposition reason", decompositionReasonText(node));
+    appendMetaLine(details, "context", formatContextRefs(node.contextRefs));
+    appendMetaLine(details, "output contract", formatOutputContract(node.outputContract));
+    appendMetaLine(details, "result", formatResultSummary(node.resultSummary));
+    appendMetaLine(details, "children", children);
+    appendMetaLine(details, "session", node.lease?.session || node.session);
+    appendMetaLine(details, "run", node.lease?.runId || node.runId);
+    appendMetaLine(details, "question", node.question);
+    appendMetaLine(details, "answer", node.answer);
+    appendGitFootprintSection(details, node.git);
+
+    const section = document.createElement("section");
+    const historyHeading = document.createElement("h3");
+    historyHeading.textContent = "History";
+    const historyBody = document.createElement("p");
+    historyBody.textContent = history || "No history recorded for this node.";
+    const historyHint = document.createElement("p");
+    historyHint.className = "meta";
+    historyHint.textContent = "Newest first from the events payload.";
+    section.append(historyHeading, historyBody, historyHint);
+    details.append(section);
+  }
+
+  function appendMetaLine(parent, label, value) {
+    if (!value) {
+      return;
+    }
+    const line = document.createElement("div");
+    line.className = "meta";
+    line.textContent = label + ": " + boundedText(value);
+    parent.append(line);
   }
 
   function payloadEvents() {
