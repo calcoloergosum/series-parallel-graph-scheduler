@@ -147,7 +147,8 @@ export function gitFootprintFromOutputRef(
 }
 
 export function buildGraphGitFootprintSummary(graph: PlanGraphFile): GitFootprintSummary | undefined {
-  const children = Object.entries(graph.graph?.nodes || {})
+  const nodes = graph.graph?.nodes || {};
+  const children = Object.entries(nodes)
     .sort(([leftId], [rightId]) => leftId.localeCompare(rightId))
     .map(([nodeId, node]) => ({
       nodeId,
@@ -166,7 +167,8 @@ export function buildGraphGitFootprintSummary(graph: PlanGraphFile): GitFootprin
     return undefined;
   }
 
-  const aggregate = aggregateChildGitFootprints({ children });
+  const aggregateChildren = graphGitFootprintAggregationChildren(graph);
+  const aggregate = aggregateChildGitFootprints({ children: aggregateChildren });
   return {
     nodes: nodeSummaries,
     refs: {
@@ -177,6 +179,99 @@ export function buildGraphGitFootprintSummary(graph: PlanGraphFile): GitFootprin
     diffStat: aggregate?.diffStat || zeroDiffStat(),
     changedFiles: aggregate?.files || []
   };
+}
+
+function graphGitFootprintAggregationChildren(graph: PlanGraphFile): ChildGitFootprintInput[] {
+  const nodes = graph.graph?.nodes || {};
+  const parentIds = new Set<NodeId>();
+  for (const node of Object.values(nodes)) {
+    for (const childId of node.children || []) {
+      parentIds.add(childId);
+    }
+  }
+
+  const sortedNodeIds = Object.keys(nodes).sort();
+  const rootIds = [
+    ...(graph.graph?.root && nodes[graph.graph.root] ? [graph.graph.root] : []),
+    ...sortedNodeIds.filter((nodeId) => nodeId !== graph.graph?.root && !parentIds.has(nodeId))
+  ];
+  const visited = new Set<NodeId>();
+  const children: ChildGitFootprintInput[] = [];
+
+  for (const rootId of rootIds) {
+    collectGraphGitFootprintAggregationChildren(nodes, rootId, visited, children);
+  }
+  for (const nodeId of sortedNodeIds) {
+    collectGraphGitFootprintAggregationChildren(nodes, nodeId, visited, children);
+  }
+
+  return children;
+}
+
+function collectGraphGitFootprintAggregationChildren(
+  nodes: Record<NodeId, GraphNode>,
+  nodeId: NodeId,
+  visited: Set<NodeId>,
+  children: ChildGitFootprintInput[]
+): void {
+  if (visited.has(nodeId)) {
+    return;
+  }
+  visited.add(nodeId);
+
+  const node = nodes[nodeId];
+  if (!node) {
+    return;
+  }
+
+  const footprint = gitFootprintFromNode(node);
+  if (hasMeasurableGitFootprint(footprint)) {
+    children.push({
+      nodeId,
+      gitFootprint: footprint,
+      outputRef: node.outputRef
+    });
+    markGraphGitFootprintDescendantsVisited(nodes, nodeId, visited);
+    return;
+  }
+
+  const childIds = node.children || [];
+  if (childIds.length > 0) {
+    for (const childId of childIds) {
+      collectGraphGitFootprintAggregationChildren(nodes, childId, visited, children);
+    }
+    return;
+  }
+
+  if (footprint) {
+    children.push({
+      nodeId,
+      gitFootprint: footprint,
+      outputRef: node.outputRef
+    });
+  }
+}
+
+function markGraphGitFootprintDescendantsVisited(
+  nodes: Record<NodeId, GraphNode>,
+  nodeId: NodeId,
+  visited: Set<NodeId>
+): void {
+  const node = nodes[nodeId];
+  if (!node) {
+    return;
+  }
+  for (const childId of node.children || []) {
+    if (visited.has(childId)) {
+      continue;
+    }
+    visited.add(childId);
+    markGraphGitFootprintDescendantsVisited(nodes, childId, visited);
+  }
+}
+
+function hasMeasurableGitFootprint(footprint: NodeGitFootprintMetadata | undefined): boolean {
+  return Boolean(footprint?.diffStat || footprint?.files?.length);
 }
 
 function footprintNodeSummary(

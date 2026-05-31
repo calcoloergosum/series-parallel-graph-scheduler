@@ -135,7 +135,7 @@ export {
   redactGitRemote,
   runGitCommand
 } from "./git-runtime.js";
-export { aggregateChildGitFootprints } from "./git-footprint.js";
+export { aggregateChildGitFootprints, buildGraphGitFootprintSummary } from "./git-footprint.js";
 export {
   buildPlannerParentContext,
   buildPlannerPrompt,

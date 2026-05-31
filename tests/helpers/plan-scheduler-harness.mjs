@@ -53,6 +53,7 @@ export const {
   answerNode,
   attachReadyPriorityFields,
   blockNode,
+  buildGraphGitFootprintSummary,
   buildGoalGraph,
   buildPlannerPrompt,
   buildPlannerRuntimeRequest,

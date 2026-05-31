@@ -1397,6 +1397,56 @@ test("visualizer and event payloads expose git footprints with redaction", async
   });
 });
 
+test("visualizer git footprint totals use diagnostics aggregation frontier", async () => {
+  await withTempGraph(async (graphPath) => {
+    const graph = await readGraph(graphPath);
+    graph.graph.nodes.A.status = "done";
+    graph.graph.nodes.A.gitFootprint = {
+      source: "git-diff",
+      diffStat: { filesChanged: 1, additions: 2, deletions: 0, totalChanges: 2 },
+      files: [{ path: "setup.ts", changeType: "modified", additions: 2, deletions: 0, totalChanges: 2 }]
+    };
+    graph.graph.nodes.P.status = "done";
+    graph.graph.nodes.P.gitFootprint = {
+      source: "child-aggregate",
+      diffStat: { filesChanged: 1, additions: 3, deletions: 1, totalChanges: 4 },
+      files: [{ path: "integrated.ts", changeType: "modified", additions: 3, deletions: 1, totalChanges: 4 }],
+      aggregation: {
+        source: "child-footprints",
+        parentId: "P",
+        parentKind: "parallel",
+        childCount: 2,
+        includedChildIds: ["B", "C"],
+        missingChildIds: [],
+        duplicateFilePaths: [],
+        diffStatKind: "summed-child-stats",
+        filesChangedKind: "unique-file-paths-with-stat-only-sum",
+        fileMergeRule: "sum-line-counts-by-path"
+      }
+    };
+    graph.graph.nodes.B.status = "done";
+    graph.graph.nodes.B.gitFootprint = {
+      source: "git-diff",
+      diffStat: { filesChanged: 1, additions: 30, deletions: 0, totalChanges: 30 },
+      files: [{ path: "branch-b.ts", changeType: "modified", additions: 30, deletions: 0, totalChanges: 30 }]
+    };
+    graph.graph.nodes.C.status = "done";
+    graph.graph.nodes.C.gitFootprint = {
+      source: "git-diff",
+      diffStat: { filesChanged: 1, additions: 40, deletions: 0, totalChanges: 40 },
+      files: [{ path: "branch-c.ts", changeType: "modified", additions: 40, deletions: 0, totalChanges: 40 }]
+    };
+    await writeFile(graphPath, `${JSON.stringify(graph, null, 2)}\n`, "utf8");
+
+    const payload = await buildVisualizerPayload(graphPath);
+
+    assert.deepEqual(payload.gitFootprint.diffStat, { filesChanged: 2, additions: 5, deletions: 1, totalChanges: 6 });
+    assert.deepEqual(payload.gitFootprint.changedFiles.map((file) => file.path), ["integrated.ts", "setup.ts"]);
+    assert.deepEqual(payload.diagnostics.gitFootprint.diffStat, payload.gitFootprint.diffStat);
+    assert.deepEqual(payload.diagnostics.gitFootprint.nodes.map((node) => node.nodeId), ["A", "B", "C", "P"]);
+  });
+});
+
 test("visualizer normalizes git details for old, task, and aggregate nodes", async () => {
   await withTempGraph(async (graphPath) => {
     const graph = await readGraph(graphPath);

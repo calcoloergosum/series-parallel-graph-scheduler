@@ -800,6 +800,13 @@ Aggregate footprint rules:
 - Resetting or rerunning a node invalidates its `gitFootprint` and any aggregate
   parent footprints derived from it in the same way it invalidates derived
   `outputRef` and `integrationRef` metadata.
+- Graph-level git summaries keep all node footprints in their audit `nodes`
+  list, but `diffStat` and `changedFiles` aggregate only the highest available
+  measurable footprint in each subtree. A measurable parent footprint, whether
+  a real merge diff or an explicit child aggregate, counts instead of its
+  descendants. A parent that only has a commit or output ref without stats does
+  not mask child stats. This keeps diagnostics and visualizer totals from
+  counting both parent aggregates and child source footprints.
 
 Task base refs are resolved at claim/start time in this order:
 
