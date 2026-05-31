@@ -1,5 +1,5 @@
-import { lstat, mkdir } from "node:fs/promises";
-import { dirname, isAbsolute, join, relative, resolve } from "node:path";
+import { lstat, mkdir, realpath, stat } from "node:fs/promises";
+import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { isRecord, validatePlanGraphFileResult } from "./contracts.js";
 import type {
   CliCommand,
@@ -751,7 +751,7 @@ async function ensureSafeGraphOutputPath(graphPath: string): Promise<void> {
 }
 
 async function validateSafeGraphOutputPath(graphPath: string): Promise<void> {
-  await validateSafeOutputDirectoryAncestors(dirname(graphPath));
+  await walkSafeOutputDirectory(dirname(graphPath), { createMissing: false });
   await ensureGraphOutputTargetAvailable(graphPath);
 }
 
@@ -769,42 +769,62 @@ async function ensureGraphOutputTargetAvailable(graphPath: string): Promise<void
   }
 }
 
-async function validateSafeOutputDirectoryAncestors(targetDir: string): Promise<void> {
-  for (const currentPath of outputPathSegments(targetDir)) {
-    try {
-      const currentStat = await lstat(currentPath);
-      if (currentStat.isSymbolicLink()) {
-        throw new Error(`Unsafe graph output path: parent is a symbolic link: ${currentPath}`);
-      }
-      if (!currentStat.isDirectory()) {
-        throw new Error(`Unsafe graph output path: parent is not a directory: ${currentPath}`);
-      }
-    } catch (error) {
-      if (nodeErrorCode(error) === "ENOENT") {
-        return;
-      }
-      throw error;
-    }
-  }
+async function ensureSafeOutputDirectory(targetDir: string): Promise<void> {
+  await walkSafeOutputDirectory(targetDir, { createMissing: true });
 }
 
-async function ensureSafeOutputDirectory(targetDir: string): Promise<void> {
+async function walkSafeOutputDirectory(targetDir: string, options: { createMissing: boolean }): Promise<void> {
+  let containingRealPath = await realpath(resolve("/"));
   for (const currentPath of outputPathSegments(targetDir)) {
+    let currentStat;
     try {
-      const currentStat = await lstat(currentPath);
-      if (currentStat.isSymbolicLink()) {
-        throw new Error(`Unsafe graph output path: parent is a symbolic link: ${currentPath}`);
-      }
-      if (!currentStat.isDirectory()) {
-        throw new Error(`Unsafe graph output path: parent is not a directory: ${currentPath}`);
-      }
+      currentStat = await lstat(currentPath);
     } catch (error) {
       if (nodeErrorCode(error) !== "ENOENT") {
         throw error;
       }
+      if (!options.createMissing) {
+        return;
+      }
       await mkdir(currentPath);
+      const currentRealPath = await realpath(currentPath);
+      ensureRealPathContained(containingRealPath, currentRealPath, currentPath);
+      containingRealPath = currentRealPath;
+      continue;
     }
+
+    if (currentStat.isSymbolicLink() && !(await statExistingOutputParent(currentPath)).isDirectory()) {
+      throw new Error(`Unsafe graph output path: parent symbolic link target is not a directory: ${currentPath}`);
+    }
+    if (!currentStat.isSymbolicLink() && !currentStat.isDirectory()) {
+      throw new Error(`Unsafe graph output path: parent is not a directory: ${currentPath}`);
+    }
+    const currentRealPath = await realpath(currentPath);
+    ensureRealPathContained(containingRealPath, currentRealPath, currentPath);
+    containingRealPath = currentRealPath;
   }
+}
+
+async function statExistingOutputParent(currentPath: string) {
+  try {
+    return await stat(currentPath);
+  } catch (error) {
+    if (nodeErrorCode(error) === "ENOENT") {
+      throw new Error(`Unsafe graph output path: parent symbolic link target does not exist: ${currentPath}`);
+    }
+    throw error;
+  }
+}
+
+function ensureRealPathContained(containingRealPath: string, currentRealPath: string, unsafePath: string): void {
+  if (!isPathContained(containingRealPath, currentRealPath)) {
+    throw new Error(`Unsafe graph output path: parent escapes containing directory: ${unsafePath} -> ${currentRealPath}`);
+  }
+}
+
+function isPathContained(basePath: string, targetPath: string): boolean {
+  const relativePath = relative(basePath, targetPath);
+  return relativePath === "" || (relativePath !== ".." && !relativePath.startsWith(`..${sep}`) && !isAbsolute(relativePath));
 }
 
 function outputPathSegments(targetDir: string): string[] {

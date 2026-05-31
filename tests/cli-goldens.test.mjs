@@ -494,16 +494,47 @@ test("CLI plan creates a valid graph and rejects unsafe inputs", async () => {
       /Refusing to overwrite existing graph file:/
     );
 
+    const containedRealDir = join(dir, "contained-real");
+    const containedLinkDir = join(dir, "contained-link");
+    await mkdir(containedRealDir);
+    await symlink(containedRealDir, containedLinkDir);
+    const containedGraphPath = join(containedLinkDir, "plan.graph.json");
+    const containedCli = await execFileAsync(process.execPath, [
+      schedulerScriptPath,
+      "plan",
+      "--goal",
+      "Write through contained link",
+      "--graph",
+      containedGraphPath
+    ]);
+    assert.equal(JSON.parse(containedCli.stdout).graphPath, containedGraphPath);
+    assert.equal(existsSync(join(containedRealDir, "plan.graph.json")), true);
+
+    const nonDirectoryParent = join(dir, "not-a-directory");
+    await writeFile(nonDirectoryParent, "not a directory", "utf8");
+    await assertCliFails(
+      ["plan", "--goal", "Parent is a file", "--graph", join(nonDirectoryParent, "plan.graph.json")],
+      /Unsafe graph output path: parent is not a directory:/
+    );
+
+    const symlinkTargetPath = join(dir, "symlink-target.graph.json");
+    const symlinkGraphPath = join(dir, "symlink.graph.json");
+    await symlink(symlinkTargetPath, symlinkGraphPath);
+    await assertCliFails(
+      ["plan", "--goal", "Target is a link", "--graph", symlinkGraphPath],
+      /Unsafe graph output path: target is a symbolic link:/
+    );
+
     outsideDir = await mkdtemp(join(tmpdir(), "plan-cli-outside-"));
     const linkedDir = join(dir, "linked-output");
     await symlink(outsideDir, linkedDir);
     await assertCliFails(
       ["plan", "--goal", "Write through link", "--graph", join(linkedDir, "plan.graph.json")],
-      /Unsafe graph output path: parent is a symbolic link:/
+      /Unsafe graph output path: parent escapes containing directory:/
     );
     await assertCliFails(
       ["plan", "--goal", "Preview through link", "--graph", join(linkedDir, "dry-run.graph.json"), "--dry-run"],
-      /Unsafe graph output path: parent is a symbolic link:/
+      /Unsafe graph output path: parent escapes containing directory:/
     );
   } finally {
     await visualizer?.close();
