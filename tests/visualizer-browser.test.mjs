@@ -686,6 +686,76 @@ test("visualizer selected-node actions claim, start, block, answer, and reset re
   }
 });
 
+test("visualizer goal planner previews and creates a fixture-generated graph with write token", async (t) => {
+  const browser = await launchChromiumOrSkip(t);
+  if (!browser) {
+    return;
+  }
+
+  try {
+    await withTempGraph(browserFixtureGraph, async (graphPath, dir) => {
+      await writeFile(join(dir, "planner-fixture.json"), JSON.stringify({
+        kind: "series",
+        title: "Fixture-generated browser plan",
+        rationale: "Create the contract before implementation.",
+        children: [
+          { id: "GOAL_CONTRACT", title: "Define browser contract" },
+          { id: "GOAL_IMPLEMENT", title: "Implement browser goal" },
+          { id: "GOAL_VERIFY", title: "Verify browser goal" }
+        ]
+      }, null, 2), "utf8");
+
+      const visualizer = await createVisualizerServer({
+        graphPath,
+        port: 0,
+        defaultWorkerCwd: dir,
+        writeToken: "goal-secret"
+      });
+      const context = await browser.newContext({ viewport: { width: 420, height: 960 } });
+      try {
+        const forbidden = await fetch(`${visualizer.url}/api/goal/plan`, {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ goal: "Forbidden browser goal", dryRun: true })
+        });
+        assert.equal(forbidden.status, 403);
+
+        const page = await context.newPage();
+        page.setDefaultTimeout(10000);
+        await runWithPageDiagnostics(page, "visualizer-goal-planner", graphPath, async () => {
+          await page.goto(`${visualizer.url}/#write-token=goal-secret`);
+          await page.getByRole("heading", { name: "Goal Planner" }).waitFor();
+          await page.getByRole("textbox", { name: "Goal" }).fill("Build a browser-created graph");
+          await page.getByLabel("Title").fill("Browser Created Goal Plan");
+          await page.getByLabel("Planner Fixture").fill("planner-fixture.json");
+
+          await page.getByRole("button", { name: "Preview" }).click();
+          await page.locator("#goal-planner-result", { hasText: "Preview graph" }).waitFor();
+          await page.locator("#goal-planner-result", { hasText: "GOAL_CONTRACT, GOAL_IMPLEMENT, GOAL_VERIFY" }).waitFor();
+          assert.equal((await readGraph(graphPath)).title, "Browser Visualizer Plan");
+
+          await page.getByRole("button", { name: "Create Graph" }).click();
+          await page.locator("#goal-planner-result", { hasText: "Created graph" }).waitFor();
+          await page.locator("#subtitle", { hasText: "4 nodes" }).waitFor();
+          await page.locator("#ready", { hasText: "Define browser contract" }).waitFor();
+          await page.locator("#graph", { hasText: "GOAL_CONTRACT" }).waitFor();
+
+          const graph = await readGraph(graphPath);
+          assert.equal(graph.title, "Browser Created Goal Plan");
+          assert.equal(graph.graph.nodes.ROOT.kind, "series");
+          assert.deepEqual(graph.graph.nodes.ROOT.children, ["GOAL_CONTRACT", "GOAL_IMPLEMENT", "GOAL_VERIFY"]);
+          assert.equal(graph.graph.nodes.ROOT.goal.text, "Build a browser-created graph");
+        });
+      } finally {
+        await context.close();
+        await visualizer.close();
+      }
+    });
+  } finally {
+    await browser.close();
+  }
+});
+
 test("visualizer page loads, answers blocked tasks, and receives SSE updates", async (t) => {
   const browser = await launchChromiumOrSkip(t);
   if (!browser) {

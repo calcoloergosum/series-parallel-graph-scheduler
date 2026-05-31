@@ -101,6 +101,7 @@ server authority. They are unauthenticated on loopback by default, require
 - `POST /api/workers/start`: starts one or more scheduler worker child processes. Inputs are bounded and passed to `spawn` without a shell, but the caller controls the command, arguments, working directory, count, lease, idle interval, template path, and target node.
 - `POST /api/workers/stop`: sends `SIGTERM` to one managed worker process.
 - `POST /api/workers/stop-all`: sends `SIGTERM` to every managed worker process.
+- `POST /api/goal/plan`: previews or replaces the currently served graph with a validated goal-generated plan. It is a write route when `dryRun` is false and is protected by the visualizer write-token policy.
 - `POST /api/node/claim`, `/start`, `/renew`, `/done`, `/block`, `/answer`, `/fail`, `/reset`, `/reset-subtree`, `/reset-reachable`, and `/decompose`: expose the matching scheduler node mutations through injected runtime handlers. Lease-protected worker actions still require matching session or run credentials when the node has a lease. `POST /api/answer` remains a legacy alias for `POST /api/node/answer`.
 - `POST /api/graph/reconcile` and `POST /api/leases/release-expired`: expose graph-level operational recovery commands through injected runtime handlers. `release-expired` only clears expired leases on `claimed` and `running` work; blocked, review, failed, done, and custom-status work require a status-specific explicit operator decision such as reset, renew, or, for blocked work, answer.
 

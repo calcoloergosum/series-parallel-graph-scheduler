@@ -125,6 +125,12 @@ export interface VisualizerRuntime {
   }): Promise<PlannerPreviewMutationResult>;
   reconcileGraphStatus(graphPath: string): Promise<ReconcileGraphResult>;
   releaseExpiredLeases(graphPath: string): Promise<ReleaseExpiredLeasesResult>;
+  planGoalGraph(graphPath: string, options: {
+    goal?: string;
+    title?: string;
+    dryRun?: boolean;
+    plannerFixturePath?: string;
+  }): Promise<Record<string, unknown>>;
   renderPlanAfterUpdate(graphPath: string): Promise<void>;
   sendSlackNotification(
     graphPath: string,
@@ -312,6 +318,31 @@ export async function createVisualizerServer({
         await broadcast();
         res.writeHead(200, { "content-type": "application/json; charset=utf-8", "cache-control": "no-store" });
         res.end(JSON.stringify({ stopped, workerManager: workerManager.status() }));
+        return;
+      }
+
+      if (req.method === "POST" && url.pathname === "/api/goal/plan") {
+        if (!authorizeWriteRequest(req, res, requiredWriteToken)) {
+          return;
+        }
+        const body = await readRequestJson(req);
+        const result = await runVisualizerWriteRoute(async () => {
+          const planResult = await runtime.planGoalGraph(graphPath, {
+            goal: trimmedStringBodyField(body, "goal"),
+            title: optionalStringBodyField(body, "title"),
+            dryRun: optionalBooleanBodyField(body, "dryRun") ?? optionalBooleanBodyField(body, "preview") ?? false,
+            plannerFixturePath: optionalStringBodyField(body, "plannerFixturePath")
+              ?? optionalStringBodyField(body, "planner-fixture")
+              ?? optionalStringBodyField(body, "fixturePath")
+          });
+          if (!planResult.dryRun) {
+            await runtime.renderPlanAfterUpdate(graphPath);
+            await broadcast();
+          }
+          return planResult;
+        });
+        res.writeHead(200, { "content-type": "application/json; charset=utf-8", "cache-control": "no-store" });
+        res.end(JSON.stringify(result));
         return;
       }
 
@@ -842,6 +873,14 @@ function numericQueryParam(
 
 function stringBodyField(body: Record<string, unknown>, field: string): string {
   const value = optionalStringBodyField(body, field);
+  if (!value) {
+    throw new RequestValidationError(`Missing ${field}`);
+  }
+  return value;
+}
+
+function trimmedStringBodyField(body: Record<string, unknown>, field: string): string {
+  const value = stringBodyField(body, field).trim();
   if (!value) {
     throw new RequestValidationError(`Missing ${field}`);
   }

@@ -265,6 +265,15 @@ export function renderVisualizerHtml(): string {
       gap: 8px;
       margin-top: 10px;
     }
+    .planner-result {
+      margin-top: 10px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 9px;
+      background: #fbfcfd;
+      overflow-wrap: anywhere;
+      word-break: break-word;
+    }
     .manager-form {
       display: grid;
       gap: 9px;
@@ -643,6 +652,29 @@ export function renderVisualizerHtml(): string {
       <div id="graph" class="graph-viewport" role="region" aria-label="Scrollable graph diagram" tabindex="0"></div>
     </section>
     <aside class="panel" aria-label="Scheduler controls and status lists">
+      <section class="sidebar-section" aria-labelledby="goal-planner-heading">
+        <h2 id="goal-planner-heading">Goal Planner</h2>
+        <form id="goal-planner-form" class="manager-form">
+          <div class="field">
+            <label for="goal-text">Goal</label>
+            <textarea id="goal-text" name="goal" placeholder="Describe the outcome to plan" required></textarea>
+          </div>
+          <div class="field">
+            <label for="goal-title">Title</label>
+            <input id="goal-title" name="title" autocomplete="off" placeholder="Optional plan title">
+          </div>
+          <div class="field">
+            <label for="goal-planner-fixture">Planner Fixture</label>
+            <input id="goal-planner-fixture" name="plannerFixturePath" autocomplete="off" placeholder="Optional fixture path relative to graph">
+          </div>
+          <div id="goal-planner-error" class="action-error" role="alert"></div>
+          <div class="button-row">
+            <button class="secondary" type="submit" name="intent" value="preview">Preview</button>
+            <button type="submit" name="intent" value="create">Create Graph</button>
+          </div>
+        </form>
+        <div id="goal-planner-result" class="planner-result">No goal preview generated.</div>
+      </section>
       <section class="sidebar-section" aria-labelledby="worker-manager-heading">
         <h2 id="worker-manager-heading">Worker Manager</h2>
         <div id="worker-manager-summary" class="meta"></div>
@@ -1759,6 +1791,24 @@ export function renderVisualizerHtml(): string {
     announce(message);
   }
 
+  function renderGoalPlannerResult(result) {
+    const container = document.getElementById("goal-planner-result");
+    if (!result) {
+      container.textContent = "No goal preview generated.";
+      return;
+    }
+    const root = result.graph?.graph?.root || result.rootId || "unknown";
+    const rootNode = result.graph?.graph?.nodes?.[root] || {};
+    const children = Array.isArray(rootNode.children) ? rootNode.children.join(", ") : "";
+    container.innerHTML =
+      '<strong>' + escapeHtml(result.written ? "Created graph" : "Preview graph") + '</strong>' +
+      metaLine("path", result.graphPath) +
+      metaLine("root", root) +
+      metaLine("nodes", result.nodeCount ?? result.summary?.totalNodes) +
+      metaLine("title", result.graph?.title) +
+      metaLine("children", children || "none");
+  }
+
   function render(payload) {
     latestPayload = payload;
     setPressed("[data-filter]", filters.activity, "data-filter");
@@ -2049,6 +2099,42 @@ export function renderVisualizerHtml(): string {
       showRouteError("Worker start failed", error);
     } finally {
       button.disabled = false;
+    }
+  });
+
+  document.getElementById("goal-planner-form").addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const form = event.currentTarget;
+    const intent = event.submitter?.value || "preview";
+    const error = document.getElementById("goal-planner-error");
+    const buttons = form.querySelectorAll("button[type=submit]");
+    const body = {
+      goal: form.goal.value.trim(),
+      title: form.title.value.trim() || undefined,
+      plannerFixturePath: form.plannerFixturePath.value.trim() || undefined,
+      dryRun: intent !== "create"
+    };
+    error.textContent = "";
+    buttons.forEach((button) => { button.disabled = true; });
+    try {
+      const response = await fetch("/api/goal/plan", {
+        method: "POST",
+        headers: writeHeaders(true),
+        body: JSON.stringify(body)
+      });
+      if (!response.ok) {
+        throw new Error(await response.text());
+      }
+      const result = await response.json();
+      renderGoalPlannerResult(result);
+      if (result.written) {
+        await load();
+      }
+    } catch (routeError) {
+      error.textContent = routeError?.message || String(routeError);
+      showRouteError("Goal planning failed", routeError);
+    } finally {
+      buttons.forEach((button) => { button.disabled = false; });
     }
   });
 
