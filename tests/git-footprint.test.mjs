@@ -106,6 +106,69 @@ test("aggregateChildGitFootprints records missing child stats without blocking a
   assert.deepEqual(result.aggregation.missingChildIds, ["NO_STATS"]);
 });
 
+test("aggregateChildGitFootprints combines stat-only and binary file metadata", () => {
+  const result = aggregateChildGitFootprints({
+    parentId: "ROOT",
+    parentKind: "series",
+    baseRef: { name: "refs/remotes/origin/main", commit: "0".repeat(40) },
+    headRef: { name: "refs/heads/spg/integration/ROOT/run", commit: "f".repeat(40) },
+    children: [
+      {
+        nodeId: "STAT_ONLY",
+        outputRef: {
+          name: "refs/heads/stat-only",
+          commit: "1".repeat(40),
+          diffStat: {
+            filesChanged: 2,
+            insertions: 4,
+            deletions: 1,
+            totalChanges: 5,
+            binaryFiles: 1
+          }
+        }
+      },
+      {
+        nodeId: "BINARY_FILE",
+        gitFootprint: {
+          source: "git-diff",
+          files: [
+            {
+              path: "assets/logo.png",
+              changeType: "modified",
+              insertions: null,
+              deletions: null,
+              totalChanges: null,
+              binary: true
+            }
+          ]
+        }
+      }
+    ]
+  });
+
+  assert.equal(result.commit, "f".repeat(40));
+  assert.deepEqual(result.diffStat, {
+    filesChanged: 3,
+    additions: 4,
+    deletions: 1,
+    totalChanges: 5,
+    binaryFiles: 2
+  });
+  assert.deepEqual(result.files, [
+    {
+      path: "assets/logo.png",
+      changeType: "modified",
+      additions: null,
+      deletions: null,
+      totalChanges: null,
+      binary: true,
+      childIds: ["BINARY_FILE"]
+    }
+  ]);
+  assert.deepEqual(result.aggregation.includedChildIds, ["BINARY_FILE", "STAT_ONLY"]);
+  assert.equal(result.aggregation.filesChangedKind, "unique-file-paths-with-stat-only-sum");
+});
+
 function footprint(files) {
   return {
     source: "git-diff",

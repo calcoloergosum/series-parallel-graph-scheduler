@@ -1785,6 +1785,107 @@ test("planner adapter builds decomposition requests without network access", asy
   });
 });
 
+test("planner request context helper preserves nested series-parallel metadata without IO", () => {
+  const graph = {
+    graphVersion: 5,
+    title: "Nested planner context",
+    description: "Unit fixture",
+    graph: {
+      root: "ROOT",
+      nodes: {
+        ROOT: { title: "Root", kind: "series", status: "pending", children: ["DISCOVERY", "FANOUT"] },
+        DISCOVERY: { title: "Discovery", kind: "task", status: "done" },
+        FANOUT: { title: "Fanout", kind: "parallel", status: "pending", children: ["API", "WEB"] },
+        API: {
+          title: "API work",
+          kind: "task",
+          status: "pending",
+          description: "Implement API",
+          goal: { text: "Ship API", source: "parent", createdAt: "2026-05-31T00:00:00.000Z" },
+          deliverables: ["API patch"],
+          acceptanceCriteria: ["API tests pass"],
+          planner: { name: "fixture-planner", requestId: "plan-api" },
+          contextRefs: [
+            { type: "file", ref: "docs/planner-output-schema.md", title: "Planner schema" },
+            { type: "node", ref: "DISCOVERY", nodeId: "DISCOVERY" }
+          ],
+          outputContract: {
+            format: "patch",
+            requiredArtifacts: ["reports/API.md"],
+            acceptanceCriteria: ["Summarize API changes"]
+          }
+        },
+        WEB: { title: "Web work", kind: "task", status: "pending" }
+      }
+    }
+  };
+
+  const request = buildPlannerRuntimeRequest(graph, "API", {
+    requestId: "unit-plan-api",
+    allowedKinds: ["task", "series"],
+    planner: { name: "override-planner", model: "fixture-model" }
+  });
+
+  assert.equal(request.requestId, "unit-plan-api");
+  assert.equal(request.goal, "Ship API");
+  assert.deepEqual(request.allowedKinds, ["task", "series"]);
+  assert.equal(request.currentGraphSummary.totalNodes, 5);
+  assert.deepEqual(request.currentGraphSummary.counts, { pending: 4, done: 1 });
+  assert.deepEqual(request.parentContext.parentIds, ["FANOUT"]);
+  assert.deepEqual(request.parentContext.contextRefs, graph.graph.nodes.API.contextRefs);
+  assert.deepEqual(request.contextRefs, graph.graph.nodes.API.contextRefs);
+  assert.deepEqual(request.outputContract, graph.graph.nodes.API.outputContract);
+  assert.deepEqual(request.parentContext.outputContract, graph.graph.nodes.API.outputContract);
+  assert.deepEqual(request.planner, { name: "override-planner", model: "fixture-model" });
+});
+
+test("planner response validator reports nested and metadata shape errors without mutation IO", () => {
+  const graph = {
+    graph: {
+      root: "ROOT",
+      nodes: {
+        ROOT: { title: "Root", kind: "series", status: "pending", children: ["PLAN"] },
+        PLAN: { title: "Plan", kind: "task", status: "pending" }
+      }
+    }
+  };
+  const response = {
+    kind: "parallel",
+    title: "Split plan",
+    children: [
+      {
+        idHint: 9,
+        title: "Valid child"
+      },
+      {
+        id: "PLAN",
+        kind: "gate",
+        title: "",
+        deliverables: ["ok", ""],
+        children: [{ title: "Nested child" }]
+      }
+    ]
+  };
+
+  const validation = validatePlannerResponse(response, {
+    graph,
+    parentId: "PLAN",
+    allowedKinds: ["task", "series"]
+  });
+
+  assert.equal(validation.valid, false);
+  assert.deepEqual(validation.errors.map(({ path, code }) => `${path}:${code}`), [
+    "$.kind:disallowed-kind",
+    "$.children[0].idHint:invalid-id-hint",
+    "$.children[1].title:invalid-string",
+    "$.children[1].deliverables[1]:invalid-string",
+    "$.children[1].kind:unknown-kind",
+    "$.children[1].id:duplicate-child-id",
+    "$.children[1].children:unsupported-nested-children"
+  ]);
+  assert.deepEqual(validation.warnings, []);
+});
+
 test("default planner prompt renders required variables and decision guidance", async () => {
   await withTempGraph(async (graphPath) => {
     const graph = await readGraph(graphPath);

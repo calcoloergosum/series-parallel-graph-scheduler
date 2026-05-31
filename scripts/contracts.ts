@@ -1345,6 +1345,11 @@ export function validatePlanGraphFileResult(value: unknown): GraphValidationResu
     validateTimestampField(node.failedAt, `${nodePath}.failedAt`, errors);
     validateTimestampField(node.expiredAt, `${nodePath}.expiredAt`, errors);
     validateHistory(node.history, `${nodePath}.history`, errors);
+    validatePlannerMetadata(node.planner, `${nodePath}.planner`, errors);
+    validateContextRefs(node.contextRefs, `${nodePath}.contextRefs`, errors);
+    validateOutputContract(node.outputContract, `${nodePath}.outputContract`, errors);
+    validateResultSummary(node.resultSummary, `${nodePath}.resultSummary`, errors);
+    validateGitFootprint(node.gitFootprint, `${nodePath}.gitFootprint`, errors);
   }
 
   if (errors.length === 0 && typeof root === "string" && root.length > 0 && isRecord(nodes[root])) {
@@ -1474,9 +1479,236 @@ function validateHistory(history: unknown, path: string, errors: GraphValidation
   }
 }
 
+function validatePlannerMetadata(planner: unknown, path: string, errors: GraphValidationIssue[]): void {
+  if (planner === undefined) {
+    return;
+  }
+  if (!isRecord(planner)) {
+    errors.push({ path, message: "Expected planner metadata to be an object" });
+    return;
+  }
+  validateOptionalString(planner.name, `${path}.name`, "Expected planner name string", errors);
+  validateOptionalString(planner.model, `${path}.model`, "Expected planner model string", errors);
+  validateOptionalString(planner.version, `${path}.version`, "Expected planner version string", errors);
+  validateOptionalString(planner.promptRef, `${path}.promptRef`, "Expected planner promptRef string", errors);
+  validateOptionalString(planner.requestId, `${path}.requestId`, "Expected planner requestId string", errors);
+  validateTimestampField(planner.plannedAt, `${path}.plannedAt`, errors);
+  validateOptionalString(planner.decision, `${path}.decision`, "Expected planner decision string", errors);
+  validateOptionalString(planner.rationale, `${path}.rationale`, "Expected planner rationale string", errors);
+  validateOptionalString(planner.decompositionReason, `${path}.decompositionReason`, "Expected planner decompositionReason string", errors);
+}
+
+function validateContextRefs(contextRefs: unknown, path: string, errors: GraphValidationIssue[]): void {
+  if (contextRefs === undefined) {
+    return;
+  }
+  if (!Array.isArray(contextRefs)) {
+    errors.push({ path, message: "Expected contextRefs to be an array" });
+    return;
+  }
+  for (const [index, contextRef] of contextRefs.entries()) {
+    const entryPath = `${path}[${index}]`;
+    if (!isRecord(contextRef)) {
+      errors.push({ path: entryPath, message: "Expected contextRef to be an object" });
+      continue;
+    }
+    validateOptionalString(contextRef.type, `${entryPath}.type`, "Expected contextRef type string", errors);
+    validateRequiredString(contextRef.ref, `${entryPath}.ref`, "Expected contextRef ref string", errors);
+    validateOptionalString(contextRef.title, `${entryPath}.title`, "Expected contextRef title string", errors);
+    validateOptionalString(contextRef.nodeId, `${entryPath}.nodeId`, "Expected contextRef nodeId string", errors);
+  }
+}
+
+function validateOutputContract(outputContract: unknown, path: string, errors: GraphValidationIssue[]): void {
+  if (outputContract === undefined) {
+    return;
+  }
+  if (!isRecord(outputContract)) {
+    errors.push({ path, message: "Expected outputContract to be an object" });
+    return;
+  }
+  validateOptionalString(outputContract.format, `${path}.format`, "Expected outputContract format string", errors);
+  validateOptionalStringArray(outputContract.requiredArtifacts, `${path}.requiredArtifacts`, "Expected outputContract requiredArtifacts strings", errors);
+  validateOptionalStringArray(outputContract.acceptanceCriteria, `${path}.acceptanceCriteria`, "Expected outputContract acceptanceCriteria strings", errors);
+  validateOptionalString(outputContract.schemaRef, `${path}.schemaRef`, "Expected outputContract schemaRef string", errors);
+}
+
+function validateResultSummary(resultSummary: unknown, path: string, errors: GraphValidationIssue[]): void {
+  if (resultSummary === undefined) {
+    return;
+  }
+  if (!isRecord(resultSummary)) {
+    errors.push({ path, message: "Expected resultSummary to be an object" });
+    return;
+  }
+  validateOptionalString(resultSummary.status, `${path}.status`, "Expected resultSummary status string", errors);
+  validateRequiredString(resultSummary.summary, `${path}.summary`, "Expected resultSummary summary string", errors);
+  validateOptionalStringArray(resultSummary.artifacts, `${path}.artifacts`, "Expected resultSummary artifact strings", errors);
+  validateTimestampField(resultSummary.completedAt, `${path}.completedAt`, errors);
+}
+
+function validateGitFootprint(gitFootprint: unknown, path: string, errors: GraphValidationIssue[]): void {
+  if (gitFootprint === undefined) {
+    return;
+  }
+  if (!isRecord(gitFootprint)) {
+    errors.push({ path, message: "Expected gitFootprint to be an object" });
+    return;
+  }
+  validateOptionalString(gitFootprint.source, `${path}.source`, "Expected gitFootprint source string", errors);
+  validateGitFootprintRef(gitFootprint.baseRef, `${path}.baseRef`, errors);
+  validateGitFootprintRef(gitFootprint.headRef, `${path}.headRef`, errors);
+  validateOptionalString(gitFootprint.branch, `${path}.branch`, "Expected gitFootprint branch string", errors);
+  validateOptionalString(gitFootprint.commit, `${path}.commit`, "Expected gitFootprint commit string", errors);
+  validateGitDiffStat(gitFootprint.diffStat, `${path}.diffStat`, errors);
+  validateGitFiles(gitFootprint.files, `${path}.files`, errors);
+  validateGitFootprintAggregation(gitFootprint.aggregation, `${path}.aggregation`, errors);
+  validateGitFootprint(gitFootprint.childAggregate, `${path}.childAggregate`, errors);
+  validateTimestampField(gitFootprint.collectedAt, `${path}.collectedAt`, errors);
+}
+
+function validateGitFootprintRef(ref: unknown, path: string, errors: GraphValidationIssue[]): void {
+  if (ref === undefined) {
+    return;
+  }
+  if (!isRecord(ref)) {
+    errors.push({ path, message: "Expected git ref footprint to be an object" });
+    return;
+  }
+  validateOptionalString(ref.name, `${path}.name`, "Expected git ref name string", errors);
+  validateOptionalString(ref.commit, `${path}.commit`, "Expected git ref commit string", errors);
+}
+
+function validateGitDiffStat(diffStat: unknown, path: string, errors: GraphValidationIssue[]): void {
+  if (diffStat === undefined) {
+    return;
+  }
+  if (!isRecord(diffStat)) {
+    errors.push({ path, message: "Expected git diffStat to be an object" });
+    return;
+  }
+  validateRequiredNumber(diffStat.filesChanged, `${path}.filesChanged`, "Expected git diffStat filesChanged number", errors);
+  if (diffStat.insertions === undefined && diffStat.additions === undefined) {
+    errors.push({ path, message: "Expected git diffStat insertions or additions number" });
+  }
+  validateOptionalNumber(diffStat.insertions, `${path}.insertions`, "Expected git diffStat insertions number", errors);
+  validateOptionalNumber(diffStat.additions, `${path}.additions`, "Expected git diffStat additions number", errors);
+  validateRequiredNumber(diffStat.deletions, `${path}.deletions`, "Expected git diffStat deletions number", errors);
+  validateRequiredNumber(diffStat.totalChanges, `${path}.totalChanges`, "Expected git diffStat totalChanges number", errors);
+  validateOptionalNumber(diffStat.binaryFiles, `${path}.binaryFiles`, "Expected git diffStat binaryFiles number", errors);
+}
+
+function validateGitFiles(files: unknown, path: string, errors: GraphValidationIssue[]): void {
+  if (files === undefined) {
+    return;
+  }
+  if (!Array.isArray(files)) {
+    errors.push({ path, message: "Expected git files to be an array" });
+    return;
+  }
+  for (const [index, file] of files.entries()) {
+    const filePath = `${path}[${index}]`;
+    if (!isRecord(file)) {
+      errors.push({ path: filePath, message: "Expected git file footprint to be an object" });
+      continue;
+    }
+    validateRequiredString(file.path, `${filePath}.path`, "Expected git file path string", errors);
+    validateOptionalString(file.oldPath, `${filePath}.oldPath`, "Expected git file oldPath string", errors);
+    validateOptionalString(file.changeType, `${filePath}.changeType`, "Expected git file changeType string", errors);
+    if (file.insertions === undefined && file.additions === undefined) {
+      errors.push({ path: filePath, message: "Expected git file insertions or additions number" });
+    }
+    validateOptionalNullableNumber(file.insertions, `${filePath}.insertions`, "Expected git file insertions number or null", errors);
+    validateOptionalNullableNumber(file.additions, `${filePath}.additions`, "Expected git file additions number or null", errors);
+    validateRequiredNullableNumber(file.deletions, `${filePath}.deletions`, "Expected git file deletions number or null", errors);
+    validateRequiredNullableNumber(file.totalChanges, `${filePath}.totalChanges`, "Expected git file totalChanges number or null", errors);
+    if (file.binary !== undefined && typeof file.binary !== "boolean") {
+      errors.push({ path: `${filePath}.binary`, message: "Expected git file binary boolean" });
+    }
+    validateOptionalStringArray(file.childIds, `${filePath}.childIds`, "Expected git file childIds strings", errors);
+  }
+}
+
+function validateGitFootprintAggregation(aggregation: unknown, path: string, errors: GraphValidationIssue[]): void {
+  if (aggregation === undefined) {
+    return;
+  }
+  if (!isRecord(aggregation)) {
+    errors.push({ path, message: "Expected gitFootprint aggregation to be an object" });
+    return;
+  }
+  validateRequiredString(aggregation.source, `${path}.source`, "Expected gitFootprint aggregation source string", errors);
+  validateOptionalString(aggregation.parentId, `${path}.parentId`, "Expected gitFootprint aggregation parentId string", errors);
+  validateOptionalString(aggregation.parentKind, `${path}.parentKind`, "Expected gitFootprint aggregation parentKind string", errors);
+  validateRequiredNumber(aggregation.childCount, `${path}.childCount`, "Expected gitFootprint aggregation childCount number", errors);
+  validateRequiredStringArray(aggregation.includedChildIds, `${path}.includedChildIds`, "Expected gitFootprint aggregation includedChildIds strings", errors);
+  validateRequiredStringArray(aggregation.missingChildIds, `${path}.missingChildIds`, "Expected gitFootprint aggregation missingChildIds strings", errors);
+  validateRequiredStringArray(aggregation.duplicateFilePaths, `${path}.duplicateFilePaths`, "Expected gitFootprint aggregation duplicateFilePaths strings", errors);
+  validateRequiredString(aggregation.diffStatKind, `${path}.diffStatKind`, "Expected gitFootprint aggregation diffStatKind string", errors);
+  validateRequiredString(aggregation.filesChangedKind, `${path}.filesChangedKind`, "Expected gitFootprint aggregation filesChangedKind string", errors);
+  validateRequiredString(aggregation.fileMergeRule, `${path}.fileMergeRule`, "Expected gitFootprint aggregation fileMergeRule string", errors);
+}
+
 function validateRequiredString(value: unknown, path: string, message: string, errors: GraphValidationIssue[]): void {
   if (typeof value !== "string" || value.length === 0) {
     errors.push({ path, message });
+  }
+}
+
+function validateOptionalString(value: unknown, path: string, message: string, errors: GraphValidationIssue[]): void {
+  if (value !== undefined && typeof value !== "string") {
+    errors.push({ path, message });
+  }
+}
+
+function validateRequiredNumber(value: unknown, path: string, message: string, errors: GraphValidationIssue[]): void {
+  if (typeof value !== "number") {
+    errors.push({ path, message });
+  }
+}
+
+function validateOptionalNumber(value: unknown, path: string, message: string, errors: GraphValidationIssue[]): void {
+  if (value !== undefined && typeof value !== "number") {
+    errors.push({ path, message });
+  }
+}
+
+function validateRequiredNullableNumber(value: unknown, path: string, message: string, errors: GraphValidationIssue[]): void {
+  if (typeof value !== "number" && value !== null) {
+    errors.push({ path, message });
+  }
+}
+
+function validateOptionalNullableNumber(value: unknown, path: string, message: string, errors: GraphValidationIssue[]): void {
+  if (value !== undefined && typeof value !== "number" && value !== null) {
+    errors.push({ path, message });
+  }
+}
+
+function validateRequiredStringArray(value: unknown, path: string, message: string, errors: GraphValidationIssue[]): void {
+  if (!Array.isArray(value)) {
+    errors.push({ path, message });
+    return;
+  }
+  validateStringArrayItems(value, path, message, errors);
+}
+
+function validateOptionalStringArray(value: unknown, path: string, message: string, errors: GraphValidationIssue[]): void {
+  if (value === undefined) {
+    return;
+  }
+  if (!Array.isArray(value)) {
+    errors.push({ path, message });
+    return;
+  }
+  validateStringArrayItems(value, path, message, errors);
+}
+
+function validateStringArrayItems(value: unknown[], path: string, message: string, errors: GraphValidationIssue[]): void {
+  for (const [index, item] of value.entries()) {
+    if (typeof item !== "string") {
+      errors.push({ path: `${path}[${index}]`, message });
+    }
   }
 }
 
