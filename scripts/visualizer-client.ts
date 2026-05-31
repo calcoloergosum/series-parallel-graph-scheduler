@@ -662,12 +662,12 @@ export function renderVisualizerHtml(): string {
         <h2 id="attention-heading">Attention</h2>
         <div id="attention-dashboard"></div>
       </section>
-      <section class="sidebar-section" aria-labelledby="diagnostics-heading">
-        <h2 id="diagnostics-heading">Diagnostics</h2>
+      <section class="sidebar-section" aria-labelledby="triage-heading">
+        <h2 id="triage-heading">Triage</h2>
         <div id="diagnostics-panel"></div>
       </section>
-      <section class="sidebar-section" aria-labelledby="events-heading">
-        <h2 id="events-heading">Events</h2>
+      <section class="sidebar-section" aria-labelledby="event-browser-heading">
+        <h2 id="event-browser-heading">Event Browser</h2>
         <div class="field-row">
           <div class="field">
             <label for="event-node-filter">Node</label>
@@ -777,6 +777,56 @@ export function renderVisualizerHtml(): string {
     ].filter(Boolean).join("\\n");
   }
 
+  function gitRefText(ref) {
+    return ref?.display || [ref?.name, ref?.commit].filter(Boolean).join(" @ ");
+  }
+
+  function appendGitFootprintSection(parent, git) {
+    if (!git) {
+      return;
+    }
+    const section = document.createElement("section");
+    const heading = document.createElement("h3");
+    heading.textContent = "Git Footprint";
+    section.append(heading);
+
+    appendMetaLine(section, "commit", git.commit);
+    appendMetaLine(section, "branch", git.branch);
+    appendMetaLine(section, "base ref", gitRefText(git.baseRef));
+    appendMetaLine(section, "work ref", gitRefText(git.workRef));
+    appendMetaLine(section, "output ref", gitRefText(git.outputRef || git.headRef));
+    appendMetaLine(section, "integration ref", git.integrationRef?.name);
+    appendMetaLine(section, "remote", git.remoteDisplay);
+    appendMetaLine(section, "workspace", git.workspaceDisplay);
+
+    if (git.diffStat) {
+      appendMetaLine(
+        section,
+        "diffstat",
+        git.diffStat.filesChanged + " files, +" + git.diffStat.insertions + " / -" + git.diffStat.deletions
+      );
+    }
+
+    if (Array.isArray(git.changedFiles) && git.changedFiles.length) {
+      const fileList = document.createElement("div");
+      fileList.className = "meta";
+      const rows = git.changedFiles.map((file) => {
+        const oldPath = file.oldPath ? " from " + file.oldPath : "";
+        const type = file.changeType ? " [" + file.changeType + "]" : "";
+        const insertions = file.insertions === null ? "?" : file.insertions;
+        const deletions = file.deletions === null ? "?" : file.deletions;
+        return file.path + oldPath + type + " +" + insertions + " / -" + deletions;
+      });
+      if (git.changedFilesTruncated > 0) {
+        rows.push("+" + git.changedFilesTruncated + " more files");
+      }
+      fileList.textContent = "changed files: " + boundedText(rows.join("\\n"));
+      section.append(fileList);
+    }
+
+    parent.append(section);
+  }
+
   function nodeSearchText(node) {
     const isolation = node.isolation || {};
     return [
@@ -798,6 +848,14 @@ export function renderVisualizerHtml(): string {
       node.blockedReason,
       node.failureReason,
       node.report,
+      node.git?.commit,
+      node.git?.branch,
+      node.git?.baseRef?.display,
+      node.git?.workRef?.display,
+      node.git?.outputRef?.display,
+      node.git?.remoteDisplay,
+      node.git?.workspaceDisplay,
+      ...(node.git?.changedFiles || []).map((file) => file.path),
       isolation.cloneCwd,
       isolation.baseRef,
       isolation.workRef,
@@ -1275,6 +1333,7 @@ export function renderVisualizerHtml(): string {
     appendMetaLine(details, "run", node.lease?.runId || node.runId);
     appendMetaLine(details, "question", node.question);
     appendMetaLine(details, "answer", node.answer);
+    appendGitFootprintSection(details, node.git);
 
     const section = document.createElement("section");
     const historyHeading = document.createElement("h3");

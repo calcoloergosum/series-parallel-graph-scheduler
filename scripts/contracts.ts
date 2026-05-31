@@ -872,6 +872,68 @@ export interface VisualizerNodeRefs {
   gitFootprint?: NodeGitFootprintMetadata;
 }
 
+export interface VisualizerGitRefDisplay {
+  name?: string;
+  commit?: string;
+  display?: string;
+}
+
+export interface VisualizerGitChangedFileRow {
+  path: string;
+  oldPath?: string;
+  changeType?: GitFileChangeType;
+  insertions: number | null;
+  deletions: number | null;
+  totalChanges: number | null;
+  binary: boolean;
+  childIds?: NodeId[];
+}
+
+export interface VisualizerGitDiffStatDisplay {
+  filesChanged: number;
+  insertions: number;
+  deletions: number;
+  totalChanges: number;
+  binaryFiles?: number;
+}
+
+export interface VisualizerWorkspaceDisplay {
+  remote?: string;
+  cloneCwd?: string;
+  bareRepo?: string;
+  retained?: boolean;
+}
+
+export interface VisualizerGitFootprintDetail {
+  source?: GitFootprintSource;
+  commit?: string;
+  branch?: string;
+  baseRef?: VisualizerGitRefDisplay;
+  headRef?: VisualizerGitRefDisplay;
+  workRef?: VisualizerGitRefDisplay;
+  outputRef?: VisualizerGitRefDisplay;
+  integrationRef?: {
+    name?: string;
+    status?: string;
+    publishedOutputRef?: string;
+  };
+  diffStat?: VisualizerGitDiffStatDisplay;
+  filesChanged?: number;
+  insertions?: number;
+  deletions?: number;
+  totalChanges?: number;
+  binaryFiles?: number;
+  changedFiles: VisualizerGitChangedFileRow[];
+  changedFilesTotal: number;
+  changedFilesLimit: number;
+  changedFilesTruncated: number;
+  aggregation?: GitFootprintAggregationMetadata;
+  collectedAt?: IsoDateString;
+  remoteDisplay?: string;
+  workspaceDisplay?: string;
+  bareRepoDisplay?: string;
+}
+
 export interface VisualizerNodeTimestamps {
   startedAt?: IsoDateString;
   completedAt?: IsoDateString;
@@ -942,10 +1004,12 @@ export interface VisualizerNodeDetail {
   acceptanceCriteria: string[];
   lease?: GraphLease;
   refs: VisualizerNodeRefs;
+  git?: VisualizerGitFootprintDetail;
   gitFootprint?: NodeGitFootprintMetadata;
   gitDiffStat?: GitDiffStatMetadata;
   changedFiles?: GitFileFootprintMetadata[];
   workspace?: NodeWorkspaceMetadata;
+  workspaceDisplay?: VisualizerWorkspaceDisplay;
   report?: string;
   question?: string;
   answer?: string;

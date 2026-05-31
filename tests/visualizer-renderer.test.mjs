@@ -1330,8 +1330,15 @@ test("visualizer and event payloads expose git footprints with redaction", async
     const payload = await buildVisualizerPayload(graphPath);
     const withFootprint = payload.nodes.find((node) => node.id === "A");
     const withoutFootprint = payload.nodes.find((node) => node.id === "B");
+    assert.equal(withFootprint.git.commit, "2222222222222222222222222222222222222222");
+    assert.equal(withFootprint.git.baseRef.display, "refs/remotes/origin/main @ 1111111111111111111111111111111111111111");
+    assert.equal(withFootprint.git.outputRef.display, "refs/heads/spg/node/A/run-a @ 2222222222222222222222222222222222222222");
+    assert.deepEqual(withFootprint.git.diffStat, { filesChanged: 1, insertions: 4, deletions: 1, totalChanges: 5 });
+    assert.deepEqual(withFootprint.git.changedFiles.map((file) => [file.path, file.insertions, file.deletions]), [["src/app.ts", 4, 1]]);
+    assert.equal(withFootprint.git.remoteDisplay, "https://[REDACTED]@example.com/org/repo.git");
+    assert.equal(withoutFootprint.git, undefined);
     assert.equal(withFootprint.refs.gitFootprint.headRef.commit, "2222222222222222222222222222222222222222");
-    assert.deepEqual(withFootprint.gitDiffStat, { filesChanged: 1, additions: 4, deletions: 1, totalChanges: 5 });
+    assert.deepEqual(withFootprint.gitDiffStat, { filesChanged: 1, insertions: 4, deletions: 1, totalChanges: 5 });
     assert.deepEqual(withFootprint.changedFiles.map((file) => file.path), ["src/app.ts"]);
     assert.equal(withoutFootprint.refs.gitFootprint, undefined);
     assert.equal(withoutFootprint.gitFootprint, undefined);
@@ -1342,6 +1349,103 @@ test("visualizer and event payloads expose git footprints with redaction", async
     assert.doesNotMatch(JSON.stringify(payload), /secret-token|workspace-secret/);
     assert.equal(payload.recentEvents[0].details.gitFootprint.headRef.commit, "2222222222222222222222222222222222222222");
     assert.deepEqual(payload.recentEvents[0].details.diffStat, { filesChanged: 1, additions: 4, deletions: 1, totalChanges: 5 });
+  });
+});
+
+test("visualizer normalizes git details for old, task, and aggregate nodes", async () => {
+  await withTempGraph(async (graphPath) => {
+    const graph = await readGraph(graphPath);
+    graph.graph.nodes.A.status = "done";
+    graph.graph.nodes.A.baseRef = {
+      name: "refs/remotes/origin/main",
+      commit: "a".repeat(40)
+    };
+    graph.graph.nodes.A.outputRef = {
+      name: "refs/heads/spg/node/A/run-a",
+      commit: "b".repeat(40),
+      diffStat: { filesChanged: 2, additions: 9, deletions: 3, totalChanges: 12 },
+      files: [
+        { path: "z-last.ts", changeType: "modified", additions: 5, deletions: 1, totalChanges: 6 },
+        { path: "a-first.ts", changeType: "added", additions: 4, deletions: 2, totalChanges: 6 }
+      ]
+    };
+    graph.graph.nodes.A.workspace = {
+      remote: "https://user:secret-token@example.com/org/repo.git",
+      bareRepo: "/tmp/spg/token=bare-secret/cache/repo.git",
+      cloneCwd: "/tmp/spg/token=workspace-secret/workspaces/codex-A/A/run-a"
+    };
+
+    graph.graph.nodes.P.status = "done";
+    graph.graph.nodes.P.integrationRef = {
+      name: "refs/heads/spg/parent/P/run-p",
+      status: "clean",
+      publishedOutputRef: "refs/heads/spg/parent/P/output"
+    };
+    graph.graph.nodes.P.outputRef = {
+      name: "refs/heads/spg/parent/P/output",
+      commit: "c".repeat(40)
+    };
+    graph.graph.nodes.P.gitFootprint = {
+      source: "child-aggregate",
+      baseRef: { name: "refs/remotes/origin/main", commit: "a".repeat(40) },
+      headRef: { name: "refs/heads/spg/parent/P/output", commit: "c".repeat(40) },
+      branch: "spg/parent/P/output",
+      commit: "c".repeat(40),
+      diffStat: { filesChanged: 55, additions: 110, deletions: 11, totalChanges: 121 },
+      files: Array.from({ length: 55 }, (_, index) => {
+        const number = String(54 - index).padStart(2, "0");
+        return {
+          path: `src/file-${number}.ts`,
+          changeType: "modified",
+          additions: index,
+          deletions: 1,
+          totalChanges: index + 1,
+          childIds: ["C", "B"]
+        };
+      }),
+      aggregation: {
+        source: "child-footprints",
+        parentId: "P",
+        parentKind: "parallel",
+        childCount: 2,
+        includedChildIds: ["B", "C"],
+        missingChildIds: [],
+        duplicateFilePaths: [],
+        diffStatKind: "summed-child-stats",
+        filesChangedKind: "unique-file-paths-with-stat-only-sum",
+        fileMergeRule: "sum-line-counts-by-path"
+      }
+    };
+
+    await writeFile(graphPath, `${JSON.stringify(graph, null, 2)}\n`, "utf8");
+
+    const payload = await buildVisualizerPayload(graphPath);
+    const oldNode = payload.nodes.find((node) => node.id === "B");
+    const taskNode = payload.nodes.find((node) => node.id === "A");
+    const aggregateNode = payload.nodes.find((node) => node.id === "P");
+
+    assert.equal(oldNode.git, undefined);
+    assert.equal(taskNode.git.commit, "b".repeat(40));
+    assert.equal(taskNode.git.branch, "spg/node/A/run-a");
+    assert.equal(taskNode.git.baseRef.name, "refs/remotes/origin/main");
+    assert.equal(taskNode.git.outputRef.name, "refs/heads/spg/node/A/run-a");
+    assert.deepEqual(taskNode.git.diffStat, { filesChanged: 2, insertions: 9, deletions: 3, totalChanges: 12 });
+    assert.deepEqual(taskNode.git.changedFiles.map((file) => file.path), ["a-first.ts", "z-last.ts"]);
+    assert.equal(taskNode.git.remoteDisplay, "https://[REDACTED]@example.com/org/repo.git");
+    assert.equal(taskNode.workspaceDisplay.remote, "https://[REDACTED]@example.com/org/repo.git");
+
+    assert.equal(aggregateNode.git.source, "child-aggregate");
+    assert.equal(aggregateNode.git.commit, "c".repeat(40));
+    assert.equal(aggregateNode.git.integrationRef.name, "refs/heads/spg/parent/P/run-p");
+    assert.equal(aggregateNode.git.integrationRef.publishedOutputRef, "refs/heads/spg/parent/P/output");
+    assert.deepEqual(aggregateNode.git.diffStat, { filesChanged: 55, insertions: 110, deletions: 11, totalChanges: 121 });
+    assert.equal(aggregateNode.git.changedFiles.length, 50);
+    assert.equal(aggregateNode.git.changedFilesTotal, 55);
+    assert.equal(aggregateNode.git.changedFilesTruncated, 5);
+    assert.equal(aggregateNode.git.changedFiles[0].path, "src/file-00.ts");
+    assert.deepEqual(aggregateNode.git.changedFiles[0].childIds, ["B", "C"]);
+    assert.equal(aggregateNode.changedFiles.length, 50);
+    assert.doesNotMatch(JSON.stringify(payload.nodes), /secret-token|workspace-secret|bare-secret/);
   });
 });
 
@@ -1610,6 +1714,26 @@ test("selected-node inspector renders planner metadata as text", () => {
       deliverables: [],
       acceptanceCriteria: [],
       refs: {},
+      git: {
+        commit: "<script>commit()</script>",
+        branch: "spg/node/A/run-a",
+        baseRef: { display: "refs/remotes/origin/main @ aaaa" },
+        outputRef: { display: "refs/heads/spg/node/A/run-a @ bbbb" },
+        diffStat: { filesChanged: 1, insertions: 2, deletions: 1, totalChanges: 3 },
+        changedFiles: [{
+          path: "src/<img>.ts",
+          changeType: "modified",
+          insertions: 2,
+          deletions: 1,
+          totalChanges: 3,
+          binary: false
+        }],
+        changedFilesTotal: 1,
+        changedFilesLimit: 50,
+        changedFilesTruncated: 0,
+        remoteDisplay: "https://[REDACTED]@example.com/org/repo.git",
+        workspaceDisplay: "/tmp/token=[REDACTED]"
+      },
       timestamps: {},
       history: [],
       historyCount: 0,
@@ -1632,6 +1756,10 @@ test("selected-node inspector renders planner metadata as text", () => {
   assert.match(inspector.textContent, /context: Schema <img> \/ file \/ docs\/<script>\.md/);
   assert.match(inspector.textContent, /output contract: format: markdown/);
   assert.match(inspector.textContent, /result: status: partial/);
+  assert.match(inspector.textContent, /Git Footprint/);
+  assert.match(inspector.textContent, /commit: <script>commit\(\)<\/script>/);
+  assert.match(inspector.textContent, /diffstat: 1 files, \+2 \/ -1/);
+  assert.match(inspector.textContent, /changed files: src\/<img>\.ts \[modified\] \+2 \/ -1/);
   assert.doesNotMatch(inspector.innerHTML, /<script\b/);
   assert.doesNotMatch(inspector.innerHTML, /<img\b/);
 });

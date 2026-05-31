@@ -446,11 +446,16 @@ the SVG. Each entry keeps at least `id`, `title`, `kind`, `status`,
 `blockedReason`, `failureReason`, `timestamps`, `history`, `historyCount`, and
 `historyLimit` when those values are known on the graph node. `refs` groups
 `baseRef`, `workRef`, `outputRef`, `integrationRef`, and `gitFootprint`.
-Visualizer consumers that render commit or line-change counts should prefer
-`refs.gitFootprint`, then fall back to `refs.outputRef.commit` and
-`refs.outputRef.diffStat`. `timestamps` groups the node lifecycle timestamps
-such as `startedAt`, `completedAt`, `blockedAt`, `answeredAt`, `failedAt`, and
-`expiredAt`. The `history` array is the latest
+Visualizer consumers that render commit ids, branch names, refs, line-change
+counts, or changed file rows should prefer the normalized `git` object. `git`
+uses `insertions` consistently even when older graph metadata used `additions`,
+sorts changed file rows deterministically, and caps the row payload with
+`changedFilesLimit`, `changedFilesTotal`, and `changedFilesTruncated` so browser
+renderers do not parse raw Git metadata or manage large lists themselves.
+`workspaceDisplay` and `git.remoteDisplay`, `git.workspaceDisplay`, and
+`git.bareRepoDisplay` are display-only redacted values. `timestamps` groups the
+node lifecycle timestamps such as `startedAt`, `completedAt`, `blockedAt`,
+`answeredAt`, `failedAt`, and `expiredAt`. The `history` array is the latest
 `historyLimit` entries, not the full node history; `historyCount` reports the
 full graph history length for that node. Detail fields are JSON data, not
 pre-escaped HTML. Browser renderers must insert text with `textContent` or
