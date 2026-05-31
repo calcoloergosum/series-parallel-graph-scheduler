@@ -1,5 +1,5 @@
 import test from "node:test";
-import { addUnknownMetadata, answerNode, assert, assertUnknownMetadata, attachReadyPriorityFields, blockNode, buildPlannerPrompt, buildPlannerRuntimeRequest, buildReachableParentMap, buildReadyPrioritySelections, buildRelevantContext, buildStableRootPathMap, buildVisualizerPayload, buildWorkerPrompt, checkSchedulerTransitionReference, claimNode, compareReadyPriorityCandidates, completeNode, completedDeepReadinessGraph, concurrentMutationGraph, countSharedParentsWithCurrentTask, createFixturePlannerRuntime, createPromptPlannerRuntime, decomposeNode, deepReadinessGraph, depthPriorityGraph, diagnoseGraph, dirname, escapeRegExp, execFileAsync, failNode, knownTransitionStatuses, lastHistory, leafOnlyChildCountPriorityGraph, listReadyLeafNodes, listWorkingNodes, lockArtifacts, mutationOwnershipDocsPath, nestedResetReachabilityGraph, parsePlannerResponse, planNodeDecomposition, plannerResponseToDecomposeMutation, readGraph, readyIds, reconcileGraphStatus, releaseExpiredLeases, renewNodeLease, resetNode, resetReachable, resetSubtree, schedulerScriptPath, schedulerTransitionTable, setNodeStatus, sharedParentPriorityGraph, startNode, stressScriptPath, validatePlanGraphFileResult, validatePlannerResponse, withTempGraph, writeFile } from "./helpers/plan-scheduler-harness.mjs";
+import { addUnknownMetadata, answerNode, assert, assertUnknownMetadata, attachReadyPriorityFields, blockNode, buildGoalGraphFromPlannerResponse, buildPlannerPrompt, buildPlannerRuntimeRequest, buildReachableParentMap, buildReadyPrioritySelections, buildRelevantContext, buildStableRootPathMap, buildVisualizerPayload, buildWorkerPrompt, checkSchedulerTransitionReference, claimNode, compareReadyPriorityCandidates, completeNode, completedDeepReadinessGraph, concurrentMutationGraph, countSharedParentsWithCurrentTask, createFixturePlannerRuntime, createPromptPlannerRuntime, decomposeNode, deepReadinessGraph, depthPriorityGraph, diagnoseGraph, dirname, escapeRegExp, execFileAsync, failNode, knownTransitionStatuses, lastHistory, leafOnlyChildCountPriorityGraph, listReadyLeafNodes, listWorkingNodes, lockArtifacts, mutationOwnershipDocsPath, nestedResetReachabilityGraph, parsePlannerResponse, planNodeDecomposition, plannerResponseToDecomposeMutation, readGraph, readyIds, reconcileGraphStatus, releaseExpiredLeases, renewNodeLease, resetNode, resetReachable, resetSubtree, schedulerScriptPath, schedulerTransitionTable, setNodeStatus, sharedParentPriorityGraph, startNode, stressScriptPath, validatePlanGraphFileResult, validatePlannerResponse, withTempGraph, writeFile } from "./helpers/plan-scheduler-harness.mjs";
 
 function priorityCandidate(id, depth, childCount, sharedParentCountWithCurrentTask) {
   return {
@@ -1928,6 +1928,120 @@ test("planner response validator reports nested and metadata shape errors withou
     "$.children[1].children:unsupported-nested-children"
   ]);
   assert.deepEqual(validation.warnings, []);
+});
+
+test("recursive planner response validation materializes nested initial graphs", () => {
+  const response = {
+    kind: "series",
+    title: "Build searchable audit log",
+    description: "Split the generated goal before workers run.",
+    children: [
+      {
+        idHint: "discover",
+        title: "Discover audit requirements",
+        deliverables: ["Requirements summary"]
+      },
+      {
+        idHint: "build",
+        kind: "parallel",
+        title: "Build audit surfaces",
+        children: [
+          {
+            idHint: "api",
+            title: "Implement audit API",
+            acceptanceCriteria: ["API filters audit entries."]
+          },
+          {
+            idHint: "ui",
+            title: "Implement audit UI"
+          },
+          {
+            title: "Implement audit UI"
+          },
+          {
+            title: "Implement audit UI"
+          }
+        ]
+      },
+      {
+        id: "VERIFY",
+        title: "Verify audit workflow"
+      }
+    ]
+  };
+
+  assert.equal(validatePlannerResponse(response, { parentId: "ROOT", recursive: true }).valid, true);
+  assert.equal(validatePlannerResponse(response, { parentId: "ROOT" }).valid, false);
+
+  const graph = buildGoalGraphFromPlannerResponse("Ship a searchable audit log", response, {
+    title: "Audit Log Plan",
+    createdAt: "2026-05-31T00:00:00.000Z"
+  });
+
+  assert.deepEqual(validatePlanGraphFileResult(graph).errors, []);
+  assert.equal(graph.graph.root, "ROOT");
+  assert.equal(graph.graph.nodes.ROOT.kind, "series");
+  assert.deepEqual(graph.graph.nodes.ROOT.children, ["ROOT_DISCOVER", "ROOT_BUILD", "VERIFY"]);
+  assert.equal(graph.graph.nodes.ROOT_BUILD.kind, "parallel");
+  assert.deepEqual(graph.graph.nodes.ROOT_BUILD.children, [
+    "ROOT_BUILD_API",
+    "ROOT_BUILD_UI",
+    "ROOT_BUILD_IMPLEMENT_AUDIT_UI",
+    "ROOT_BUILD_IMPLEMENT_AUDIT_UI_2"
+  ]);
+  assert.equal(graph.graph.nodes.ROOT_BUILD_API.status, "pending");
+  assert.deepEqual(graph.graph.nodes.ROOT_BUILD_API.acceptanceCriteria, ["API filters audit entries."]);
+  assert.deepEqual(listReadyLeafNodes(graph).map((node) => node.id), ["ROOT_DISCOVER"]);
+});
+
+test("recursive planner response validation reports nested paths before initial graph creation", () => {
+  const response = {
+    kind: "series",
+    title: "Invalid nested plan",
+    children: [
+      {
+        idHint: "bad-task",
+        kind: "task",
+        title: "Task cannot own children",
+        children: [{ title: "Nested under task" }]
+      },
+      {
+        idHint: "empty",
+        kind: "parallel",
+        title: "Empty fanout",
+        children: []
+      },
+      {
+        id: "ROOT_GENERATED",
+        title: "Explicit duplicate target"
+      },
+      {
+        id: "ROOT_GENERATED",
+        title: "Duplicate materialized target"
+      }
+    ]
+  };
+
+  const validation = validatePlannerResponse(response, { parentId: "ROOT", recursive: true });
+
+  assert.equal(validation.valid, false);
+  assert.deepEqual(validation.errors.map(({ path, code }) => `${path}:${code}`), [
+    "$.children[0].children:unsupported-nested-children",
+    "$.children[1].children:missing-children",
+    "$.children[3].id:duplicate-child-id"
+  ]);
+  assert.throws(
+    () => buildGoalGraphFromPlannerResponse("Invalid goal", response),
+    (error) => {
+      assert.equal(error.name, "PlannerResponseValidationError");
+      assert.deepEqual(error.validation.errors.map(({ path }) => path), [
+        "$.children[0].children",
+        "$.children[1].children",
+        "$.children[3].id"
+      ]);
+      return true;
+    }
+  );
 });
 
 test("default planner prompt renders required variables and decision guidance", async () => {

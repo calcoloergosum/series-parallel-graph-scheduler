@@ -52,6 +52,7 @@ export interface ValidatePlannerResponseOptions {
   graph?: PlanGraphFile;
   parentId?: NodeId;
   allowedKinds?: PlannerOutputKind[];
+  recursive?: boolean;
 }
 
 export class PlannerResponseValidationError extends Error {
@@ -321,7 +322,11 @@ export function validatePlannerResponse(
   }
 
   if (Array.isArray(response.children)) {
-    validatePlannerChildren(response.children, errors, options);
+    validatePlannerChildren(response.children, errors, options, {
+      path: "$.children",
+      parentId: options.parentId,
+      recursive: options.recursive === true
+    });
   }
 
   return { valid: errors.length === 0, errors, warnings };
@@ -407,16 +412,25 @@ function isPlannerOutputKind(value: unknown): value is PlannerOutputKind {
   return value === "task" || value === "series" || value === "parallel";
 }
 
+interface PlannerChildrenValidationContext {
+  path: string;
+  parentId?: NodeId;
+  recursive: boolean;
+  seenMaterializedIds?: Map<NodeId, string>;
+  usedIds?: Set<NodeId>;
+}
+
 function validatePlannerChildren(
   children: unknown[],
   errors: PlannerValidationError[],
-  options: ValidatePlannerResponseOptions
+  options: ValidatePlannerResponseOptions,
+  context: PlannerChildrenValidationContext
 ): void {
-  const seenMaterializedIds = new Map<NodeId, number>();
-  const usedIds = new Set(Object.keys(options.graph?.graph.nodes || {}));
+  const seenMaterializedIds = context.seenMaterializedIds || new Map<NodeId, string>();
+  const usedIds = context.usedIds || new Set(Object.keys(options.graph?.graph.nodes || {}));
 
   children.forEach((child, index) => {
-    const path = `$.children[${index}]`;
+    const path = `${context.path}[${index}]`;
     if (!isRecord(child)) {
       errors.push({
         path,
@@ -469,28 +483,73 @@ function validatePlannerChildren(
       });
     }
     if (child.children !== undefined) {
+      if (!context.recursive) {
+        errors.push({
+          path: `${path}.children`,
+          code: "unsupported-nested-children",
+          message: "Planner child proposals must be flat for node decomposition.",
+          severity: "error"
+        });
+      } else if (!Array.isArray(child.children)) {
+        errors.push({
+          path: `${path}.children`,
+          code: "invalid-children",
+          message: "Planner child proposal children must be an array.",
+          severity: "error"
+        });
+      } else if (child.kind !== "series" && child.kind !== "parallel") {
+        errors.push({
+          path: `${path}.children`,
+          code: "unsupported-nested-children",
+          message: "Nested planner children require child kind series or parallel.",
+          severity: "error"
+        });
+      } else if (child.children.length === 0) {
+        errors.push({
+          path: `${path}.children`,
+          code: "missing-children",
+          message: `${child.kind} planner child proposals must include at least one child.`,
+          severity: "error"
+        });
+      }
+    } else if (context.recursive && (child.kind === "series" || child.kind === "parallel")) {
       errors.push({
         path: `${path}.children`,
-        code: "unsupported-nested-children",
-        message: "Planner child proposals must be flat for node decomposition.",
+        code: "missing-children",
+        message: `${child.kind} planner child proposals must include at least one child.`,
         severity: "error"
       });
     }
 
-    const materializedId = materializePlannerChildId(child as PlannerChildProposal, index, usedIds, options.parentId);
+    const materializedId = materializePlannerChildId(child as PlannerChildProposal, index, usedIds, context.parentId || options.parentId);
     if (materializedId) {
-      const firstIndex = seenMaterializedIds.get(materializedId);
-      if (firstIndex !== undefined) {
+      const firstPath = seenMaterializedIds.get(materializedId);
+      if (firstPath !== undefined) {
         errors.push({
           path: `${path}.id`,
           code: "duplicate-child-id",
-          message: `Duplicate child id: ${materializedId} (first seen at $.children[${firstIndex}].id).`,
+          message: `Duplicate child id: ${materializedId} (first seen at ${firstPath}).`,
           severity: "error"
         });
       } else {
-        seenMaterializedIds.set(materializedId, index);
+        seenMaterializedIds.set(materializedId, typeof child.id === "string" ? `${path}.id` : path);
         usedIds.add(materializedId);
       }
+    }
+
+    if (
+      context.recursive
+      && Array.isArray(child.children)
+      && child.children.length > 0
+      && (child.kind === "series" || child.kind === "parallel")
+    ) {
+      validatePlannerChildren(child.children, errors, options, {
+        path: `${path}.children`,
+        parentId: materializedId,
+        recursive: true,
+        seenMaterializedIds,
+        usedIds
+      });
     }
   });
 }
@@ -519,7 +578,7 @@ function materializePlannerChildren(
   return materialized;
 }
 
-function materializePlannerChildId(
+export function materializePlannerChildId(
   child: PlannerChildProposal,
   index: number,
   usedIds: ReadonlySet<NodeId>,

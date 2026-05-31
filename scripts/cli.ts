@@ -25,7 +25,7 @@ import { numericArgumentRanges, parseNumericArgument } from "./numeric-args.js";
 import { exportOperationalEvents, operationalEvents } from "./operational-events.js";
 import { errorMessage, safeFilePart } from "./shared-utils.js";
 
-export { buildGoalGraph } from "./goal-graph.js";
+export { buildGoalGraph, buildGoalGraphFromPlannerResponse } from "./goal-graph.js";
 
 export interface DecomposeChildArg {
   id: string;
