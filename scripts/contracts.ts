@@ -99,14 +99,25 @@ export interface GitRefFootprintMetadata {
   [metadata: string]: unknown;
 }
 
-export interface GitDiffStatMetadata {
+export interface GitDiffStatBaseMetadata {
   filesChanged: number;
-  additions: number;
   deletions: number;
   totalChanges: number;
   binaryFiles?: number;
   [metadata: string]: unknown;
 }
+
+export interface GitDiffStatInsertionsMetadata extends GitDiffStatBaseMetadata {
+  insertions: number;
+  additions?: number;
+}
+
+export interface GitDiffStatAdditionsMetadata extends GitDiffStatBaseMetadata {
+  additions: number;
+  insertions?: number;
+}
+
+export type GitDiffStatMetadata = GitDiffStatInsertionsMetadata | GitDiffStatAdditionsMetadata;
 
 export type GitFileChangeType =
   | "added"
@@ -119,16 +130,27 @@ export type GitFileChangeType =
   | "unknown"
   | (string & {});
 
-export interface GitFileFootprintMetadata {
+export interface GitFileFootprintBaseMetadata {
   path: string;
   oldPath?: string;
   changeType?: GitFileChangeType;
-  additions: number | null;
   deletions: number | null;
   totalChanges: number | null;
   binary?: boolean;
   [metadata: string]: unknown;
 }
+
+export interface GitFileFootprintInsertionsMetadata extends GitFileFootprintBaseMetadata {
+  insertions: number | null;
+  additions?: number | null;
+}
+
+export interface GitFileFootprintAdditionsMetadata extends GitFileFootprintBaseMetadata {
+  additions: number | null;
+  insertions?: number | null;
+}
+
+export type GitFileFootprintMetadata = GitFileFootprintInsertionsMetadata | GitFileFootprintAdditionsMetadata;
 
 export interface NodeGitFootprintMetadata {
   baseRef?: GitRefFootprintMetadata;
