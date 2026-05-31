@@ -23,11 +23,11 @@ authoritative coverage that should fail when the surface regresses.
 | npm scripts | `ready`, `summary`, `serve`, `worker`, `render`, `schema:graph`, `smoke:migration`, `smoke:package`, `clean`, `format:check`, `audit:dependencies`, `lint`, `check`, `release:check`, `typecheck`, `build`, `test`, `coverage:core`, `test:visualizer`, `stress:deterministic`, `benchmark:lock-contention` | `README.md` "Command Entry Points"; `docs/testing.md`; `docs/lock-contention-benchmark.md` | `tests/package-smoke.test.mjs` "package npm scripts and bins target migrated build output"; `tests/fixtures/cli-goldens.json`; `scripts/migration-smoke.mjs`; `scripts/package-smoke.mjs` |
 | Package binaries | `spg-scheduler`, `spg-render-plan` | `README.md` "Command Entry Points" | `tests/package-smoke.test.mjs` "built package bin entry points smoke test scheduler and renderer CLIs" |
 | Compatibility wrappers | `node scripts/plan-scheduler.mjs ...`, `node scripts/render-plan.mjs ...`, `node scripts/sp-layout.mjs` as a layout wrapper | `README.md` "Command Entry Points"; this document "Stable CLI Surface" | `tests/package-smoke.test.mjs`; `scripts/migration-smoke.mjs` |
-| Scheduler commands | `ready`, `summary`, `diagnostics`, `events`, `claim`, `start`, `renew`, `reset`, `reset-subtree`, `reset-reachable`, `done`, `block`, `answer`, `fail`, `decompose`, `prompt`, `worker`, `reconcile`, `release-expired`, `serve`, `help` | `README.md` "Scheduler Commands"; `docs/operational-events.md`; this document "Stable CLI Surface" | `tests/fixtures/cli-goldens.json`; `tests/cli-goldens.test.mjs`; `tests/scheduler-mutations.test.mjs`; `tests/worker-runtime.test.mjs`; `tests/validation-contracts.test.mjs`; `tests/visualizer-renderer.test.mjs` |
-| Scheduler flags | `--graph`, `--node`, `--event`, `--limit`, `--session`, `--run`, `--lease`, `--reason`, `--report`, `--report-body`, `--question`, `--answer`, `--responder`, `--kind`, `--child`, `--child-json`, `--template`, `--cwd`, `--once`, `--quiet`, `--idle-ms`, `--timeout-ms`, `--codex-command`, repeated `--codex-arg`, `--isolation`, `--remote`, `--workspace-root`, `--workspace-retention`, `--port`, `--host`, `--visualizer-write-token`, `--unsafe-visualizer-write`, `--help` | `README.md`; `docs/operational-events.md`; this document "Stable CLI Surface" and "Worker Execution Contract" | `tests/fixtures/cli-goldens.json`; `tests/cli-goldens.test.mjs`; `tests/worker-runtime.test.mjs`; `tests/visualizer-renderer.test.mjs` |
+| Scheduler commands | `plan`, `ready`, `summary`, `diagnostics`, `events`, `claim`, `start`, `renew`, `reset`, `reset-subtree`, `reset-reachable`, `done`, `block`, `answer`, `fail`, `decompose`, `prompt`, `worker`, `reconcile`, `release-expired`, `serve`, `help` | `README.md` "Scheduler Commands" and "Goal-Driven Planning"; `docs/operational-events.md`; this document "Stable CLI Surface" | `tests/fixtures/cli-goldens.json`; `tests/cli-goldens.test.mjs`; `tests/scheduler-mutations.test.mjs`; `tests/worker-runtime.test.mjs`; `tests/validation-contracts.test.mjs`; `tests/visualizer-renderer.test.mjs` |
+| Scheduler flags | `--graph`, `--goal`, `--title`, `--dry-run`, `--plan-only`, `--then-run`, `--node`, `--event`, `--limit`, `--session`, `--run`, `--lease`, `--reason`, `--report`, `--report-body`, `--question`, `--answer`, `--responder`, `--kind`, `--child`, `--child-json`, `--template`, `--cwd`, `--once`, `--quiet`, `--idle-ms`, `--timeout-ms`, `--codex-command`, repeated `--codex-arg`, `--isolation`, `--remote`, `--workspace-root`, `--workspace-retention`, `--port`, `--host`, `--visualizer-write-token`, `--unsafe-visualizer-write`, `--help` | `README.md`; `docs/operational-events.md`; this document "Stable CLI Surface", "Goal-Driven Mode Compatibility Note", and "Worker Execution Contract" | `tests/fixtures/cli-goldens.json`; `tests/cli-goldens.test.mjs`; `tests/worker-runtime.test.mjs`; `tests/visualizer-renderer.test.mjs` |
 | Renderer flags and positional arguments | `--graph`, `--output`, `--out`, first positional graph path, second positional output path | `README.md` "Renderer Usage"; this document "Renderer Output Locations" | `tests/visualizer-renderer.test.mjs` static renderer tests; `scripts/migration-smoke.mjs` |
-| Environment variables | `PLAN_GRAPH`, `SLACK_WEBHOOK_URL`, `SPG_SLACK_TIMEOUT_MS`, `SPG_DEBUG`, `SPG_GRAPH_LOCK_TIMEOUT_MS` | `README.md`; `docs/security.md`; this document "Stable CLI Surface" | `tests/cli-goldens.test.mjs`; `tests/visualizer-renderer.test.mjs`; `tests/validation-contracts.test.mjs` |
-| JSON stdout shapes | Successful JSON from `ready`, `summary`, `diagnostics`, `events`, `claim`, `start`, `renew`, `reset`, `reset-subtree`, `reset-reachable`, `done`, `block`, `answer`, `fail`, `decompose`, `worker`, `reconcile`, and `release-expired` | This document "JSON Output Shapes"; `docs/operational-events.md` | `tests/fixtures/cli-goldens.json`; `tests/cli-goldens.test.mjs`; `tests/validation-contracts.test.mjs` |
+| Environment variables | `PLAN_GRAPH`, `SLACK_WEBHOOK_URL`, `SPG_SLACK_TIMEOUT_MS`, `SPG_DEBUG`, `SPG_GRAPH_LOCK_TIMEOUT_MS`, `SPG_GIT_CACHE_LOCK_TIMEOUT_MS` | `README.md`; `docs/security.md`; this document "Stable CLI Surface" | `tests/cli-goldens.test.mjs`; `tests/visualizer-renderer.test.mjs`; `tests/validation-contracts.test.mjs` |
+| JSON stdout shapes | Successful JSON from `plan`, `ready`, `summary`, `diagnostics`, `events`, `claim`, `start`, `renew`, `reset`, `reset-subtree`, `reset-reachable`, `done`, `block`, `answer`, `fail`, `decompose`, `worker`, `reconcile`, and `release-expired` | This document "JSON Output Shapes"; `docs/operational-events.md` | `tests/fixtures/cli-goldens.json`; `tests/cli-goldens.test.mjs`; `tests/validation-contracts.test.mjs` |
 | Graph JSON format | Top-level graph metadata, `scheduler`, `document`, `graph.root`, `graph.nodes`, node status/kind/lease/history/report/ref fields, unknown metadata preservation, validation errors and warnings | `README.md` "Graph Validation"; `docs/graph-authoring.md`; `docs/mutation-ownership.md`; this document "Graph State Semantics" | `tests/validation-contracts.test.mjs`; `tests/fixtures/graphs/*`; `tests/graph-contracts.typecheck.ts` |
 | Graph behavior | Series/parallel/gate readiness, busy and terminal statuses, lease ownership and expiry, status transitions, reset scopes, decomposition, reconciliation, composition output refs | `README.md` "Operating Model"; this document "Graph State Semantics"; `docs/mutation-ownership.md`; `docs/worker-isolation-remote-cache.md` | `tests/scheduler-mutations.test.mjs`; `tests/worker-runtime.test.mjs`; `tests/validation-contracts.test.mjs` |
 | Prompt variables | `cwd`, `graphPath`, `nodeId`, `runId`, `session`, `reportPath`, `schedulerCommand`, `planTitle`, `planDescription`, `nodeTitle`, `nodeKind`, `nodeStatus`, `nodeJson`, `readyJson`, `summaryJson` | `README.md` "Worker Usage"; this document "Worker Execution Contract"; `prompts/codex-worker-task.md` | `tests/worker-runtime.test.mjs` "prompt command renders an external template"; `scripts/migration-smoke.mjs` |
@@ -52,6 +52,7 @@ Keep these entry points working:
 
 Keep these scheduler command names compatible:
 
+- `plan`
 - `ready`
 - `summary`
 - `diagnostics`
@@ -74,13 +75,14 @@ Keep these scheduler command names compatible:
 - `serve`
 - `help`
 
-Stable scheduler flags include `--graph`, `--node`, `--event`, `--limit`,
-`--session`, `--run`, `--lease`, `--reason`, `--report`, `--report-body`,
-`--question`, `--answer`, `--responder`, `--kind`, `--child`, `--child-json`,
-`--template`, `--cwd`, `--once`, `--quiet`, `--idle-ms`, `--timeout-ms`,
-`--codex-command`, repeated `--codex-arg`, `--isolation`, `--remote`,
-`--workspace-root`, `--workspace-retention`, `--port`, `--host`,
-`--visualizer-write-token`, `--unsafe-visualizer-write`, and `--help`.
+Stable scheduler flags include `--graph`, `--goal`, `--title`, `--dry-run`,
+`--plan-only`, `--then-run`, `--node`, `--event`, `--limit`, `--session`,
+`--run`, `--lease`, `--reason`, `--report`, `--report-body`, `--question`,
+`--answer`, `--responder`, `--kind`, `--child`, `--child-json`, `--template`,
+`--cwd`, `--once`, `--quiet`, `--idle-ms`, `--timeout-ms`, `--codex-command`,
+repeated `--codex-arg`, `--isolation`, `--remote`, `--workspace-root`,
+`--workspace-retention`, `--port`, `--host`, `--visualizer-write-token`,
+`--unsafe-visualizer-write`, and `--help`.
 Stable renderer flags include `--graph`, `--output`, and `--out`.
 
 Stable environment variables:
@@ -91,6 +93,8 @@ Stable environment variables:
 - `SPG_DEBUG=1`: prints stack traces with CLI errors.
 - `SPG_GRAPH_LOCK_TIMEOUT_MS`: graph lock wait timeout in milliseconds;
   default `5000`.
+- `SPG_GIT_CACHE_LOCK_TIMEOUT_MS`: Git cache lock wait timeout in milliseconds;
+  default `60000`.
 
 CLI graph path resolution is stable:
 

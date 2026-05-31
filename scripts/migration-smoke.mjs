@@ -142,9 +142,34 @@ async function assertServeStarts({ label, cwd, graphArg }) {
     assert.equal(response.status, 200, `${label}: serve /api/graph should respond`);
     const payload = await response.json();
     assert.equal(payload.summary.title, `Migration Smoke ${label}`);
+    assertLegacyVisualizerClientProjection(payload, label);
   } finally {
     await stopChild(child);
   }
+}
+
+function assertLegacyVisualizerClientProjection(payload, label) {
+  assert.equal(typeof payload, "object", `${label}: visualizer payload should be an object`);
+  assert.ok(payload.graph, `${label}: legacy visualizer payload should keep graph`);
+  assert.equal(typeof payload.graphSvg, "string", `${label}: legacy visualizer payload should keep graphSvg`);
+  assert.ok(Array.isArray(payload.ready), `${label}: legacy visualizer payload should keep ready`);
+  assert.ok(Array.isArray(payload.working), `${label}: legacy visualizer payload should keep working`);
+  assert.equal(typeof payload.summary.totalNodes, "number", `${label}: legacy visualizer payload should keep summary`);
+  assert.ok(payload.workerManager, `${label}: legacy visualizer payload should keep workerManager`);
+
+  const legacyProjection = {
+    graph: payload.graph,
+    graphSvg: payload.graphSvg,
+    ready: payload.ready,
+    working: payload.working,
+    summary: payload.summary,
+    workerManager: payload.workerManager
+  };
+  assert.equal(legacyProjection.summary.title, `Migration Smoke ${label}`);
+  assert.doesNotThrow(
+    () => JSON.parse(JSON.stringify(legacyProjection)),
+    `${label}: legacy clients should be able to ignore additive visualizer fields`
+  );
 }
 
 async function waitForServerUrl(child) {
