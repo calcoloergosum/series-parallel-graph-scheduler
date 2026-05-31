@@ -83,6 +83,10 @@ The CLI mutates work through these commands:
 - `answer`: stores an operator answer, clears the lease, returns the leaf to pending, regenerates HTML, and may notify Slack.
 - `fail`: marks work failed, records reason/report, clears the lease, regenerates HTML, and may notify Slack.
 - `decompose`: replaces a claimed/running/blocked leaf with child nodes, clears the lease, reconciles the graph, regenerates HTML, and may notify Slack.
+- `apply-preview`: applies a stored planner preview through the same guarded
+  decompose path, regenerates HTML, and may notify Slack.
+- `reject-preview`: clears stored planner preview metadata without creating
+  child nodes, regenerates HTML, and may notify Slack.
 - `worker`: loops over `claim`, `start`, lease renewal, report writing, `done`, and `fail` while spawning the configured Codex command.
 - `reconcile`: marks completed internal subtrees done.
 - `release-expired`: clears expired leases and returns affected work to pending.

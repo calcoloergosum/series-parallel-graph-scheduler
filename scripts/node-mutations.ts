@@ -20,7 +20,9 @@ import {
   type NodeWorkerPlannerAttemptMetadata,
   type NodeWorkerPlannerAttemptStatus,
   type NodeWorkspaceMetadata,
+  type PendingPlannerPreviewMetadata,
   type PlanGraphFile,
+  type PlannerPreviewMutationResult,
   type PlannerOutputKind,
   type PlannerRuntime,
   type PlannerRuntimeResponse,
@@ -77,6 +79,7 @@ export interface BlockNodeOptions extends OwnedNodeOptions {
   question?: string;
   reason?: string;
   report?: string;
+  plannerPreview?: PendingPlannerPreviewMetadata;
   extraHistoryEvents?: ExtraNodeHistoryEvent[];
 }
 
@@ -124,6 +127,13 @@ export interface DecomposeChildDefinition {
 export interface DecomposeNodeOptions extends OwnedNodeOptions {
   kind?: NodeKind;
   children?: DecomposeChildDefinition[];
+  extraHistoryEvents?: ExtraNodeHistoryEvent[];
+}
+
+export interface RejectPlannerPreviewOptions {
+  nodeId?: NodeId;
+  reason?: string;
+  responder?: string;
 }
 
 export interface PlanNodeDecompositionOptions extends OwnedNodeOptions {
@@ -273,6 +283,22 @@ export const schedulerTransitionTable = {
     to: "pending",
     lease: "requires matching session or run id when the node is leased; clears any lease and creates child nodes"
   },
+  "apply-preview": {
+    actor: "operator",
+    implementation: "applyPlannerPreview",
+    scope: "claimed, running, or blocked leaf with pendingPlannerPreview",
+    allowedFrom: ["claimed", "running", "blocked"],
+    to: "pending",
+    lease: "uses the guarded decompose mutation path; requires matching lease owner when the preview node is still leased"
+  },
+  "reject-preview": {
+    actor: "operator",
+    implementation: "rejectPlannerPreview",
+    scope: "blocked or pending leaf with pendingPlannerPreview",
+    allowedFrom: ["blocked", "pending"],
+    to: "pending",
+    lease: "does not require owner credentials; clears any lease and preview metadata without creating children"
+  },
   reconcile: {
     actor: "system",
     implementation: "reconcileGraphStatus",
@@ -310,7 +336,8 @@ const resetClearedFields = [
   "integrationRef",
   "gitFootprint",
   "gitFootprintWarning",
-  "workerPlanner"
+  "workerPlanner",
+  "pendingPlannerPreview"
 ] as const;
 const compositionResetClearedFields = ["outputRef", "integrationRef", "gitFootprint", "gitFootprintWarning"] as const;
 
@@ -453,7 +480,7 @@ export async function completeNode(
 
 export async function blockNode(
   graphPath: string,
-  { nodeId, question, reason, report, session, runId, extraHistoryEvents }: BlockNodeOptions = {}
+  { nodeId, question, reason, report, session, runId, plannerPreview, extraHistoryEvents }: BlockNodeOptions = {}
 ): Promise<NodeMutationResult> {
   return updateNodeStatus(graphPath, {
     nodeId,
@@ -464,7 +491,7 @@ export async function blockNode(
       assertLeafNode(graph, nodeId);
       assertStatus(node, schedulerTransitionTable.block.allowedFrom, "block");
     },
-    patch: (node) => {
+    patch: (node, graph) => {
       node.blockedAt = new Date().toISOString();
       node.blockedReason = reason || "needs_operator_decision";
       if (question) {
@@ -472,6 +499,13 @@ export async function blockNode(
       }
       if (report) {
         node.report = report;
+      }
+      if (plannerPreview) {
+        node.pendingPlannerPreview = {
+          ...plannerPreview,
+          graphVersion: plannerPreview.graphVersion ?? (graph.graphVersion || 0) + 1,
+          nodeState: plannerPreview.nodeState ?? pendingPlannerPreviewNodeState(node)
+        };
       }
       return { blockedAt: node.blockedAt, blockedReason: node.blockedReason, question, report };
     }
@@ -945,9 +979,98 @@ function sanitizePublicPlannerResult(result: PlannerRuntimeResponse): PlannerRun
   return redactOperationalEventDetails(safeResult as Record<string, unknown>) as unknown as PlannerRuntimeResponse;
 }
 
+export async function applyPlannerPreview(
+  graphPath: string,
+  { nodeId, session, runId }: OwnedNodeOptions = {}
+): Promise<DecomposeNodeResult> {
+  if (!nodeId) {
+    throw new Error("apply-preview requires --node");
+  }
+
+  const graph = await readGraph(graphPath);
+  const node = getNode(graph, nodeId);
+  const preview = node.pendingPlannerPreview;
+  if (!preview) {
+    throw new Error(`Node has no pending planner preview: ${nodeId}`);
+  }
+
+  return decomposeNode(graphPath, {
+    nodeId,
+    kind: preview.decompose.kind,
+    children: preview.decompose.children,
+    session,
+    runId,
+    extraHistoryEvents: [{
+      event: operationalEvents.plannerPreviewApplied,
+      details: {
+        requestId: preview.requestId,
+        proposedKind: preview.proposedKind,
+        childIds: preview.childIds,
+        report: preview.report
+      }
+    }]
+  });
+}
+
+export async function rejectPlannerPreview(
+  graphPath: string,
+  { nodeId, reason, responder }: RejectPlannerPreviewOptions = {}
+): Promise<PlannerPreviewMutationResult> {
+  if (!nodeId) {
+    throw new Error("reject-preview requires --node");
+  }
+
+  return withGraphLock(graphPath, async () => {
+    const graph = await readGraph(graphPath);
+    const node = getNode(graph, nodeId);
+    assertLeafNode(graph, nodeId);
+    assertStatus(node, schedulerTransitionTable["reject-preview"].allowedFrom, "reject-preview");
+    const preview = node.pendingPlannerPreview;
+    if (!preview) {
+      throw new Error(`Node has no pending planner preview: ${nodeId}`);
+    }
+
+    const previousStatus = node.status || "pending";
+    const rejectedAt = new Date().toISOString();
+    const clearedFields = clearFields(node, [
+      "lease",
+      "startedAt",
+      "blockedAt",
+      "blockedReason",
+      "question",
+      "report",
+      "pendingPlannerPreview"
+    ]);
+    node.status = "pending";
+    appendHistory(node, operationalEvents.plannerPreviewRejected, {
+      previousStatus,
+      status: node.status,
+      requestId: preview.requestId,
+      proposedKind: preview.proposedKind,
+      childIds: preview.childIds,
+      reason: reason || "operator_rejected_preview",
+      responder,
+      rejectedAt,
+      report: preview.report,
+      clearedFields
+    });
+
+    graph.graphVersion = (graph.graphVersion || 0) + 1;
+    await writeGraphAtomic(graph, graphPath);
+    return {
+      nodeId,
+      status: node.status,
+      title: node.title,
+      requestId: preview.requestId,
+      childIds: preview.childIds,
+      summary: summarizeGraph(graph)
+    };
+  });
+}
+
 export async function decomposeNode(
   graphPath: string,
-  { nodeId, kind, children, session, runId }: DecomposeNodeOptions = {}
+  { nodeId, kind, children, session, runId, extraHistoryEvents }: DecomposeNodeOptions = {}
 ): Promise<DecomposeNodeResult> {
   if (!nodeId || !Array.isArray(children) || children.length === 0) {
     throw new Error("decompose requires --node and at least one child definition");
@@ -963,6 +1086,7 @@ export async function decomposeNode(
     assertLeaseOwner(node, { session, runId });
 
     const normalizedChildren = normalizeChildDefinitions(children);
+    assertFreshPendingPlannerPreview(graph, nodeId, node, kind || "series", normalizedChildren);
     for (const child of normalizedChildren) {
       if (graph.graph.nodes[child.id]) {
         throw new Error(`Child node already exists: ${child.id}`);
@@ -979,6 +1103,7 @@ export async function decomposeNode(
     delete node.blockedAt;
     delete node.blockedReason;
     delete node.question;
+    delete node.pendingPlannerPreview;
     appendHistory(node, operationalEvents.decomposed, {
       previousStatus,
       status: node.status,
@@ -987,8 +1112,18 @@ export async function decomposeNode(
       childIds: node.children,
       session,
       runId,
-      clearedFields: ["lease", "startedAt", "blockedAt", "blockedReason", "question"]
+      clearedFields: ["lease", "startedAt", "blockedAt", "blockedReason", "question", "pendingPlannerPreview"]
     });
+    for (const extraEvent of extraHistoryEvents || []) {
+      appendHistory(node, extraEvent.event, {
+        previousStatus,
+        status: node.status,
+        kind: node.kind,
+        session,
+        runId,
+        ...extraEvent.details
+      });
+    }
 
     for (const child of normalizedChildren) {
       const { id: _id, ...childNode } = child;
@@ -1900,6 +2035,17 @@ function resetNodeState(node: GraphNode, event: OperationalEventName, metadata: 
   });
 }
 
+function clearFields(node: GraphNode, fields: readonly (keyof GraphNode)[]): string[] {
+  const clearedFields: string[] = [];
+  for (const field of fields) {
+    if (node[field] !== undefined) {
+      delete node[field];
+      clearedFields.push(String(field));
+    }
+  }
+  return clearedFields;
+}
+
 function clearCompositionRefMetadata(node: GraphNode): string[] {
   if (!Array.isArray(node.children) || node.children.length === 0) {
     return [];
@@ -2298,6 +2444,80 @@ function mutationEventForStatus(status: NodeStatus): OperationalEventName {
     default:
       throw new Error(`No operational event is defined for mutation status: ${status}`);
   }
+}
+
+function pendingPlannerPreviewNodeState(node: GraphNode): PendingPlannerPreviewMetadata["nodeState"] {
+  return {
+    status: node.status,
+    kind: node.kind,
+    children: Array.isArray(node.children) ? [...node.children] : undefined,
+    lease: node.lease ? { session: node.lease.session, runId: node.lease.runId } : undefined,
+    blockedReason: node.blockedReason,
+    question: node.question,
+    report: node.report
+  };
+}
+
+function assertFreshPendingPlannerPreview(
+  graph: PlanGraphFile,
+  nodeId: NodeId,
+  node: GraphNode,
+  requestedKind: string,
+  requestedChildren: DecomposeChildDefinition[]
+): void {
+  const preview = node.pendingPlannerPreview;
+  if (!preview) {
+    return;
+  }
+
+  if (preview.graphVersion !== undefined && graph.graphVersion !== preview.graphVersion) {
+    throw new Error(
+      `Stale planner preview for ${nodeId}: graphVersion changed from ${preview.graphVersion} to ${graph.graphVersion ?? "unknown"}; regenerate or reset before applying`
+    );
+  }
+
+  const expectedState = stableJsonStringify(preview.nodeState ?? {});
+  const actualState = stableJsonStringify(pendingPlannerPreviewNodeState(node) ?? {});
+  if (expectedState !== actualState) {
+    throw new Error(`Stale planner preview for ${nodeId}: node state changed; regenerate or reset before applying`);
+  }
+
+  if (requestedKind !== preview.decompose.kind) {
+    throw new Error(`Planner preview for ${nodeId} proposed ${preview.decompose.kind}, not ${requestedKind}`);
+  }
+
+  const expectedChildren = stableJsonStringify(preview.decompose.children.map(canonicalPlannerPreviewChild));
+  const actualChildren = stableJsonStringify(requestedChildren.map(canonicalPlannerPreviewChild));
+  if (actualChildren !== expectedChildren) {
+    throw new Error(`Planner preview for ${nodeId} does not match requested decomposition children; apply the stored preview or regenerate it`);
+  }
+}
+
+function canonicalPlannerPreviewChild(child: DecomposeChildDefinition): Record<string, unknown> {
+  return {
+    ...child,
+    kind: child.kind || "task",
+    status: child.status || "pending"
+  };
+}
+
+function stableJsonStringify(value: unknown): string {
+  return JSON.stringify(sortJsonValue(value));
+}
+
+function sortJsonValue(value: unknown): unknown {
+  if (Array.isArray(value)) {
+    return value.map(sortJsonValue);
+  }
+  if (value && typeof value === "object") {
+    return Object.fromEntries(
+      Object.entries(value as Record<string, unknown>)
+        .filter(([, entry]) => entry !== undefined)
+        .sort(([left], [right]) => left.localeCompare(right))
+        .map(([key, entry]) => [key, sortJsonValue(entry)])
+    );
+  }
+  return value;
 }
 
 function normalizeChildDefinitions(children: DecomposeChildDefinition[]): DecomposeChildDefinition[] {

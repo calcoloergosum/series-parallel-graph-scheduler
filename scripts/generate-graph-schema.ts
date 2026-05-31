@@ -111,6 +111,7 @@ export function buildPlanGraphJsonSchema(): Record<string, unknown> {
           workerPlanner: { "$ref": "#/$defs/workerPlannerState" },
           plannerDecision: { type: "string" },
           decompositionReason: { type: "string" },
+          pendingPlannerPreview: { "$ref": "#/$defs/pendingPlannerPreview" },
           rationale: { type: "string" },
           contextRefs: {
             type: "array",
@@ -213,6 +214,28 @@ export function buildPlanGraphJsonSchema(): Record<string, unknown> {
         properties: {
           at: { "$ref": "#/$defs/timestamp" },
           event: { type: "string" }
+        }
+      },
+      pendingPlannerPreview: {
+        type: "object",
+        required: ["requestId", "proposedKind", "childIds", "response", "decompose"],
+        additionalProperties: true,
+        properties: {
+          requestId: { type: "string" },
+          sourceGraphVersion: { type: "number" },
+          graphVersion: { type: "number" },
+          nodeState: { type: "object", additionalProperties: true },
+          proposedKind: { enum: ["task", "series", "parallel"] },
+          childIds: {
+            type: "array",
+            items: { type: "string" }
+          },
+          report: { type: "string" },
+          planner: { "$ref": "#/$defs/plannerMetadata" },
+          response: { type: "object", additionalProperties: true },
+          decompose: { type: "object", additionalProperties: true },
+          validation: { type: "object", additionalProperties: true },
+          createdAt: { "$ref": "#/$defs/timestamp" }
         }
       },
       timestamp: {

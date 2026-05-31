@@ -62,6 +62,14 @@ attempt limit. A persisted `task` decision is reused on later claims so normal
 worker execution can continue without asking the planner again. A persisted
 composite decision on an undecomposed leaf blocks further worker execution until
 the operator resets the node or explicitly applies/re-plans the decomposition.
+The blocked node also stores `pendingPlannerPreview` metadata with the request
+id, source and persisted graph versions, proposed kind, child ids, child titles,
+deliverables, acceptance criteria, parsed planner response, materialized
+decompose mutation, report path, and the node state snapshot required for safe
+approval. Applying that stored preview through `apply-preview` delegates to the
+same guarded `decompose` mutation path and is rejected if the graph version or
+captured node state has changed; the operator must regenerate, reject, or reset
+before applying an obsolete preview.
 The planner runtime is selected separately with `adapterMode`: `fixture` reads
 a local JSON response or request-id map for deterministic tests and demos,
 `prompt` renders a prompt through the prompt adapter boundary, and `injected`
@@ -79,6 +87,10 @@ the limit without a reusable atomic decision or applied decomposition, the
 worker follows `failurePolicy` and records a clear limit-exceeded reason instead
 of calling the planner again. Resetting the node, subtree, or reachable work
 clears `workerPlanner` execution state so an explicit retry can plan again.
+Approval mode also appends `planner-preview-applied` when the stored preview is
+accepted, `planner-preview-rejected` when an operator discards it, and
+`planner-preview-regenerated` when newer preview metadata replaces an older
+pending preview.
 
 Regenerate creates a replacement proposal, not an implicit edit to accepted
 state. If regeneration happens while a draft is open, the UI should show the
@@ -97,7 +109,7 @@ state.
 | Invalid planner output | Reject before graph mutation. Return structured validation errors with paths into the planner response and include the planner request id when known. |
 | Empty decomposition | Reject before graph mutation. Do not convert the target leaf into an empty `series` or `parallel` node. |
 | Unsafe or conflicting planner ids | Reject planner ids that are empty, path-like, control-character-bearing, duplicate among siblings, collide with existing nodes, or fail the scheduler safe-token policy. Prefer scheduler-generated ids when the planner cannot prove determinism. This restriction is for planner output; manual/API `decompose` keeps the graph-validator boundary of non-empty string ids that reference nodes after mutation. |
-| Conflicting graph version | Abort the save and return the observed version, current version, and target node id or graph path. The operator must regenerate or reapply against the current graph. |
+| Conflicting graph version | Abort the save or approval apply and return the observed version, current version, and target node id or graph path. The operator must regenerate or reapply against the current graph. |
 | Materialized graph validation error | Reject before write and return both planner validation diagnostics and graph validator diagnostics. |
 | Graph lock timeout or write failure | Leave the previous graph file as source of truth. Return normal command JSON or an error that names the graph path and operation; do not treat the proposal as accepted. |
 

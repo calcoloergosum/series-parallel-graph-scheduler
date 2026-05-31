@@ -837,6 +837,23 @@ export function renderVisualizerHtml(): string {
     return node.decompositionReason || node.decomposeReason || node.planner?.decompositionReason || node.rationale;
   }
 
+  function plannerPreviewText(node) {
+    const preview = node.pendingPlannerPreview;
+    if (!preview) {
+      return "";
+    }
+    const children = Array.isArray(preview.decompose?.children)
+      ? preview.decompose.children.map((child) => child.id + ": " + child.title).join("; ")
+      : (Array.isArray(preview.childIds) ? preview.childIds.join(", ") : "");
+    return [
+      "request " + (preview.requestId || "unknown"),
+      "graph v" + (preview.graphVersion ?? "unknown"),
+      "kind " + (preview.decompose?.kind || preview.proposedKind || "unknown"),
+      children ? "children " + children : "",
+      preview.report ? "report " + preview.report : ""
+    ].filter(Boolean).join(" / ");
+  }
+
   function joinList(values) {
     return Array.isArray(values) && values.length ? values.join(", ") : undefined;
   }
@@ -1627,6 +1644,7 @@ export function renderVisualizerHtml(): string {
       ["start", "Start"],
       ["block", "Block"],
       ["reset", "Reset"],
+      ...(node.pendingPlannerPreview ? [["apply-preview", "Apply Preview"], ["reject-preview", "Reject Preview"]] : []),
       ...((node.status === "claimed" || node.status === "running" || node.status === "blocked") && !children ? [["decompose", "Decompose"]] : [])
     ];
     const history = (node.history || []).slice().reverse().map((event) => event.event || "event").join(", ");
@@ -1662,6 +1680,7 @@ export function renderVisualizerHtml(): string {
     appendMetaLine(details, "goal", detailGoalText(node));
     appendMetaLine(details, "decision", plannerDecisionText(node));
     appendMetaLine(details, "decomposition reason", decompositionReasonText(node));
+    appendMetaLine(details, "pending planner preview", plannerPreviewText(node));
     appendMetaLine(details, "context", formatContextRefs(node.contextRefs));
     appendMetaLine(details, "output contract", formatOutputContract(node.outputContract));
     appendMetaLine(details, "result", formatResultSummary(node.resultSummary));
@@ -1822,6 +1841,27 @@ export function renderVisualizerHtml(): string {
       });
       return;
     }
+    if (action === "apply-preview") {
+      openActionModal({
+        title: "Apply Preview " + id,
+        submitLabel: "Apply Preview",
+        fields: ownerFields(node),
+        onSubmit: (values) => apiPost("/api/apply-preview", { nodeId: id, session: values.session, runId: values.runId })
+      });
+      return;
+    }
+    if (action === "reject-preview") {
+      openActionModal({
+        title: "Reject Preview " + id,
+        submitLabel: "Reject Preview",
+        fields: [
+          { name: "reason", label: "Reason", type: "textarea", value: "operator_rejected_preview" },
+          { name: "responder", label: "Responder", value: "visualizer" }
+        ],
+        onSubmit: (values) => apiPost("/api/reject-preview", { nodeId: id, reason: values.reason, responder: values.responder })
+      });
+      return;
+    }
     if (action === "decompose") {
       openDecomposeModal(entry);
     }
@@ -1829,11 +1869,13 @@ export function renderVisualizerHtml(): string {
 
   function decomposeRowHtml(child, index) {
     const idBase = "decompose-child-" + index;
+    const { id: _id, title: _title, metadata, kind: _kind, status: _status, ...childMetadata } = child || {};
+    const metadataText = metadata || (Object.keys(childMetadata).length ? JSON.stringify(childMetadata, null, 2) : "");
     return '<div class="decompose-child-row" data-decompose-row>' +
       '<div class="button-row"><button class="secondary" type="button" data-decompose-move="up">Up</button><button class="danger" type="button" data-decompose-remove>Remove</button></div>' +
       '<div class="field-row"><div class="field"><label for="' + idBase + '-id">Id</label><input id="' + idBase + '-id" name="childId" value="' + escapeHtml(child.id) + '"></div>' +
       '<div class="field"><label for="' + idBase + '-title">Title</label><input id="' + idBase + '-title" name="childTitle" value="' + escapeHtml(child.title || "") + '"></div></div>' +
-      '<div class="field"><label for="' + idBase + '-metadata">Metadata JSON</label><textarea id="' + idBase + '-metadata" name="childMetadata">' + escapeHtml(child.metadata || "") + '</textarea></div>' +
+      '<div class="field"><label for="' + idBase + '-metadata">Metadata JSON</label><textarea id="' + idBase + '-metadata" name="childMetadata">' + escapeHtml(metadataText) + '</textarea></div>' +
       '</div>';
   }
 
@@ -1889,14 +1931,19 @@ export function renderVisualizerHtml(): string {
   function openDecomposeModal(entry) {
     const root = document.getElementById("modal-root");
     const node = entry.node;
+    const preview = node.pendingPlannerPreview?.decompose;
+    const initialKind = preview?.kind || "series";
+    const initialChildren = Array.isArray(preview?.children) && preview.children.length
+      ? preview.children
+      : [{ id: nextChildId(entry.id), title: "" }];
     root.innerHTML = '<div class="modal-backdrop"><section class="modal-dialog" role="dialog" aria-modal="true">' +
       '<h2>Decompose ' + escapeHtml(entry.id) + '</h2>' +
       '<form class="decompose-form" data-decompose-form>' +
-        '<div class="field-row"><div class="field"><label for="decompose-kind">Decomposition</label><select id="decompose-kind" name="kind"><option value="series">series</option><option value="parallel">parallel</option></select></div>' +
+        '<div class="field-row"><div class="field"><label for="decompose-kind">Decomposition</label><select id="decompose-kind" name="kind"><option value="series"' + (initialKind === "series" ? " selected" : "") + '>series</option><option value="parallel"' + (initialKind === "parallel" ? " selected" : "") + '>parallel</option></select></div>' +
         '<div class="field"><label for="decompose-session">Session</label><input id="decompose-session" name="session" value="' + escapeHtml(node.lease?.session || node.session || "") + '"></div></div>' +
         '<div class="field"><label for="decompose-run">Run Id</label><input id="decompose-run" name="runId" value="' + escapeHtml(node.lease?.runId || node.runId || "") + '"></div>' +
         '<div class="button-row"><button class="secondary" type="button" data-decompose-add>Add Child</button></div>' +
-        '<div class="decompose-children" data-decompose-children>' + decomposeRowHtml({ id: nextChildId(entry.id), title: "" }, 0) + '</div>' +
+        '<div class="decompose-children" data-decompose-children>' + initialChildren.map((child, index) => decomposeRowHtml(child, index)).join("") + '</div>' +
         '<div class="field"><label for="decompose-preview">Payload Preview</label><pre id="decompose-preview" class="decompose-preview" data-decompose-preview></pre></div>' +
         '<div data-modal-error></div>' +
         '<div class="button-row"><button class="secondary" type="button" data-modal-cancel>Cancel</button><button type="submit">Decompose</button></div>' +

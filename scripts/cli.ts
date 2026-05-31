@@ -12,6 +12,7 @@ import type {
   ParsedArgs,
   PlanGraphFile,
   PlannerOutputKind,
+  PlannerPreviewMutationResult,
   PlannerResponse,
   PlannerRuntimeRequest,
   ReconcileGraphResult,
@@ -124,6 +125,16 @@ export interface CliCommandHandlers {
     session?: string;
     runId?: string;
   }): Promise<DecomposeNodeResult>;
+  applyPlannerPreview(graphPath: string, options: {
+    nodeId?: string;
+    session?: string;
+    runId?: string;
+  }): Promise<DecomposeNodeResult>;
+  rejectPlannerPreview(graphPath: string, options: {
+    nodeId?: string;
+    reason?: string;
+    responder?: string;
+  }): Promise<PlannerPreviewMutationResult>;
   buildWorkerPrompt(graphPath: string, options: {
     nodeId?: string;
     session?: string;
@@ -187,6 +198,8 @@ export const cliCommands = [
   "answer",
   "fail",
   "decompose",
+  "apply-preview",
+  "reject-preview",
   "prompt",
   "worker",
   "reconcile",
@@ -406,6 +419,16 @@ Commands:
     Optional: --graph PATH, --session NAME, --run RUN_ID, --kind series|parallel (default: series)
     Example: node scripts/plan-scheduler.mjs decompose --node WEB1 --session codex-A --kind series --child WEB1a="Draft shell" --child WEB1b="Review shell"
 
+  apply-preview
+    Required: --node ID
+    Optional: --graph PATH, --session NAME, --run RUN_ID
+    Example: node scripts/plan-scheduler.mjs apply-preview --node WEB1 --session codex-A --run run_20260531_000000000_WEB1_example
+
+  reject-preview
+    Required: --node ID
+    Optional: --graph PATH, --reason TEXT, --responder NAME
+    Example: node scripts/plan-scheduler.mjs reject-preview --node WEB1 --reason "planner split is too broad" --responder jason
+
   prompt
     Required: --node ID
     Optional: --graph PATH, --session NAME, --run RUN_ID, --template PATH (default: prompts/codex-worker-task.md), --cwd PATH (default: graph directory), --report PATH
@@ -441,7 +464,7 @@ Flag types:
 
 Environment:
   PLAN_GRAPH                Default graph path when --graph is omitted.
-  SLACK_WEBHOOK_URL         Enables notifications for done, block, answer, fail, and decompose.
+  SLACK_WEBHOOK_URL         Enables notifications for done, block, answer, fail, decompose, apply-preview, and reject-preview.
   SPG_SLACK_TIMEOUT_MS      Slack notification timeout in milliseconds. Default: 5000.
   SPG_DEBUG=1               Include stack traces in CLI errors.
   SPG_GRAPH_LOCK_TIMEOUT_MS Graph lock wait timeout in milliseconds. Default: 5000.
@@ -660,6 +683,31 @@ export async function dispatchCliCommand(options: CliDispatchOptions): Promise<v
       });
       await handlers.renderPlanAfterUpdate(graphPath);
       printJson(output, await withSlack(result, handlers.sendSlackNotification(graphPath, operationalEvents.decomposed, { nodeId })));
+      return;
+    }
+    case "apply-preview": {
+      const nodeId = requiredOptionString(args, "node", "apply-preview");
+      const result = await handlers.applyPlannerPreview(graphPath, {
+        nodeId,
+        session: optionString(args, "session"),
+        runId: optionString(args, "run")
+      });
+      await handlers.renderPlanAfterUpdate(graphPath);
+      printJson(output, await withSlack(result, handlers.sendSlackNotification(graphPath, operationalEvents.plannerPreviewApplied, { nodeId })));
+      return;
+    }
+    case "reject-preview": {
+      const nodeId = requiredOptionString(args, "node", "reject-preview");
+      const result = await handlers.rejectPlannerPreview(graphPath, {
+        nodeId,
+        reason: optionString(args, "reason"),
+        responder: optionString(args, "responder")
+      });
+      await handlers.renderPlanAfterUpdate(graphPath);
+      printJson(output, await withSlack(result, handlers.sendSlackNotification(graphPath, operationalEvents.plannerPreviewRejected, {
+        nodeId,
+        reason: optionString(args, "reason")
+      })));
       return;
     }
     case "prompt": {
