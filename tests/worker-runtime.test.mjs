@@ -2182,8 +2182,57 @@ test("worker planner preflight executes atomic task decisions normally", async (
     assert.equal(result.results[0].status, "done");
     const updated = await readGraph(graphPath);
     assert.equal(updated.graph.nodes.A.status, "done");
+    assert.equal(updated.graph.nodes.A.workerPlanner.decision, "task");
+    assert.equal(updated.graph.nodes.A.workerPlanner.decisionStatus, "planned");
+    assert.equal(updated.graph.nodes.A.workerPlanner.attemptCount, 1);
+    assert.equal(updated.graph.nodes.A.workerPlanner.maxAttempts, 1);
+    assert.match(updated.graph.nodes.A.workerPlanner.requestId, /^worker-plan-A-run_/);
     const report = await readFile(join(dir, updated.graph.nodes.A.report), "utf8");
     assert.match(report, /atomic planner decision executed codex/);
+  });
+});
+
+test("worker planner preflight reuses persisted atomic decisions without calling planner again", async () => {
+  await withTempGraph(async (graphPath, dir) => {
+    const graph = await readGraph(graphPath);
+    graph.scheduler.workerPlanner = { mode: "auto-decompose" };
+    graph.graph.nodes.A.workerPlanner = {
+      decision: "task",
+      decisionStatus: "planned",
+      requestId: "persisted-task-decision",
+      attemptCount: 1,
+      maxAttempts: 1,
+      attempts: [{
+        requestId: "persisted-task-decision",
+        status: "planned",
+        decision: "task",
+        attemptedAt: "2026-05-31T00:00:00.000Z"
+      }]
+    };
+    await writeFile(graphPath, `${JSON.stringify(graph, null, 2)}\n`, "utf8");
+
+    const fakeRunnerPath = join(dir, "fake-persisted-atomic-runner.mjs");
+    await writeFile(fakeRunnerPath, "console.log('persisted atomic decision executed codex');\n", "utf8");
+
+    const result = await runWorker(graphPath, {
+      session: "codex-planner-persisted-atomic",
+      once: true,
+      cwd: dir,
+      stream: false,
+      codexCommand: process.execPath,
+      codexArgs: [fakeRunnerPath],
+      planner: {
+        async plan() {
+          throw new Error("planner should not be called for persisted task decisions");
+        }
+      }
+    });
+
+    assert.equal(result.results[0].status, "done");
+    const updated = await readGraph(graphPath);
+    assert.equal(updated.graph.nodes.A.workerPlanner.attemptCount, 1);
+    const report = await readFile(join(dir, updated.graph.nodes.A.report), "utf8");
+    assert.match(report, /persisted atomic decision executed codex/);
   });
 });
 
@@ -2224,6 +2273,9 @@ test("worker planner preflight auto-decomposes series decisions before Codex", a
     assert.equal(updated.graph.nodes.A.status, "pending");
     assert.deepEqual(updated.graph.nodes.A.children, ["A_PLAN_1", "A_PLAN_2"]);
     assert.equal(updated.graph.nodes.A.lease, undefined);
+    assert.equal(updated.graph.nodes.A.workerPlanner.decision, "series");
+    assert.equal(updated.graph.nodes.A.workerPlanner.decisionStatus, "planned");
+    assert.deepEqual(updated.graph.nodes.A.workerPlanner.childIds, ["A_PLAN_1", "A_PLAN_2"]);
     assert.deepEqual(listReadyLeafNodes(updated).map((node) => node.id), ["A_PLAN_1"]);
   });
 });
@@ -2303,6 +2355,94 @@ test("worker CLI fixture planner mode auto-decomposes without network access", a
     assert.equal(updated.graph.nodes.A.status, "pending");
     assert.deepEqual(updated.graph.nodes.A.children, ["A_FIXTURE_PLAN", "A_FIXTURE_VERIFY"]);
     assert.deepEqual(listReadyLeafNodes(updated).map((node) => node.id), ["A_FIXTURE_PLAN"]);
+  });
+});
+
+test("worker CLI fixture planner mode auto-decomposes generated goal tasks", async () => {
+  const { dir, graphPath } = await copyGraphFixtureToTemp("valid-generated-goal.graph.json");
+  try {
+    const fixturePath = join(dir, "generated-planner-fixture.json");
+    await writeFile(fixturePath, JSON.stringify({
+      kind: "series",
+      title: "CLI generated goal split",
+      children: [
+        { id: "PLAN_CLI_DISCOVER", title: "Discover generated CLI path" },
+        { id: "PLAN_CLI_VERIFY", title: "Verify generated CLI path" }
+      ]
+    }, null, 2), "utf8");
+
+    const markerPath = join(dir, "generated-cli-fixture-codex-ran");
+    const fakeRunnerPath = join(dir, "fake-generated-cli-fixture-runner.mjs");
+    await writeFile(fakeRunnerPath, `import { writeFileSync } from 'node:fs'; writeFileSync(${JSON.stringify(markerPath)}, 'ran');\n`, "utf8");
+
+    const { stdout } = await execFileAsync(process.execPath, [
+      schedulerScriptPath,
+      "worker",
+      "--graph", graphPath,
+      "--session", "codex-cli-generated-fixture",
+      "--once",
+      "--quiet",
+      "--planner-mode", "auto-decompose",
+      "--planner-adapter", "fixture",
+      "--planner-fixture", "generated-planner-fixture.json",
+      "--planner-request-id-prefix", "cli-fixture-plan",
+      "--codex-command", process.execPath,
+      "--codex-arg", fakeRunnerPath
+    ]);
+
+    const result = JSON.parse(stdout);
+    assert.equal(result.results[0].nodeId, "PLAN");
+    assert.equal(result.results[0].note, "planner decomposed node as series");
+    assert.equal(existsSync(markerPath), false);
+    const updated = await readGraph(graphPath);
+    assert.equal(updated.graph.nodes.PLAN.kind, "series");
+    assert.equal(updated.graph.nodes.PLAN.status, "pending");
+    assert.deepEqual(updated.graph.nodes.PLAN.children, ["PLAN_CLI_DISCOVER", "PLAN_CLI_VERIFY"]);
+    assert.deepEqual(listReadyLeafNodes(updated).map((node) => node.id), ["PLAN_CLI_DISCOVER"]);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("worker CLI planner mode off preserves normal worker execution", async () => {
+  await withTempGraph(async (graphPath, dir) => {
+    const fakeRunnerPath = join(dir, "fake-planner-off-runner.mjs");
+    await writeFile(fakeRunnerPath, "console.log('planner off ran normal worker');\n", "utf8");
+
+    const { stdout } = await execFileAsync(process.execPath, [
+      schedulerScriptPath,
+      "worker",
+      "--graph", graphPath,
+      "--session", "codex-cli-planner-off",
+      "--once",
+      "--quiet",
+      "--planner-mode", "off",
+      "--codex-command", process.execPath,
+      "--codex-arg", fakeRunnerPath
+    ]);
+
+    const result = JSON.parse(stdout);
+    assert.equal(result.results[0].nodeId, "A");
+    assert.equal(result.results[0].status, "done");
+    const updated = await readGraph(graphPath);
+    assert.equal(updated.graph.nodes.A.status, "done");
+    assert.equal(updated.graph.nodes.A.children, undefined);
+    const report = await readFile(join(dir, updated.graph.nodes.A.report), "utf8");
+    assert.match(report, /planner off ran normal worker/);
+  });
+});
+
+test("worker CLI rejects invalid planner mode before claiming work", async () => {
+  await withTempGraph(async (graphPath) => {
+    await assertCliFails(
+      ["worker", "--graph", graphPath, "--planner-mode", "sometimes", "--once", "--quiet"],
+      /Invalid worker planner mode: expected off, auto-decompose, or ask-approval; received "sometimes"/
+    );
+
+    const updated = await readGraph(graphPath);
+    assert.equal(updated.graph.nodes.A.status, "pending");
+    assert.equal(updated.graph.nodes.A.lease, undefined);
+    assert.equal(updated.graph.nodes.A.history, undefined);
   });
 });
 
@@ -2578,6 +2718,56 @@ test("worker planner preflight blocks runtime planner failures by default", asyn
     assert.match(plannerFailedEvent.reason, /planner adapter unavailable/);
     const report = await readFile(join(dir, updated.graph.nodes.A.report), "utf8");
     assert.match(report, /Planner failure: A/);
+  });
+});
+
+test("worker planner preflight blocks clearly when planning attempts are exhausted", async () => {
+  await withTempGraph(async (graphPath, dir) => {
+    const graph = await readGraph(graphPath);
+    graph.scheduler.workerPlanner = { mode: "auto-decompose", maxAttempts: 1 };
+    graph.graph.nodes.A.workerPlanner = {
+      attemptCount: 1,
+      maxAttempts: 1,
+      attempts: [{
+        requestId: "prior-failed-plan",
+        status: "failed",
+        attemptedAt: "2026-05-31T00:00:00.000Z",
+        reason: "planner failed previously"
+      }]
+    };
+    await writeFile(graphPath, `${JSON.stringify(graph, null, 2)}\n`, "utf8");
+
+    const markerPath = join(dir, "planner-limit-codex-ran");
+    const fakeRunnerPath = join(dir, "fake-planner-limit-runner.mjs");
+    await writeFile(fakeRunnerPath, `import { writeFileSync } from 'node:fs'; writeFileSync(${JSON.stringify(markerPath)}, 'ran');\n`, "utf8");
+
+    let plannerCalls = 0;
+    const result = await runWorker(graphPath, {
+      session: "codex-planner-limit",
+      once: true,
+      cwd: dir,
+      stream: false,
+      codexCommand: process.execPath,
+      codexArgs: [fakeRunnerPath],
+      planner: {
+        async plan() {
+          plannerCalls += 1;
+          return { requestId: "unexpected", response: { kind: "task", title: "Unexpected" } };
+        }
+      }
+    });
+
+    assert.equal(plannerCalls, 0);
+    assert.equal(result.results[0].status, "blocked");
+    assert.equal(result.results[0].code, 1);
+    assert.equal(existsSync(markerPath), false);
+    const updated = await readGraph(graphPath);
+    assert.equal(updated.graph.nodes.A.status, "blocked");
+    assert.match(updated.graph.nodes.A.blockedReason, /planner failed: planner attempt limit exceeded for A: 1\/1/);
+    assert.equal(updated.graph.nodes.A.workerPlanner.decisionStatus, "limit-exceeded");
+    assert.equal(updated.graph.nodes.A.workerPlanner.attemptCount, 2);
+    const report = await readFile(join(dir, updated.graph.nodes.A.report), "utf8");
+    assert.match(report, /planner attempt limit exceeded for A: 1\/1/);
   });
 });
 

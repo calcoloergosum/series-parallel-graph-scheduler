@@ -17,6 +17,8 @@ import {
   type NodePlannerMetadata,
   type NodeMutationResult,
   type NodeStatus,
+  type NodeWorkerPlannerAttemptMetadata,
+  type NodeWorkerPlannerAttemptStatus,
   type NodeWorkspaceMetadata,
   type PlanGraphFile,
   type PlannerOutputKind,
@@ -130,6 +132,17 @@ export interface PlanNodeDecompositionOptions extends OwnedNodeOptions {
   goal?: string;
   allowedKinds?: PlannerOutputKind[];
   plannerMetadata?: NodePlannerMetadata;
+}
+
+export interface RecordWorkerPlannerAttemptOptions extends OwnedNodeOptions {
+  requestId?: string;
+  mode?: string;
+  decision?: PlannerOutputKind;
+  decisionStatus: NodeWorkerPlannerAttemptStatus;
+  childIds?: NodeId[];
+  reason?: string;
+  maxAttempts?: number;
+  planner?: NodePlannerMetadata;
 }
 
 interface LeaseOwner {
@@ -296,7 +309,8 @@ const resetClearedFields = [
   "outputRef",
   "integrationRef",
   "gitFootprint",
-  "gitFootprintWarning"
+  "gitFootprintWarning",
+  "workerPlanner"
 ] as const;
 const compositionResetClearedFields = ["outputRef", "integrationRef", "gitFootprint", "gitFootprintWarning"] as const;
 
@@ -834,6 +848,95 @@ export async function planNodeDecomposition(
     ...result,
     validation: result.validation || { valid: true, errors: [] },
     ...(decompose ? { decompose } : {})
+  });
+}
+
+export async function recordWorkerPlannerAttempt(
+  graphPath: string,
+  {
+    nodeId,
+    session,
+    runId,
+    requestId,
+    mode,
+    decision,
+    decisionStatus,
+    childIds,
+    reason,
+    maxAttempts,
+    planner
+  }: RecordWorkerPlannerAttemptOptions
+): Promise<NodeMutationResult> {
+  if (!nodeId) {
+    throw new Error("Missing node id");
+  }
+
+  return withGraphLock(graphPath, async () => {
+    const graph = await readGraph(graphPath);
+    const node = getNode(graph, nodeId);
+    assertLeaseOwner(node, { session, runId });
+
+    const now = new Date().toISOString();
+    const previousStatus = node.status || "pending";
+    const previousAttemptCount = Array.isArray(node.workerPlanner?.attempts)
+      ? node.workerPlanner.attempts.length
+      : 0;
+    const attempt: NodeWorkerPlannerAttemptMetadata = {
+      requestId,
+      runId,
+      session,
+      mode,
+      status: decisionStatus,
+      decision,
+      attemptedAt: now,
+      childIds,
+      reason,
+      planner
+    };
+    const attempts = [
+      ...(node.workerPlanner?.attempts || []),
+      attempt
+    ];
+    node.workerPlanner = {
+      ...(node.workerPlanner || {}),
+      attempts,
+      attemptCount: attempts.length,
+      maxAttempts,
+      decision: decision || node.workerPlanner?.decision,
+      decisionStatus,
+      requestId: requestId || node.workerPlanner?.requestId,
+      runId: runId || node.workerPlanner?.runId,
+      decidedAt: now,
+      childIds,
+      reason
+    };
+    if (decision) {
+      node.planner = {
+        ...(node.planner || {}),
+        ...(planner || {}),
+        requestId: requestId || planner?.requestId || node.planner?.requestId,
+        plannedAt: now,
+        decision,
+        rationale: typeof reason === "string" ? reason : node.planner?.rationale
+      };
+    }
+    appendHistory(node, operationalEvents.plannerDecisionRecorded, {
+      previousStatus,
+      status: node.status || "pending",
+      session,
+      runId,
+      requestId,
+      decision,
+      decisionStatus,
+      previousAttemptCount,
+      attemptCount: attempts.length,
+      maxAttempts,
+      childIds,
+      reason
+    });
+    graph.graphVersion = (graph.graphVersion || 0) + 1;
+    await writeGraphAtomic(graph, graphPath);
+    return { nodeId, status: node.status || "pending", title: node.title, summary: summarizeGraph(graph) };
   });
 }
 

@@ -15,6 +15,7 @@ import type {
   PromptPlannerAdapter,
   PlannerRuntime,
   PlannerRuntimeResponse,
+  NodeWorkerPlannerAttemptStatus,
   WorkerPlannerAdapterMode,
   ReadyNode,
   RenewLeaseResult,
@@ -139,6 +140,19 @@ export interface WorkerRuntime extends WorkerPromptRuntime {
     session?: string;
     runId?: string;
     refMetadata?: WorkerRunRefMetadata;
+  }): Promise<NodeMutationResult>;
+  recordWorkerPlannerAttempt(graphPath: string, options: {
+    nodeId?: string;
+    session?: string;
+    runId?: string;
+    requestId?: string;
+    mode?: string;
+    decision?: PlannerOutputKind;
+    decisionStatus: NodeWorkerPlannerAttemptStatus;
+    childIds?: string[];
+    reason?: string;
+    maxAttempts?: number;
+    planner?: GraphNode["planner"];
   }): Promise<NodeMutationResult>;
   writeReportFile(graphPath: string, reportPath: string | undefined, reportBody: unknown): Promise<unknown>;
   sendSlackNotification(
@@ -360,6 +374,17 @@ interface WorkerPlannerSettings {
   templatePath?: string;
   allowedKinds?: PlannerOutputKind[];
   requestIdPrefix: string;
+  maxAttempts: number;
+}
+
+class WorkerPlannerLimitError extends Error {
+  requestId?: string;
+
+  constructor(message: string, requestId?: string) {
+    super(message);
+    this.name = "WorkerPlannerLimitError";
+    this.requestId = requestId;
+  }
 }
 
 async function validateWorkerPlannerSettings(
@@ -396,17 +421,45 @@ async function runPlannerPreflight(
   }
 
   try {
+    const priorDecision = existingWorkerPlannerDecision(graph, claim.nodeId, settings);
+    if (priorDecision === "task") {
+      return undefined;
+    }
     const planner = await activeWorkerPlanner(graphPath, settings, options, runtime);
     const plan = await planWorkerNode(graph, graphPath, { claim, planner, settings }, runtime);
     if (plan.response.kind === "task") {
+      await recordPlannerAttempt(graphPath, {
+        claim,
+        session,
+        settings,
+        plan,
+        decisionStatus: "planned",
+        reason: plan.response.rationale
+      }, runtime);
       return undefined;
     }
     if (!plan.decompose) {
       throw new Error("Planner returned a composite response without a decompose mutation");
     }
     if (settings.mode === "ask-approval") {
+      await recordPlannerAttempt(graphPath, {
+        claim,
+        session,
+        settings,
+        plan,
+        decisionStatus: "approval-required",
+        reason: "planner approval required"
+      }, runtime);
       return blockForPlannerApproval(graphPath, { claim, session, plan, reportPath }, runtime);
     }
+    await recordPlannerAttempt(graphPath, {
+      claim,
+      session,
+      settings,
+      plan,
+      decisionStatus: "planned",
+      reason: plan.response.rationale
+    }, runtime);
     const result = await runtime.decomposeNode(graphPath, {
       nodeId: claim.nodeId,
       kind: plan.decompose.kind,
@@ -429,9 +482,77 @@ async function runPlannerPreflight(
       session,
       error,
       reportPath,
-      failurePolicy: settings.failurePolicy
+      failurePolicy: settings.failurePolicy,
+      settings
     }, runtime);
   }
+}
+
+function existingWorkerPlannerDecision(
+  graph: PlanGraphFile,
+  nodeId: string,
+  settings: WorkerPlannerSettings
+): PlannerOutputKind | undefined {
+  const node = graph.graph.nodes[nodeId];
+  const state = node?.workerPlanner;
+  const decision = state?.decision;
+  const decisionStatus = state?.decisionStatus;
+  const attempts = Array.isArray(state?.attempts) ? state.attempts : [];
+  const attemptCount = typeof state?.attemptCount === "number" ? state.attemptCount : attempts.length;
+
+  if (decision === "task" && decisionStatus === "planned") {
+    return "task";
+  }
+
+  if ((decision === "series" || decision === "parallel") && decisionStatus) {
+    throw new WorkerPlannerLimitError(
+      `planner already recorded ${decision} decision for ${nodeId}; reset the node or explicitly decompose/re-plan it before worker execution`,
+      state?.requestId
+    );
+  }
+
+  if (attemptCount >= settings.maxAttempts) {
+    throw new WorkerPlannerLimitError(
+      `planner attempt limit exceeded for ${nodeId}: ${attemptCount}/${settings.maxAttempts}; reset the node or explicitly re-plan it before retrying`,
+      state?.requestId
+    );
+  }
+
+  return undefined;
+}
+
+async function recordPlannerAttempt(
+  graphPath: string,
+  {
+    claim,
+    session,
+    settings,
+    plan,
+    decisionStatus,
+    reason
+  }: {
+    claim: LeaseClaimResult;
+    session: string;
+    settings: WorkerPlannerSettings;
+    plan: PlannerRuntimeResponse;
+    decisionStatus: NodeWorkerPlannerAttemptStatus;
+    reason?: string;
+  },
+  runtime: WorkerRuntime
+): Promise<void> {
+  await runtime.recordWorkerPlannerAttempt(graphPath, {
+    nodeId: claim.nodeId,
+    session,
+    runId: claim.runId,
+    requestId: plan.requestId,
+    mode: settings.mode,
+    decision: plan.response.kind,
+    decisionStatus,
+    childIds: plan.decompose?.children.map((child) => child.id),
+    reason,
+    maxAttempts: settings.maxAttempts,
+    planner: plan.planner
+  });
 }
 
 async function planWorkerNode(
@@ -530,17 +651,29 @@ async function handlePlannerFailure(
     session,
     error,
     reportPath,
-    failurePolicy
+    failurePolicy,
+    settings
   }: {
     claim: LeaseClaimResult;
     session: string;
     error: unknown;
     reportPath: string;
     failurePolicy: WorkerPlannerFailurePolicy;
+    settings: WorkerPlannerSettings;
   },
   runtime: WorkerRuntime
 ): Promise<WorkerOutcome> {
   const reason = `planner failed: ${errorMessage(error)}`;
+  await runtime.recordWorkerPlannerAttempt(graphPath, {
+    nodeId: claim.nodeId,
+    session,
+    runId: claim.runId,
+    requestId: requestIdFromPlannerError(error),
+    mode: settings.mode,
+    decisionStatus: error instanceof WorkerPlannerLimitError ? "limit-exceeded" : "failed",
+    reason,
+    maxAttempts: settings.maxAttempts
+  });
   await runtime.writeReportFile(graphPath, reportPath, formatPlannerFailureReport({ claim, error, reason }));
   if (failurePolicy === "fail") {
     const result = await runtime.failNode(graphPath, {
@@ -651,8 +784,19 @@ function resolveWorkerPlannerSettings(
     fixturePath: stringConfigValue(options.plannerFixturePath) || stringConfigValue(config.fixturePath),
     templatePath: stringConfigValue(options.plannerTemplatePath) || stringConfigValue(config.templatePath),
     allowedKinds: normalizePlannerAllowedKinds(options.plannerAllowedKinds || config.allowedKinds),
-    requestIdPrefix: options.plannerRequestIdPrefix || stringConfigValue(config.requestIdPrefix) || "worker-plan"
+    requestIdPrefix: options.plannerRequestIdPrefix || stringConfigValue(config.requestIdPrefix) || "worker-plan",
+    maxAttempts: normalizeWorkerPlannerMaxAttempts(config.maxAttempts)
   };
+}
+
+function normalizeWorkerPlannerMaxAttempts(value: unknown): number {
+  return parseNumericArgument(value as string | number | boolean | null | undefined, {
+    flag: "scheduler.workerPlanner.maxAttempts",
+    min: 1,
+    max: 100,
+    integer: true,
+    defaultValue: 1
+  })!;
 }
 
 async function activeWorkerPlanner(

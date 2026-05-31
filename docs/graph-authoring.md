@@ -196,7 +196,8 @@ does not embed an external model provider.
       "mode": "ask-approval",
       "adapterMode": "fixture",
       "fixturePath": "planner-fixture.json",
-      "failurePolicy": "block"
+      "failurePolicy": "block",
+      "maxAttempts": 1
     }
   }
 }

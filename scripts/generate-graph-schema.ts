@@ -70,6 +70,7 @@ export function buildPlanGraphJsonSchema(): Record<string, unknown> {
             items: { enum: ["task", "series", "parallel"] }
           },
           requestIdPrefix: { type: "string" },
+          maxAttempts: { type: "integer", minimum: 1 },
           planner: { "$ref": "#/$defs/plannerMetadata" }
         }
       },
@@ -107,6 +108,7 @@ export function buildPlanGraphJsonSchema(): Record<string, unknown> {
             ]
           },
           planner: { "$ref": "#/$defs/plannerMetadata" },
+          workerPlanner: { "$ref": "#/$defs/workerPlannerState" },
           plannerDecision: { type: "string" },
           decompositionReason: { type: "string" },
           rationale: { type: "string" },
@@ -351,6 +353,48 @@ export function buildPlanGraphJsonSchema(): Record<string, unknown> {
           decision: { type: "string" },
           rationale: { type: "string" },
           decompositionReason: { type: "string" }
+        }
+      },
+      workerPlannerState: {
+        type: "object",
+        additionalProperties: true,
+        properties: {
+          attempts: {
+            type: "array",
+            items: { "$ref": "#/$defs/workerPlannerAttempt" }
+          },
+          attemptCount: { type: "integer", minimum: 0 },
+          maxAttempts: { type: "integer", minimum: 1 },
+          decision: { enum: ["task", "series", "parallel"] },
+          decisionStatus: { type: "string" },
+          requestId: { type: "string" },
+          runId: { type: "string" },
+          decidedAt: { "$ref": "#/$defs/timestamp" },
+          childIds: {
+            type: "array",
+            items: { type: "string" }
+          },
+          reason: { type: "string" }
+        }
+      },
+      workerPlannerAttempt: {
+        type: "object",
+        additionalProperties: true,
+        required: ["status", "attemptedAt"],
+        properties: {
+          requestId: { type: "string" },
+          runId: { type: "string" },
+          session: { type: "string" },
+          mode: { type: "string" },
+          status: { type: "string" },
+          decision: { enum: ["task", "series", "parallel"] },
+          attemptedAt: { "$ref": "#/$defs/timestamp" },
+          childIds: {
+            type: "array",
+            items: { type: "string" }
+          },
+          reason: { type: "string" },
+          planner: { "$ref": "#/$defs/plannerMetadata" }
         }
       },
       contextRef: {

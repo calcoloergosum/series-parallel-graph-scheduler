@@ -71,6 +71,7 @@ Graph history entries always include `at` and `event`.
 | `merge-attempted` | A parallel parent buffer attempted to merge a child output ref. | `parentId`, `integrationRef`, `baseRef`, `childId`, `childOutputRef`, `childOrderIndex` |
 | `merge-conflicted` | A parallel parent buffer merge encountered conflicts and left the parent unresolved. | `parentId`, `integrationRef`, `baseRef`, `childId`, `childOutputRef`, `childOrderIndex`, `conflictedPaths`, `result` |
 | `parent-ref-published` | A composition parent published the output ref used by downstream isolated work. | `parentId`, `kind`, `integrationRef`, `outputRef`, `commit`, `result` |
+| `planner-decision-recorded` | Worker planner preflight recorded a durable node decision or attempt outcome. | `previousStatus`, `status`, `session`, `runId`, `requestId`, `decision`, `decisionStatus`, `attemptCount`, `maxAttempts`, `childIds`, `reason` |
 | `planner-failed` | Worker planner preflight failed validation or runtime execution and was converted to controlled `blocked` or `failed` state. | `previousStatus`, `status`, `session`, `runId`, `requestId`, `failurePolicy`, `reason`, `report` |
 | `planner-preview-rejected` | Worker planner preflight produced a valid decomposition preview, but automatic application was rejected pending operator approval. | `previousStatus`, `status`, `session`, `runId`, `requestId`, `proposedKind`, `childIds`, `reason`, `report` |
 

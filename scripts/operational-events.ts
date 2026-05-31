@@ -28,6 +28,7 @@ export const operationalEvents = {
   mergeAttempted: "merge-attempted",
   mergeConflicted: "merge-conflicted",
   parentRefPublished: "parent-ref-published",
+  plannerDecisionRecorded: "planner-decision-recorded",
   plannerFailed: "planner-failed",
   plannerPreviewRejected: "planner-preview-rejected",
   workerStarted: "worker-started",
@@ -155,6 +156,12 @@ export const operationalEventTaxonomy = [
     producer: "graph-history",
     stableFields: ["at", "event", "parentId", "kind", "integrationRef", "outputRef", "commit", "result", "diffStatCollected", "diffStat"],
     description: "A composition parent published the output ref used by downstream isolated work."
+  },
+  {
+    name: operationalEvents.plannerDecisionRecorded,
+    producer: "graph-history",
+    stableFields: ["at", "event", "previousStatus", "status", "session", "runId", "requestId", "decision", "decisionStatus", "attemptCount", "maxAttempts", "childIds", "reason"],
+    description: "Worker planner preflight recorded a durable node decision or attempt outcome."
   },
   {
     name: operationalEvents.plannerFailed,

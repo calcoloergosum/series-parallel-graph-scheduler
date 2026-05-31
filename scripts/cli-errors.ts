@@ -50,6 +50,7 @@ const expectedCliErrorPatterns = [
   /^--child-json/,
   /^--child #\d+ /,
   /^Invalid --child/,
+  /^Invalid (plan|worker) planner /,
   /^Invalid graph file /,
   /^Generated graph failed validation:/,
   /^Worker isolation /,

@@ -642,6 +642,13 @@ Worker options:
   planner response kinds.
 - `--planner-request-id-prefix TEXT`: request id prefix for planner preflight.
 
+Worker planner preflight records per-node `workerPlanner` metadata with attempt
+history, durable decisions, and the configured attempt limit. `task` decisions
+are reused on later claims so execution does not repeatedly ask the planner.
+Set `scheduler.workerPlanner.maxAttempts` to control retry limits; the default
+is `1`, and exhausted attempts block or fail according to
+`planner-failure-policy`.
+
 Default worker reports go to:
 
 ```text
