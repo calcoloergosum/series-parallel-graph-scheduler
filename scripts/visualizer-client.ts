@@ -1624,7 +1624,7 @@ export function renderVisualizerHtml(): string {
       ["start", "Start"],
       ["block", "Block"],
       ["reset", "Reset"],
-      ...((node.status === "claimed" || node.status === "running") && !children ? [["decompose", "Decompose"]] : [])
+      ...((node.status === "claimed" || node.status === "running" || node.status === "blocked") && !children ? [["decompose", "Decompose"]] : [])
     ];
     const history = (node.history || []).slice().reverse().map((event) => event.event || "event").join(", ");
     details.textContent = "";
