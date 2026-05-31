@@ -104,6 +104,12 @@ The validator is not a full schema lock. Unknown top-level fields, graph-level f
 Hand-authored graphs and generated graphs share the same JSON shape after they
 are written. The difference is how the file is created.
 
+| Path | How it starts | Compatibility rule |
+| --- | --- | --- |
+| Static graph | A human, script, or older tool writes `graph.root` and `graph.nodes` directly. | Required topology and lifecycle fields are enough; goal and planner metadata is optional. |
+| Goal-first graph | `plan --goal` writes a validated graph artifact from an operator goal. | Generated metadata is additive; the saved artifact must still load as an ordinary static graph. |
+| Worker-recursive graph | A worker with planner preflight decomposes a ready leaf into child nodes. | The mutation must create normal `series` or `parallel` children, preserve existing graph ids, and remain valid for static readers. |
+
 For ordinary scheduler, worker, renderer, and visualizer commands, `--graph`
 selects an existing input graph. If the flag is omitted, those commands fall
 back to `PLAN_GRAPH`, then `plan.graph.json` from the package root.
@@ -121,7 +127,7 @@ npm run serve -- --graph runs/goals/20260531T000000Z-ship-a-searchable-audit-log
 Do not use the original goal text as a resume handle. Resume, inspect, render,
 or recover generated work by reusing the generated graph path.
 
-## Goal And Planner Metadata
+## Generated Planner Metadata
 
 Goal-driven planner output is a proposal format, not graph state. The planner
 schema and examples are documented in
@@ -141,6 +147,12 @@ Planner-created nodes may use additive metadata fields such as `goal`,
 are optional, remain unknown-metadata compatible for older readers, and are
 preserved by graph reads and writes unless a future mutation explicitly owns
 one of them.
+
+Do not require these fields in hand-authored static graphs. A manual graph that
+only has valid topology, statuses, leases, history, and timestamps remains
+compatible. Conversely, a generated graph must not rely on private planner
+state to be usable: after it is written, `summary`, `ready`, `worker`, `serve`,
+and `render` must work from the graph file alone.
 
 Use `goal` to keep the operator or parent intent visible on a node. A string is
 accepted for compatibility, but the object form is preferred when the source and
@@ -187,7 +199,8 @@ worker CLI flags. Keep planner behavior and adapter selection separate:
 `prompt`, or an injected runtime supplied by API/test callers). Fixture mode
 uses local JSON only and is suitable for deterministic demos and tests. Prompt
 mode renders `templatePath` through the prompt adapter boundary; the scheduler
-does not embed an external model provider.
+does not embed an external model provider or promise provider-specific
+credentials, billing, or network behavior.
 
 ```json
 {

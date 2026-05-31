@@ -55,6 +55,14 @@ selected. That default filename is part of the compatibility contract, but this
 checkout does not include that file. Use `--graph`, set `PLAN_GRAPH`, or create
 your operating graph at `plan.graph.json`.
 
+There are two supported starts. The static graph path keeps the historical
+workflow: author or copy a graph JSON file, validate it, then claim or run ready
+leaves. The goal-first path starts with `plan --goal`, writes a normal graph
+artifact, then uses the same validation, worker, renderer, and visualizer
+commands against that artifact.
+
+Static graph path:
+
 Read the active graph without mutating it:
 
 ```bash
@@ -63,13 +71,35 @@ npm run ready -- --graph ./plan-scheduler-priority.graph.json
 node scripts/plan-scheduler.mjs diagnostics --graph ./plan-scheduler-priority.graph.json
 ```
 
+Then run workers or use the visualizer against that same graph path when the
+ready list and diagnostics look correct.
+
+Goal-first path, review before execution:
+
+```bash
+node scripts/plan-scheduler.mjs plan --goal "Ship a searchable audit log" --graph /tmp/spg-audit-log/plan.graph.json --plan-only
+node scripts/plan-scheduler.mjs summary --graph /tmp/spg-audit-log/plan.graph.json
+node scripts/plan-scheduler.mjs ready --graph /tmp/spg-audit-log/plan.graph.json
+npm run worker -- --graph /tmp/spg-audit-log/plan.graph.json --session codex-A --once --cwd "$PWD"
+```
+
+Goal-first path, write the graph and run one worker immediately:
+
+```bash
+node scripts/plan-scheduler.mjs plan --goal "Ship a searchable audit log" --graph /tmp/spg-audit-log/plan.graph.json --then-run --session codex-A --once --cwd "$PWD"
+```
+
+`--plan-only` is the safer default for operator review. `--then-run` is an
+explicit convenience mode: it writes and reloads the generated graph first, then
+invokes the existing worker runtime.
+
 Render the demo graph to an HTML file:
 
 ```bash
 npm run render -- --graph ./plan-example.graph.json --out /tmp/spg-plan-example.html
 ```
 
-Open the local visualizer operator console for the active graph:
+Open the local visualizer workbench for the active graph:
 
 ```bash
 npm run serve -- --graph ./plan-scheduler-priority.graph.json --cwd "$PWD" --port 8787
@@ -83,7 +113,12 @@ http://127.0.0.1:8787
 
 `serve` runs until stopped with `Ctrl-C`.
 
-Validate the goal and Git metadata example:
+The workbench shows graph shape, ready leaves, active workers, diagnostics,
+recent events, goal/planner metadata, and Git footprint summaries. It can also
+preview `plan --goal` output through `POST /api/goal/plan` with `dryRun: true`,
+or save a validated plan-only graph for the graph currently being served.
+
+Validate the decomposed goal and Git metadata example:
 
 ```bash
 npm run summary -- --graph ./examples/goal-git-footprint.graph.json
@@ -170,6 +205,16 @@ instead of hand-authored first. The `plan` command creates a graph artifact; the
 existing scheduler, worker, renderer, and visualizer commands then operate on
 that graph path.
 
+Goal planning has two layers:
+
+- `plan --goal` creates or previews an execution graph from an original goal.
+- Worker planner preflight can recursively divide an already-ready leaf while
+  workers are running, using the normal guarded `decompose` mutation.
+
+Both layers preserve static graph compatibility. Once a graph JSON file exists,
+it is just an input graph for `summary`, `ready`, `worker`, `serve`, `render`,
+and recovery commands.
+
 CLI review workflow:
 
 ```bash
@@ -195,6 +240,23 @@ For immediate execution, make the opt-in explicit:
 ```bash
 node scripts/plan-scheduler.mjs plan --goal "Ship a searchable audit log" --graph /tmp/spg-audit-log/plan.graph.json --then-run --session codex-A --once --cwd "$PWD"
 ```
+
+For recursive worker decomposition, enable planner preflight on workers. In
+`auto-decompose`, a worker claims and starts a ready leaf, asks the configured
+planner boundary whether the leaf is atomic, and either runs Codex for `task`
+decisions or applies a valid `series`/`parallel` decomposition for composite
+decisions. The parent is not executed in that pass; later worker claims pick up
+the generated child leaves. This command shape uses a local fixture planner for
+deterministic demos:
+
+```bash
+npm run worker -- --graph /tmp/spg-audit-log/plan.graph.json --session codex-A --cwd "$PWD" --planner-mode auto-decompose --planner-adapter fixture --planner-fixture planner-fixture.json
+```
+
+Use `--planner-mode ask-approval` when each proposed decomposition should block
+with a preview report for an operator to approve or reject. `fixture` reads
+local JSON only, while `prompt` requires an injected prompt adapter boundary;
+the scheduler core does not include an external model provider integration.
 
 The meaning of `plan.graph.json` depends on the command mode. For `plan
 --goal`, `--graph PATH` names the output graph to create. If `--graph` is

@@ -2,7 +2,7 @@
   "$schema": "../schemas/plan-graph.schema.json",
   "graphVersion": 1,
   "title": "Goal And Git Footprint Example",
-  "description": "A compact graph showing goal metadata, planner provenance, and Git footprint metadata.",
+  "description": "A compact graph showing a decomposed goal, planner provenance, result summaries, and Git footprint metadata.",
   "statusModel": ["pending", "claimed", "running", "blocked", "review", "failed", "done"],
   "scheduler": {
     "stateFile": "plan.graph.json",
@@ -18,8 +18,8 @@
         "title": "Ship searchable audit log docs",
         "kind": "series",
         "status": "done",
-        "children": ["PLAN", "IMPLEMENT"],
-        "description": "Generated from an operator goal and completed through Git-isolated work.",
+        "children": ["PLAN", "EXECUTE"],
+        "description": "Generated from an operator goal, decomposed into planning plus parallel implementation and verification work, and completed through Git-isolated workers.",
         "goal": {
           "text": "Ship a searchable audit log",
           "source": "operator",
@@ -30,15 +30,68 @@
           "model": "gpt-5",
           "requestId": "plan-20260531-audit-log",
           "plannedAt": "2026-05-31T00:00:05.000Z",
-          "decision": "Create a short series plan before implementation"
+          "decision": "Create a planning task followed by parallel implementation and verification"
         },
         "resultSummary": {
           "status": "done",
-          "summary": "The generated plan and implementation task completed.",
-          "artifacts": ["reports/IMPLEMENT.md"],
-          "completedAt": "2026-05-31T00:12:00.000Z"
+          "summary": "The generated plan, documentation implementation, and validation task completed.",
+          "artifacts": ["reports/IMPLEMENT.md", "reports/VERIFY.md"],
+          "completedAt": "2026-05-31T00:14:00.000Z"
         },
-        "completedAt": "2026-05-31T00:12:00.000Z",
+        "gitFootprint": {
+          "source": "child-aggregate",
+          "baseRef": {
+            "name": "refs/remotes/origin/main",
+            "commit": "0000000000000000000000000000000000000001"
+          },
+          "headRef": {
+            "name": "refs/heads/spg/integration/ROOT/run_20260531_001400_ROOT_d4e5f6",
+            "commit": "0000000000000000000000000000000000000004"
+          },
+          "branch": "spg/integration/ROOT/run_20260531_001400_ROOT_d4e5f6",
+          "commit": "0000000000000000000000000000000000000004",
+          "diffStat": {
+            "filesChanged": 2,
+            "insertions": 15,
+            "deletions": 3,
+            "totalChanges": 18,
+            "binaryFiles": 0
+          },
+          "files": [
+            {
+              "path": "docs/audit-log.md",
+              "changeType": "modified",
+              "insertions": 12,
+              "deletions": 2,
+              "totalChanges": 14,
+              "binary": false,
+              "childIds": ["IMPLEMENT"]
+            },
+            {
+              "path": "tests/doc-examples.test.mjs",
+              "changeType": "modified",
+              "insertions": 3,
+              "deletions": 1,
+              "totalChanges": 4,
+              "binary": false,
+              "childIds": ["VERIFY"]
+            }
+          ],
+          "aggregation": {
+            "source": "completed-children",
+            "parentId": "ROOT",
+            "parentKind": "series",
+            "childCount": 2,
+            "includedChildIds": ["EXECUTE"],
+            "missingChildIds": [],
+            "duplicateFilePaths": [],
+            "diffStatKind": "sum",
+            "filesChangedKind": "unique-file-paths",
+            "fileMergeRule": "path"
+          },
+          "collectedAt": "2026-05-31T00:14:00.000Z"
+        },
+        "completedAt": "2026-05-31T00:14:00.000Z",
         "history": [
           {
             "at": "2026-05-31T00:00:00.000Z",
@@ -46,7 +99,7 @@
             "source": "cli"
           },
           {
-            "at": "2026-05-31T00:12:00.000Z",
+            "at": "2026-05-31T00:14:00.000Z",
             "event": "subtree-done",
             "source": "reconcile"
           }
@@ -56,7 +109,7 @@
         "title": "Plan documentation slice",
         "kind": "task",
         "status": "done",
-        "description": "Turn the operator goal into a small implementation task.",
+        "description": "Turn the operator goal into implementation and verification work.",
         "goal": {
           "text": "Decompose the searchable audit log goal",
           "source": "parent",
@@ -67,13 +120,13 @@
           "model": "gpt-5",
           "requestId": "plan-20260531-audit-log",
           "plannedAt": "2026-05-31T00:00:05.000Z",
-          "decision": "A single docs implementation task is enough for the example graph"
+          "decision": "Split execution into documentation and validation leaves"
         },
-        "deliverables": ["One implementation task with a clear output contract."],
-        "acceptanceCriteria": ["The next task is ready to execute and keeps the original goal visible."],
+        "deliverables": ["Parallel documentation and validation tasks with clear output contracts."],
+        "acceptanceCriteria": ["Generated child tasks keep the original goal visible and validate as normal graph nodes."],
         "resultSummary": {
           "status": "done",
-          "summary": "Created IMPLEMENT as the next series task.",
+          "summary": "Created EXECUTE as a parallel phase with IMPLEMENT and VERIFY leaves.",
           "completedAt": "2026-05-31T00:01:00.000Z"
         },
         "completedAt": "2026-05-31T00:01:00.000Z",
@@ -87,6 +140,92 @@
             "at": "2026-05-31T00:01:00.000Z",
             "event": "done",
             "session": "planner"
+          }
+        ]
+      },
+      "EXECUTE": {
+        "title": "Execute documentation slice",
+        "kind": "parallel",
+        "status": "done",
+        "children": ["IMPLEMENT", "VERIFY"],
+        "description": "Run documentation changes and validation independently after the plan is accepted.",
+        "planner": {
+          "name": "codex",
+          "model": "gpt-5",
+          "requestId": "plan-20260531-audit-log-execute",
+          "plannedAt": "2026-05-31T00:01:00.000Z",
+          "decision": "Documentation and validation can run in parallel after planning"
+        },
+        "resultSummary": {
+          "status": "done",
+          "summary": "Implementation and validation leaves both completed.",
+          "artifacts": ["reports/IMPLEMENT.md", "reports/VERIFY.md"],
+          "completedAt": "2026-05-31T00:13:00.000Z"
+        },
+        "gitFootprint": {
+          "source": "child-aggregate",
+          "baseRef": {
+            "name": "refs/remotes/origin/main",
+            "commit": "0000000000000000000000000000000000000001"
+          },
+          "headRef": {
+            "name": "refs/heads/spg/integration/EXECUTE/run_20260531_001300_EXECUTE_d4e5f6",
+            "commit": "0000000000000000000000000000000000000004"
+          },
+          "branch": "spg/integration/EXECUTE/run_20260531_001300_EXECUTE_d4e5f6",
+          "commit": "0000000000000000000000000000000000000004",
+          "diffStat": {
+            "filesChanged": 2,
+            "insertions": 15,
+            "deletions": 3,
+            "totalChanges": 18,
+            "binaryFiles": 0
+          },
+          "files": [
+            {
+              "path": "docs/audit-log.md",
+              "changeType": "modified",
+              "insertions": 12,
+              "deletions": 2,
+              "totalChanges": 14,
+              "binary": false,
+              "childIds": ["IMPLEMENT"]
+            },
+            {
+              "path": "tests/doc-examples.test.mjs",
+              "changeType": "modified",
+              "insertions": 3,
+              "deletions": 1,
+              "totalChanges": 4,
+              "binary": false,
+              "childIds": ["VERIFY"]
+            }
+          ],
+          "aggregation": {
+            "source": "completed-children",
+            "parentId": "EXECUTE",
+            "parentKind": "parallel",
+            "childCount": 2,
+            "includedChildIds": ["IMPLEMENT", "VERIFY"],
+            "missingChildIds": [],
+            "duplicateFilePaths": [],
+            "diffStatKind": "sum",
+            "filesChangedKind": "unique-file-paths",
+            "fileMergeRule": "path"
+          },
+          "collectedAt": "2026-05-31T00:13:00.000Z"
+        },
+        "completedAt": "2026-05-31T00:13:00.000Z",
+        "history": [
+          {
+            "at": "2026-05-31T00:01:00.000Z",
+            "event": "created",
+            "source": "planner"
+          },
+          {
+            "at": "2026-05-31T00:13:00.000Z",
+            "event": "subtree-done",
+            "source": "reconcile"
           }
         ]
       },
@@ -106,7 +245,7 @@
           "requestId": "plan-20260531-audit-log-implement",
           "plannedAt": "2026-05-31T00:01:00.000Z",
           "decision": "Implement the smallest user-visible documentation slice first",
-          "decompositionReason": "The goal is narrow enough for one leaf task"
+          "decompositionReason": "The documentation change is atomic after planning"
         },
         "contextRefs": [
           {
@@ -133,16 +272,16 @@
           "resolvedAt": "2026-05-31T00:01:10.000Z"
         },
         "workRef": {
-          "name": "refs/heads/spg/node/IMPLEMENT/run_20260531_000010_IMPLEMENT_a1b2c3",
+          "name": "refs/heads/spg/node/IMPLEMENT/run_20260531_000110_IMPLEMENT_a1b2c3",
           "commit": "0000000000000000000000000000000000000002",
-          "runId": "run_20260531_000010_IMPLEMENT_a1b2c3",
+          "runId": "run_20260531_000110_IMPLEMENT_a1b2c3",
           "session": "codex-A",
           "createdAt": "2026-05-31T00:01:10.000Z"
         },
         "outputRef": {
-          "name": "refs/heads/spg/node/IMPLEMENT/run_20260531_000010_IMPLEMENT_a1b2c3",
+          "name": "refs/heads/spg/node/IMPLEMENT/run_20260531_000110_IMPLEMENT_a1b2c3",
           "commit": "0000000000000000000000000000000000000002",
-          "runId": "run_20260531_000010_IMPLEMENT_a1b2c3",
+          "runId": "run_20260531_000110_IMPLEMENT_a1b2c3",
           "session": "codex-A",
           "report": "reports/IMPLEMENT.md",
           "producedAt": "2026-05-31T00:10:20.000Z",
@@ -172,10 +311,10 @@
             "commit": "0000000000000000000000000000000000000001"
           },
           "headRef": {
-            "name": "refs/heads/spg/node/IMPLEMENT/run_20260531_000010_IMPLEMENT_a1b2c3",
+            "name": "refs/heads/spg/node/IMPLEMENT/run_20260531_000110_IMPLEMENT_a1b2c3",
             "commit": "0000000000000000000000000000000000000002"
           },
-          "branch": "spg/node/IMPLEMENT/run_20260531_000010_IMPLEMENT_a1b2c3",
+          "branch": "spg/node/IMPLEMENT/run_20260531_000110_IMPLEMENT_a1b2c3",
           "commit": "0000000000000000000000000000000000000002",
           "diffStat": {
             "filesChanged": 1,
@@ -209,25 +348,165 @@
             "at": "2026-05-31T00:01:10.000Z",
             "event": "claimed",
             "session": "codex-A",
-            "runId": "run_20260531_000010_IMPLEMENT_a1b2c3"
+            "runId": "run_20260531_000110_IMPLEMENT_a1b2c3"
           },
           {
             "at": "2026-05-31T00:01:11.000Z",
             "event": "running",
             "session": "codex-A",
-            "runId": "run_20260531_000010_IMPLEMENT_a1b2c3"
+            "runId": "run_20260531_000110_IMPLEMENT_a1b2c3"
           },
           {
             "at": "2026-05-31T00:10:20.000Z",
             "event": "output-ref-recorded",
             "session": "codex-A",
-            "runId": "run_20260531_000010_IMPLEMENT_a1b2c3"
+            "runId": "run_20260531_000110_IMPLEMENT_a1b2c3"
           },
           {
             "at": "2026-05-31T00:11:00.000Z",
             "event": "done",
             "session": "codex-A",
-            "runId": "run_20260531_000010_IMPLEMENT_a1b2c3"
+            "runId": "run_20260531_000110_IMPLEMENT_a1b2c3"
+          }
+        ]
+      },
+      "VERIFY": {
+        "title": "Validate audit log docs",
+        "kind": "task",
+        "status": "done",
+        "description": "Validate the documentation example and summarize the verification result.",
+        "goal": {
+          "text": "Validate searchable audit log documentation",
+          "source": "planner",
+          "createdAt": "2026-05-31T00:01:00.000Z"
+        },
+        "planner": {
+          "name": "codex",
+          "model": "gpt-5",
+          "requestId": "plan-20260531-audit-log-verify",
+          "plannedAt": "2026-05-31T00:01:00.000Z",
+          "decision": "Validate docs and examples separately from implementation"
+        },
+        "contextRefs": [
+          {
+            "type": "file",
+            "ref": "tests/doc-examples.test.mjs",
+            "title": "Documentation example tests"
+          },
+          {
+            "type": "node",
+            "ref": "IMPLEMENT",
+            "nodeId": "IMPLEMENT",
+            "title": "Implementation task"
+          }
+        ],
+        "outputContract": {
+          "format": "markdown",
+          "requiredArtifacts": ["reports/VERIFY.md"],
+          "acceptanceCriteria": ["Example graph validates through the summary command."]
+        },
+        "baseRef": {
+          "name": "refs/remotes/origin/main",
+          "commit": "0000000000000000000000000000000000000001",
+          "source": "graph-default",
+          "resolvedAt": "2026-05-31T00:01:10.000Z"
+        },
+        "workRef": {
+          "name": "refs/heads/spg/node/VERIFY/run_20260531_000115_VERIFY_b2c3d4",
+          "commit": "0000000000000000000000000000000000000003",
+          "runId": "run_20260531_000115_VERIFY_b2c3d4",
+          "session": "codex-B",
+          "createdAt": "2026-05-31T00:01:15.000Z"
+        },
+        "outputRef": {
+          "name": "refs/heads/spg/node/VERIFY/run_20260531_000115_VERIFY_b2c3d4",
+          "commit": "0000000000000000000000000000000000000003",
+          "runId": "run_20260531_000115_VERIFY_b2c3d4",
+          "session": "codex-B",
+          "report": "reports/VERIFY.md",
+          "producedAt": "2026-05-31T00:12:20.000Z",
+          "diffStat": {
+            "filesChanged": 1,
+            "insertions": 3,
+            "deletions": 1,
+            "totalChanges": 4,
+            "binaryFiles": 0
+          },
+          "files": [
+            {
+              "path": "tests/doc-examples.test.mjs",
+              "changeType": "modified",
+              "insertions": 3,
+              "deletions": 1,
+              "totalChanges": 4,
+              "binary": false
+            }
+          ],
+          "collectedAt": "2026-05-31T00:12:30.000Z"
+        },
+        "gitFootprint": {
+          "source": "git-diff",
+          "baseRef": {
+            "name": "refs/remotes/origin/main",
+            "commit": "0000000000000000000000000000000000000001"
+          },
+          "headRef": {
+            "name": "refs/heads/spg/node/VERIFY/run_20260531_000115_VERIFY_b2c3d4",
+            "commit": "0000000000000000000000000000000000000003"
+          },
+          "branch": "spg/node/VERIFY/run_20260531_000115_VERIFY_b2c3d4",
+          "commit": "0000000000000000000000000000000000000003",
+          "diffStat": {
+            "filesChanged": 1,
+            "insertions": 3,
+            "deletions": 1,
+            "totalChanges": 4,
+            "binaryFiles": 0
+          },
+          "files": [
+            {
+              "path": "tests/doc-examples.test.mjs",
+              "changeType": "modified",
+              "insertions": 3,
+              "deletions": 1,
+              "totalChanges": 4,
+              "binary": false
+            }
+          ],
+          "collectedAt": "2026-05-31T00:12:30.000Z"
+        },
+        "resultSummary": {
+          "status": "done",
+          "summary": "Validated the example graph and documented summary command.",
+          "artifacts": ["reports/VERIFY.md"],
+          "completedAt": "2026-05-31T00:12:45.000Z"
+        },
+        "report": "reports/VERIFY.md",
+        "completedAt": "2026-05-31T00:12:45.000Z",
+        "history": [
+          {
+            "at": "2026-05-31T00:01:15.000Z",
+            "event": "claimed",
+            "session": "codex-B",
+            "runId": "run_20260531_000115_VERIFY_b2c3d4"
+          },
+          {
+            "at": "2026-05-31T00:01:16.000Z",
+            "event": "running",
+            "session": "codex-B",
+            "runId": "run_20260531_000115_VERIFY_b2c3d4"
+          },
+          {
+            "at": "2026-05-31T00:12:20.000Z",
+            "event": "output-ref-recorded",
+            "session": "codex-B",
+            "runId": "run_20260531_000115_VERIFY_b2c3d4"
+          },
+          {
+            "at": "2026-05-31T00:12:45.000Z",
+            "event": "done",
+            "session": "codex-B",
+            "runId": "run_20260531_000115_VERIFY_b2c3d4"
           }
         ]
       }
@@ -242,15 +521,16 @@
       },
       {
         "label": "Example",
-        "value": "Goal metadata and Git footprint metadata"
+        "value": "Decomposed goal metadata and Git footprint metadata"
       }
     ],
-    "intro": ["A compact example graph for validating goal-first and Git-aware visualizer metadata."],
+    "intro": ["A compact example graph for validating goal-first, recursive decomposition, result summaries, and Git-aware visualizer metadata."],
     "sections": [
       {
         "heading": "Metadata",
         "paragraphs": [
-          "Nodes include goal, planner, contextRefs, outputContract, resultSummary, outputRef, and gitFootprint fields."
+          "Nodes include goal, planner, contextRefs, outputContract, resultSummary, outputRef, and gitFootprint fields.",
+          "The root series node decomposes the operator goal into a planning task and a parallel execution phase."
         ]
       }
     ]

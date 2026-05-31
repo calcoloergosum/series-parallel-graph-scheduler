@@ -161,8 +161,8 @@ test("goal and git footprint example validates and feeds visualizer metadata", a
   const summary = await runSchedulerJson(["summary", "--graph", goalGitFootprintExamplePath]);
   assert.equal(summary.title, "Goal And Git Footprint Example");
   assert.equal(summary.root, "ROOT");
-  assert.equal(summary.totalNodes, 3);
-  assert.deepEqual(summary.counts, { done: 3 });
+  assert.equal(summary.totalNodes, 5);
+  assert.deepEqual(summary.counts, { done: 5 });
 
   const payload = await buildVisualizerPayload(goalGitFootprintExamplePath);
   const node = payload.nodes.find((candidate) => candidate.id === "IMPLEMENT");
@@ -170,6 +170,10 @@ test("goal and git footprint example validates and feeds visualizer metadata", a
   assert.equal(node.plannerDecision, "Implement the smallest user-visible documentation slice first");
   assert.equal(node.gitFootprint.diffStat.totalChanges, 14);
   assert.deepEqual(node.changedFiles.map((file) => file.path), ["docs/audit-log.md"]);
+  const parent = payload.nodes.find((candidate) => candidate.id === "EXECUTE");
+  assert.ok(parent);
+  assert.equal(parent.resultSummary.summary, "Implementation and validation leaves both completed.");
+  assert.equal(parent.gitFootprint.diffStat.totalChanges, 18);
 });
 
 test("documentation example policy records reasons for examples not run in CI", async () => {
