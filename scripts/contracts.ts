@@ -1182,7 +1182,6 @@ export interface VisualizerNodeDetail {
   gitFootprintWarning?: string;
   gitDiffStat?: GitDiffStatMetadata;
   changedFiles?: GitFileFootprintMetadata[];
-  gitFootprintWarning?: string;
   workspace?: NodeWorkspaceMetadata;
   workspaceDisplay?: VisualizerWorkspaceDisplay;
   report?: string;

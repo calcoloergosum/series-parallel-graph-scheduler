@@ -192,7 +192,12 @@ export function createFixturePlannerRuntime(source: FixturePlannerResponseSource
   return {
     async plan(request) {
       const response = await fixtureResponseForRequest(source, request);
-      const validation = validatePlannerResponse(response, { allowedKinds: request.allowedKinds });
+      const allowNestedChildren = request.mode === "goal";
+      const validation = validatePlannerResponse(response, {
+        allowedKinds: request.allowedKinds,
+        allowNestedChildren,
+        recursive: allowNestedChildren
+      });
       if (!validation.valid) {
         throw new PlannerResponseValidationError(validation);
       }
@@ -393,7 +398,7 @@ async function fixtureResponseForRequest(
   if (typeof source === "function") {
     return source(request);
   }
-  if (isPlannerResponse(source)) {
+  if (isRecord(source) && typeof source.kind === "string") {
     return source;
   }
   const response = source[request.requestId];
@@ -410,10 +415,6 @@ function clonePlannerResponse(response: PlannerResponse): PlannerResponse {
 function extractJsonObject(rawText: string): string {
   const fenced = rawText.match(/```(?:json)?\s*([\s\S]*?)```/i);
   return (fenced?.[1] || rawText).trim();
-}
-
-function isPlannerResponse(value: unknown): value is PlannerResponse {
-  return validatePlannerResponse(value).valid;
 }
 
 function isPlannerOutputKind(value: unknown): value is PlannerOutputKind {

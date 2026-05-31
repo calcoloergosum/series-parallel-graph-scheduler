@@ -112,7 +112,6 @@ function normalizeVisualizerNode(
     gitFootprintWarning: node.gitFootprintWarning,
     gitDiffStat: git?.diffStat,
     changedFiles: git?.changedFiles,
-    gitFootprintWarning: node.gitFootprintWarning,
     workspace: node.workspace,
     workspaceDisplay: workspaceDisplay(node.workspace),
     report: node.report,

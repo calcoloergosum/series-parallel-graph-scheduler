@@ -792,6 +792,161 @@ test("CLI plan with fixture planner writes composite goal graphs", async () => {
   }
 });
 
+test("CLI plan --goal expands one original goal into a decomposed series-parallel graph", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "plan-original-goal-cli-"));
+  try {
+    const graphPath = join(dir, "planner", "plan.graph.json");
+    const fixturePath = join(dir, "planner-fixture.json");
+    await writeFile(fixturePath, JSON.stringify({
+      kind: "parallel",
+      title: "Original goal fanout",
+      description: "Split the original goal into concurrent scheduler-ready tracks.",
+      rationale: "Discovery, documentation, and risk work can start independently.",
+      children: [
+        {
+          id: "GOAL_DISCOVERY_SERIES",
+          kind: "series",
+          title: "Discover and design",
+          children: [
+            {
+              id: "GOAL_DISCOVER",
+              title: "Map current workflow",
+              deliverables: ["Workflow map"],
+              acceptanceCriteria: ["Known interfaces are listed."]
+            },
+            {
+              id: "GOAL_DESIGN_PARALLEL",
+              kind: "parallel",
+              title: "Design implementation tracks",
+              children: [
+                { id: "GOAL_API_DESIGN", title: "Design API changes" },
+                { id: "GOAL_UI_DESIGN", title: "Design UI changes" }
+              ]
+            }
+          ]
+        },
+        {
+          id: "GOAL_DOCS",
+          title: "Draft operator docs",
+          deliverables: ["Operator doc outline"],
+          acceptanceCriteria: ["Docs include scheduler replay commands."]
+        },
+        {
+          id: "GOAL_RISK_SERIES",
+          kind: "series",
+          title: "Reduce rollout risk",
+          children: [
+            { id: "GOAL_RISK_SPIKE", title: "Exercise graph validation" },
+            { id: "GOAL_RISK_REVIEW", title: "Review scheduler replay" }
+          ]
+        }
+      ]
+    }, null, 2), "utf8");
+
+    const cli = await execFileAsync(process.execPath, [
+      schedulerScriptPath,
+      "plan",
+      "--goal",
+      "Deliver the original goal through decomposed scheduler work",
+      "--title",
+      "Original Goal Decomposition",
+      "--graph",
+      graphPath,
+      "--planner-adapter",
+      "fixture",
+      "--planner-fixture",
+      fixturePath
+    ]);
+    const result = JSON.parse(cli.stdout);
+
+    assert.equal(result.written, true);
+    assert.equal(result.nodeCount, 10);
+    assert.deepEqual(result.summary.counts, { pending: 10 });
+    assert.deepEqual(result.graph.graph.nodes.ROOT.children, ["GOAL_DISCOVERY_SERIES", "GOAL_DOCS", "GOAL_RISK_SERIES"]);
+    assert.notDeepEqual(result.graph.graph.nodes.ROOT.children, ["PLAN"]);
+
+    const graph = await readGraph(graphPath);
+    assert.deepEqual(validatePlanGraphFileResult(graph).errors, []);
+    assert.equal(graph.graph.nodes.ROOT.kind, "parallel");
+    assert.equal(graph.graph.nodes.ROOT.goal.text, "Deliver the original goal through decomposed scheduler work");
+    assert.equal(graph.graph.nodes.ROOT.goal.source, "operator");
+    assert.equal(graph.graph.nodes.ROOT.planner.requestId, "goal-plan-ROOT-1");
+    assert.equal(graph.graph.nodes.ROOT.plannerDecision, "Original goal fanout");
+    assert.equal(graph.graph.nodes.GOAL_DISCOVERY_SERIES.kind, "series");
+    assert.equal(graph.graph.nodes.GOAL_DESIGN_PARALLEL.kind, "parallel");
+    assert.deepEqual(graph.graph.nodes.GOAL_DESIGN_PARALLEL.children, ["GOAL_API_DESIGN", "GOAL_UI_DESIGN"]);
+    assert.equal(graph.graph.nodes.GOAL_DISCOVER.goal.source, "planner");
+    assert.deepEqual(graph.graph.nodes.GOAL_DISCOVER.deliverables, ["Workflow map"]);
+    assert.deepEqual(graph.graph.nodes.GOAL_DOCS.acceptanceCriteria, ["Docs include scheduler replay commands."]);
+    assert.deepEqual(
+      listReadyLeafNodes(graph).map((node) => node.id),
+      ["GOAL_DOCS", "GOAL_DISCOVER", "GOAL_RISK_SPIKE"]
+    );
+    assert.equal(graph.document.pageTitle, "Original Goal Decomposition");
+    assert.deepEqual(
+      graph.document.meta.find((entry) => entry.label === "Initial nodes"),
+      { label: "Initial nodes", value: "GOAL_DISCOVERY_SERIES, GOAL_DOCS, GOAL_RISK_SERIES" }
+    );
+    assert.match(graph.document.sections[0].paragraphs[0], /validated series-parallel decomposition/);
+
+    const readyCli = await execFileAsync(process.execPath, [schedulerScriptPath, "ready", "--graph", graphPath]);
+    assert.deepEqual(JSON.parse(readyCli.stdout).map((node) => node.id), ["GOAL_DOCS", "GOAL_DISCOVER", "GOAL_RISK_SPIKE"]);
+    const claimCli = await execFileAsync(process.execPath, [
+      schedulerScriptPath,
+      "claim",
+      "--graph",
+      graphPath,
+      "--node",
+      "GOAL_DISCOVER",
+      "--session",
+      "codex-original-goal",
+      "--lease",
+      "60"
+    ]);
+    const claim = JSON.parse(claimCli.stdout);
+    await execFileAsync(process.execPath, [
+      schedulerScriptPath,
+      "start",
+      "--graph",
+      graphPath,
+      "--node",
+      "GOAL_DISCOVER",
+      "--session",
+      "codex-original-goal",
+      "--run",
+      claim.runId
+    ]);
+    await execFileAsync(process.execPath, [
+      schedulerScriptPath,
+      "done",
+      "--graph",
+      graphPath,
+      "--node",
+      "GOAL_DISCOVER",
+      "--session",
+      "codex-original-goal",
+      "--run",
+      claim.runId,
+      "--report",
+      "reports/GOAL_DISCOVER.md",
+      "--report-body",
+      "Discovery complete."
+    ]);
+
+    const replayedGraph = await readGraph(graphPath);
+    assert.equal(replayedGraph.graph.nodes.GOAL_DISCOVER.status, "done");
+    assert.deepEqual(validatePlanGraphFileResult(replayedGraph).errors, []);
+    assert.deepEqual(
+      listReadyLeafNodes(replayedGraph).map((node) => node.id),
+      ["GOAL_DOCS", "GOAL_RISK_SPIKE", "GOAL_API_DESIGN", "GOAL_UI_DESIGN"]
+    );
+    const diagnosticsCli = await execFileAsync(process.execPath, [schedulerScriptPath, "diagnostics", "--graph", graphPath]);
+    assert.equal(JSON.parse(diagnosticsCli.stdout).summary.totalNodes, 10);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
 test("CLI plan-only mode writes a graph without worker execution", async () => {
   const dir = await mkdtemp(join(tmpdir(), "plan-only-cli-"));
   try {
