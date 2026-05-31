@@ -20,6 +20,7 @@ import {
   type NodeWorkspaceMetadata,
   type PendingPlannerPreviewMetadata,
   type PlanGraphFile,
+  type PlannerPreviewMutationResult,
   type PlannerOutputKind,
   type PlannerRuntime,
   type PlannerRuntimeResponse,
@@ -124,6 +125,13 @@ export interface DecomposeChildDefinition {
 export interface DecomposeNodeOptions extends OwnedNodeOptions {
   kind?: NodeKind;
   children?: DecomposeChildDefinition[];
+  extraHistoryEvents?: ExtraNodeHistoryEvent[];
+}
+
+export interface RejectPlannerPreviewOptions {
+  nodeId?: NodeId;
+  reason?: string;
+  responder?: string;
 }
 
 export interface PlanNodeDecompositionOptions extends OwnedNodeOptions {
@@ -261,6 +269,22 @@ export const schedulerTransitionTable = {
     allowedFrom: ["claimed", "running", "blocked"],
     to: "pending",
     lease: "requires matching session or run id when the node is leased; clears any lease and creates child nodes"
+  },
+  "apply-preview": {
+    actor: "operator",
+    implementation: "applyPlannerPreview",
+    scope: "claimed, running, or blocked leaf with pendingPlannerPreview",
+    allowedFrom: ["claimed", "running", "blocked"],
+    to: "pending",
+    lease: "uses the guarded decompose mutation path; requires matching lease owner when the preview node is still leased"
+  },
+  "reject-preview": {
+    actor: "operator",
+    implementation: "rejectPlannerPreview",
+    scope: "blocked or pending leaf with pendingPlannerPreview",
+    allowedFrom: ["blocked", "pending"],
+    to: "pending",
+    lease: "does not require owner credentials; clears any lease and preview metadata without creating children"
   },
   reconcile: {
     actor: "system",
@@ -852,9 +876,98 @@ function sanitizePublicPlannerResult(result: PlannerRuntimeResponse): PlannerRun
   return redactOperationalEventDetails(safeResult as Record<string, unknown>) as unknown as PlannerRuntimeResponse;
 }
 
+export async function applyPlannerPreview(
+  graphPath: string,
+  { nodeId, session, runId }: OwnedNodeOptions = {}
+): Promise<DecomposeNodeResult> {
+  if (!nodeId) {
+    throw new Error("apply-preview requires --node");
+  }
+
+  const graph = await readGraph(graphPath);
+  const node = getNode(graph, nodeId);
+  const preview = node.pendingPlannerPreview;
+  if (!preview) {
+    throw new Error(`Node has no pending planner preview: ${nodeId}`);
+  }
+
+  return decomposeNode(graphPath, {
+    nodeId,
+    kind: preview.decompose.kind,
+    children: preview.decompose.children,
+    session,
+    runId,
+    extraHistoryEvents: [{
+      event: operationalEvents.plannerPreviewApplied,
+      details: {
+        requestId: preview.requestId,
+        proposedKind: preview.proposedKind,
+        childIds: preview.childIds,
+        report: preview.report
+      }
+    }]
+  });
+}
+
+export async function rejectPlannerPreview(
+  graphPath: string,
+  { nodeId, reason, responder }: RejectPlannerPreviewOptions = {}
+): Promise<PlannerPreviewMutationResult> {
+  if (!nodeId) {
+    throw new Error("reject-preview requires --node");
+  }
+
+  return withGraphLock(graphPath, async () => {
+    const graph = await readGraph(graphPath);
+    const node = getNode(graph, nodeId);
+    assertLeafNode(graph, nodeId);
+    assertStatus(node, schedulerTransitionTable["reject-preview"].allowedFrom, "reject-preview");
+    const preview = node.pendingPlannerPreview;
+    if (!preview) {
+      throw new Error(`Node has no pending planner preview: ${nodeId}`);
+    }
+
+    const previousStatus = node.status || "pending";
+    const rejectedAt = new Date().toISOString();
+    const clearedFields = clearFields(node, [
+      "lease",
+      "startedAt",
+      "blockedAt",
+      "blockedReason",
+      "question",
+      "report",
+      "pendingPlannerPreview"
+    ]);
+    node.status = "pending";
+    appendHistory(node, operationalEvents.plannerPreviewRejected, {
+      previousStatus,
+      status: node.status,
+      requestId: preview.requestId,
+      proposedKind: preview.proposedKind,
+      childIds: preview.childIds,
+      reason: reason || "operator_rejected_preview",
+      responder,
+      rejectedAt,
+      report: preview.report,
+      clearedFields
+    });
+
+    graph.graphVersion = (graph.graphVersion || 0) + 1;
+    await writeGraphAtomic(graph, graphPath);
+    return {
+      nodeId,
+      status: node.status,
+      title: node.title,
+      requestId: preview.requestId,
+      childIds: preview.childIds,
+      summary: summarizeGraph(graph)
+    };
+  });
+}
+
 export async function decomposeNode(
   graphPath: string,
-  { nodeId, kind, children, session, runId }: DecomposeNodeOptions = {}
+  { nodeId, kind, children, session, runId, extraHistoryEvents }: DecomposeNodeOptions = {}
 ): Promise<DecomposeNodeResult> {
   if (!nodeId || !Array.isArray(children) || children.length === 0) {
     throw new Error("decompose requires --node and at least one child definition");
@@ -898,6 +1011,16 @@ export async function decomposeNode(
       runId,
       clearedFields: ["lease", "startedAt", "blockedAt", "blockedReason", "question", "pendingPlannerPreview"]
     });
+    for (const extraEvent of extraHistoryEvents || []) {
+      appendHistory(node, extraEvent.event, {
+        previousStatus,
+        status: node.status,
+        kind: node.kind,
+        session,
+        runId,
+        ...extraEvent.details
+      });
+    }
 
     for (const child of normalizedChildren) {
       const { id: _id, ...childNode } = child;
@@ -1807,6 +1930,17 @@ function resetNodeState(node: GraphNode, event: OperationalEventName, metadata: 
     clearedFields,
     ...metadata
   });
+}
+
+function clearFields(node: GraphNode, fields: readonly (keyof GraphNode)[]): string[] {
+  const clearedFields: string[] = [];
+  for (const field of fields) {
+    if (node[field] !== undefined) {
+      delete node[field];
+      clearedFields.push(String(field));
+    }
+  }
+  return clearedFields;
 }
 
 function clearCompositionRefMetadata(node: GraphNode): string[] {

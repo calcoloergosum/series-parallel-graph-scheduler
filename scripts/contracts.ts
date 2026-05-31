@@ -882,6 +882,15 @@ export interface DecomposeNodeResult {
   summary: GraphSummary;
 }
 
+export interface PlannerPreviewMutationResult {
+  nodeId: NodeId;
+  status: NodeStatus;
+  title?: string;
+  requestId?: string;
+  childIds: NodeId[];
+  summary: GraphSummary;
+}
+
 export interface WorkerLogEntry {
   at: IsoDateString;
   stream: "stdout" | "stderr" | (string & {});
@@ -1064,7 +1073,9 @@ type VisualizerActionId =
   | "reset"
   | "reset-subtree"
   | "reset-reachable"
-  | "decompose";
+  | "decompose"
+  | "apply-preview"
+  | "reject-preview";
 
 export interface VisualizerActionConfirmation {
   required: boolean;
@@ -1174,6 +1185,8 @@ export type CliCommand =
   | "answer"
   | "fail"
   | "decompose"
+  | "apply-preview"
+  | "reject-preview"
   | "prompt"
   | "worker"
   | "reconcile"

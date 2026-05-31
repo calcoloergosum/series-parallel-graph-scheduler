@@ -133,9 +133,10 @@ bypass readiness. The named node must already be a ready leaf.
 Mutating commands write the graph through a filesystem lock and atomic rename,
 then regenerate the configured HTML view when the graph contains document
 content. Slack is only an attention channel: if `SLACK_WEBHOOK_URL` is set,
-`done`, `block`, `answer`, `fail`, and `decompose` send compact status
-notifications. Chat messages include the event, node id/title, graph version,
-status counts, and report path when available; detailed worker output, report
+`done`, `block`, `answer`, `fail`, `decompose`, `apply-preview`, and
+`reject-preview` send compact status notifications. Chat messages include the
+event, node id/title, graph version, status counts, and report path when
+available; detailed worker output, report
 bodies, and operator-provided question/answer/reason text stay in the graph and
 reports. Slack delivery is bounded by `SPG_SLACK_TIMEOUT_MS` and reported in
 command JSON, but it does not roll back or fail a successful graph mutation.
@@ -375,8 +376,9 @@ order from a node history or the flattened `events` export. New mutation entries
 Git isolation also reserves `clone-prepared`, `branch-created`,
 `output-ref-recorded`, `merge-attempted`, `merge-conflicted`, and
 `parent-ref-published` for ref and merge audit trails.
-Planner preflight reserves `planner-failed` and `planner-preview-rejected` for
-failed planner output and approval-gated decomposition previews.
+Planner preflight reserves `planner-failed`, `planner-preview-applied`,
+`planner-preview-rejected`, and `planner-preview-regenerated` for failed
+planner output and approval-gated decomposition preview lifecycle events.
 
 The visualizer worker manager uses `worker-started` and `worker-stopped` in
 worker log tails. Lock diagnostics reserve `lock-acquired`, `lock-released`,
@@ -511,9 +513,10 @@ curl -sS -X POST http://HOST:8787/api/node/answer \
 ```
 
 The node routes are `claim`, `start`, `renew`, `done`, `block`, `answer`,
-`fail`, `reset`, `reset-subtree`, `reset-reachable`, and `decompose`. Leased
-worker-style actions still require the matching `session` or `runId`, just like
-the CLI. Graph-level recovery routes are `/api/graph/reconcile` and
+`fail`, `reset`, `reset-subtree`, `reset-reachable`, `decompose`,
+`apply-preview`, and `reject-preview`. Leased worker-style actions still
+require the matching `session` or `runId`, just like the CLI. Graph-level
+recovery routes are `/api/graph/reconcile` and
 `/api/leases/release-expired`.
 
 Explicit unsafe mode is only for a trusted network boundary where every
@@ -628,9 +631,10 @@ Worker options:
 - `--planner-mode off|auto-decompose|ask-approval`: opt into planner preflight
   before Codex execution. `auto-decompose` applies valid `series` or `parallel`
   fixture/prompt decisions; `ask-approval` blocks with a preview report and
-  `pendingPlannerPreview` metadata. Preview approval through `decompose` is
-  rejected if the graph version or blocked-node state changed after the preview
-  was stored.
+  `pendingPlannerPreview` metadata. Preview approval through `apply-preview`
+  or `decompose` is rejected if the graph version or blocked-node state changed
+  after the preview was stored. Use `reject-preview` to discard the stored
+  preview without creating child nodes.
 - `--planner-adapter none|fixture|prompt`: choose the planner runtime boundary.
   `fixture` reads local JSON and never uses the network. `prompt` requires an
   injected prompt adapter; the scheduler core does not hard-code a provider.
@@ -766,7 +770,7 @@ dry-run package manifest for that checklist.
 - `tests/validation-contracts.test.mjs`: graph validation, schema, graph IO,
   locks, report containment, and operational event contracts.
 - `tests/scheduler-mutations.test.mjs`: readiness, scheduler lifecycle,
-  transition, reset, and decompose behavior.
+  transition, reset, decompose, and preview approval behavior.
 - `tests/cli-goldens.test.mjs`: CLI parsing, command failures, help, and golden
   output contracts.
 - `tests/worker-runtime.test.mjs`: worker prompt, isolation, Git runtime, Codex

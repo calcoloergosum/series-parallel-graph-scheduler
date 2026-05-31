@@ -336,22 +336,24 @@ Recovery:
   node scripts/plan-scheduler.mjs reset --graph ./plan-improve.graph.json --node TEN36 --reason "retry after planner validation failure"
   ```
 
-- For an approved preview, manually decompose the still-leaf node using the
-  child ids, titles, deliverables, and acceptance criteria from the report or
-  `pendingPlannerPreview.decompose`. Use the node's lease session and run id if
-  it is still leased. The scheduler rejects the approval if the graph version or
-  blocked-node state changed since the preview was stored:
+- For an approved preview, apply the stored preview directly. This uses the
+  same decompose mutation guards and rejects the approval if the graph version
+  or blocked-node state changed since the preview was stored:
 
   ```bash
-  node scripts/plan-scheduler.mjs decompose --graph ./plan-improve.graph.json --node TEN36 --session codex-A --run run_20260531_000000_TEN36_example --kind series --child TEN36_A="First child" --child TEN36_B="Second child"
+  node scripts/plan-scheduler.mjs apply-preview --graph ./plan-improve.graph.json --node TEN36 --session codex-A --run run_20260531_000000_TEN36_example
   ```
 
+- If you need to edit the proposal before approval, manually decompose the
+  still-leaf node using the child ids, titles, deliverables, and acceptance
+  criteria from the report or `pendingPlannerPreview.decompose`.
+
 - If the preview is stale or should be regenerated, discard it with
-  `reset --node TEN36` and rerun the planner worker. If the preview or failure
-  should stop the work, use `fail --node TEN36 --reason "..."`. If a broader
-  branch was based on the bad plan, use `reset-subtree` for that branch. If an
-  upstream output changed and later series work must be rerun, use
-  `reset-reachable` from the upstream node.
+  `reject-preview --node TEN36` or `reset --node TEN36`, then rerun the planner
+  worker. If the preview or failure should stop the work, use
+  `fail --node TEN36 --reason "..."`. If a broader branch was based on the bad
+  plan, use `reset-subtree` for that branch. If an upstream output changed and
+  later series work must be rerun, use `reset-reachable` from the upstream node.
 
 ## Blocked Nodes
 

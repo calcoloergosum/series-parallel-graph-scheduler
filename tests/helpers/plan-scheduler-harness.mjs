@@ -51,6 +51,7 @@ after(async () => {
 export const {
   aggregateChildGitFootprints,
   answerNode,
+  applyPlannerPreview,
   attachReadyPriorityFields,
   blockNode,
   buildGraphGitFootprintSummary,
@@ -101,6 +102,7 @@ export const {
   reconcileGraphStatus,
   recordWorkerRefMetadata,
   releaseExpiredLeases,
+  rejectPlannerPreview,
   renewNodeLease,
   resetReachable,
   resetNode,

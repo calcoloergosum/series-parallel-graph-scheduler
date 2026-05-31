@@ -1,5 +1,5 @@
 import test from "node:test";
-import { assert, assertCliFails, blockNode, buildNodeWorkBranchName, buildWorkerPrompt, claimNode, collectGitDiffStat, completeNode, copyGraphFixtureToTemp, createFixturePlannerRuntime, createRawWorkerManager, createRunClone, createSourceBranch, createWorkBranch, decomposeNode, depthPriorityGraph, dirname, escapeRegExp, execFileAsync, existsSync, failNode, exportOperationalEvents, fixtureGraph, formatWorkerReport, gitShow, join, knownTransitionStatuses, lastHistory, listReadyLeafNodes, mkdir, mkdtemp, normalizeWorkerReport, operationalEvents, parallelWorkerIsolationGraph, parseCodexArgs, prepareBareRepository, prepareCompositionBareRepository, publishOutputRef, readFile, readGraph, readyIds, realpath, reconcileGraphStatus, recordWorkerRefMetadata, releaseExpiredLeases, renewNodeLease, resetSubtree, resolveNodeBaseRef, rm, runCodexPrompt, runGitCommand, runWorker, schedulerScriptPath, schedulerTransitionTable, setNodeStatus, startLeaseHeartbeat, startNode, tmpdir, waitFor, withLocalBareRemote, withTempGraph, writeCommittingWorkerRunner, writeFile, writeNoopWorkerRunner, writeWorkerIsolationGraph } from "./helpers/plan-scheduler-harness.mjs";
+import { assert, assertCliFails, applyPlannerPreview, blockNode, buildNodeWorkBranchName, buildWorkerPrompt, claimNode, collectGitDiffStat, completeNode, copyGraphFixtureToTemp, createFixturePlannerRuntime, createRawWorkerManager, createRunClone, createSourceBranch, createWorkBranch, decomposeNode, depthPriorityGraph, dirname, escapeRegExp, execFileAsync, existsSync, failNode, exportOperationalEvents, fixtureGraph, formatWorkerReport, gitShow, join, knownTransitionStatuses, lastHistory, listReadyLeafNodes, mkdir, mkdtemp, normalizeWorkerReport, operationalEvents, parallelWorkerIsolationGraph, parseCodexArgs, prepareBareRepository, prepareCompositionBareRepository, publishOutputRef, readFile, readGraph, readyIds, realpath, reconcileGraphStatus, recordWorkerRefMetadata, rejectPlannerPreview, releaseExpiredLeases, renewNodeLease, resetSubtree, resolveNodeBaseRef, rm, runCodexPrompt, runGitCommand, runWorker, schedulerScriptPath, schedulerTransitionTable, setNodeStatus, startLeaseHeartbeat, startNode, tmpdir, waitFor, withLocalBareRemote, withTempGraph, writeCommittingWorkerRunner, writeFile, writeNoopWorkerRunner, writeWorkerIsolationGraph } from "./helpers/plan-scheduler-harness.mjs";
 
 test("worker report formatting includes auditable fields and stable volatile normalization", () => {
   const report = normalizeWorkerReport(formatWorkerReport({
@@ -2466,6 +2466,68 @@ test("worker planner preflight ask-approval blocks valid decomposition proposals
     assert.equal(decomposed.graph.nodes.A.status, "pending");
     assert.deepEqual(decomposed.graph.nodes.A.children, ["A_APPROVED"]);
     assert.equal(decomposed.graph.nodes.A.pendingPlannerPreview, undefined);
+  });
+});
+
+test("stored planner previews can be applied or rejected explicitly", async () => {
+  await withTempGraph(async (graphPath) => {
+    const planner = createFixturePlannerRuntime({
+      kind: "series",
+      title: "Needs approval",
+      children: [{ id: "A_PREVIEW", title: "Preview child" }]
+    });
+    const result = await runWorker(graphPath, {
+      session: "codex-preview-apply",
+      nodeId: "A",
+      once: true,
+      stream: false,
+      plannerMode: "ask-approval",
+      planner
+    });
+    assert.equal(result.results[0].status, "blocked");
+
+    const applied = await applyPlannerPreview(graphPath, {
+      nodeId: "A",
+      session: "codex-preview-apply",
+      runId: result.results[0].runId
+    });
+    assert.deepEqual(applied.children, ["A_PREVIEW"]);
+    const appliedGraph = await readGraph(graphPath);
+    assert.equal(appliedGraph.graph.nodes.A.pendingPlannerPreview, undefined);
+    assert.equal(appliedGraph.graph.nodes.A_PREVIEW.title, "Preview child");
+    assert.equal(appliedGraph.graph.nodes.A.history.at(-1).event, operationalEvents.plannerPreviewApplied);
+  });
+
+  await withTempGraph(async (graphPath) => {
+    const planner = createFixturePlannerRuntime({
+      kind: "parallel",
+      title: "Reject approval",
+      children: [{ id: "A_REJECTED", title: "Rejected child" }]
+    });
+    const result = await runWorker(graphPath, {
+      session: "codex-preview-reject",
+      nodeId: "A",
+      once: true,
+      stream: false,
+      plannerMode: "ask-approval",
+      planner
+    });
+    assert.equal(result.results[0].status, "blocked");
+
+    const rejected = await rejectPlannerPreview(graphPath, {
+      nodeId: "A",
+      reason: "operator rejected test preview",
+      responder: "test"
+    });
+    assert.equal(rejected.status, "pending");
+    assert.deepEqual(rejected.childIds, ["A_REJECTED"]);
+    const rejectedGraph = await readGraph(graphPath);
+    assert.equal(rejectedGraph.graph.nodes.A.pendingPlannerPreview, undefined);
+    assert.equal(rejectedGraph.graph.nodes.A.children, undefined);
+    assert.equal(rejectedGraph.graph.nodes.A_REJECTED, undefined);
+    assert.equal(rejectedGraph.graph.nodes.A.lease, undefined);
+    assert.equal(rejectedGraph.graph.nodes.A.history.at(-1).event, operationalEvents.plannerPreviewRejected);
+    assert.equal(rejectedGraph.graph.nodes.A.history.at(-1).reason, "operator rejected test preview");
   });
 });
 

@@ -249,6 +249,64 @@ test("CLI golden outputs cover public command shapes", async () => {
       "A2=Second child"
     ], { replacements });
   });
+  await captureWithFreshGraph("applyPreview", async (graphPath, replacements) => {
+    const claim = await claimNode(graphPath, { nodeId: "A", session: "golden-apply-preview" });
+    await blockNode(graphPath, {
+      nodeId: "A",
+      session: "golden-apply-preview",
+      runId: claim.runId,
+      question: "Approve planner preview?",
+      reason: "planner proposed series decomposition",
+      plannerPreview: {
+        requestId: "golden-preview-apply",
+        proposedKind: "series",
+        childIds: ["A_PREVIEW"],
+        response: { kind: "series", title: "Apply preview", children: [{ id: "A_PREVIEW", title: "Preview child" }] },
+        decompose: { kind: "series", children: [{ id: "A_PREVIEW", title: "Preview child" }] },
+        createdAt: "2026-05-31T00:00:00.000Z"
+      }
+    });
+    return captureSchedulerCli([
+      "apply-preview",
+      "--graph",
+      graphPath,
+      "--node",
+      "A",
+      "--session",
+      "golden-apply-preview",
+      "--run",
+      claim.runId
+    ], { replacements });
+  });
+  await captureWithFreshGraph("rejectPreview", async (graphPath, replacements) => {
+    const claim = await claimNode(graphPath, { nodeId: "A", session: "golden-reject-preview" });
+    await blockNode(graphPath, {
+      nodeId: "A",
+      session: "golden-reject-preview",
+      runId: claim.runId,
+      question: "Approve planner preview?",
+      reason: "planner proposed parallel decomposition",
+      plannerPreview: {
+        requestId: "golden-preview-reject",
+        proposedKind: "parallel",
+        childIds: ["A_REJECTED"],
+        response: { kind: "parallel", title: "Reject preview", children: [{ id: "A_REJECTED", title: "Rejected child" }] },
+        decompose: { kind: "parallel", children: [{ id: "A_REJECTED", title: "Rejected child" }] },
+        createdAt: "2026-05-31T00:00:00.000Z"
+      }
+    });
+    return captureSchedulerCli([
+      "reject-preview",
+      "--graph",
+      graphPath,
+      "--node",
+      "A",
+      "--reason",
+      "too broad",
+      "--responder",
+      "tester"
+    ], { replacements });
+  });
   await captureWithFreshGraph("reconcile", async (graphPath, replacements) => {
     const graph = fixtureGraph();
     graph.graph.nodes.A.status = "done";
@@ -1109,6 +1167,47 @@ test("CLI notification hooks return skipped Slack results without a webhook", as
       command: "decompose",
       prepare: async (graphPath) => claimNode(graphPath, { session: "codex-A", nodeId: "A" }),
       args: ["decompose", "--node", "A", "--session", "codex-A", "--kind", "series", "--child", "A1=First", "--child", "A2=Second"]
+    },
+    {
+      command: "apply-preview",
+      prepare: async (graphPath) => {
+        const claim = await claimNode(graphPath, { session: "codex-A", nodeId: "A" });
+        await blockNode(graphPath, {
+          nodeId: "A",
+          session: "codex-A",
+          runId: claim.runId,
+          question: "Approve planner preview?",
+          plannerPreview: {
+            requestId: "command-shape-apply-preview",
+            proposedKind: "series",
+            childIds: ["A_PREVIEW"],
+            response: { kind: "series", title: "Apply preview", children: [{ id: "A_PREVIEW", title: "Preview child" }] },
+            decompose: { kind: "series", children: [{ id: "A_PREVIEW", title: "Preview child" }] }
+          }
+        });
+        return claim;
+      },
+      args: ["apply-preview", "--node", "A", "--session", "codex-A"]
+    },
+    {
+      command: "reject-preview",
+      prepare: async (graphPath) => {
+        const claim = await claimNode(graphPath, { session: "codex-A", nodeId: "A" });
+        await blockNode(graphPath, {
+          nodeId: "A",
+          session: "codex-A",
+          runId: claim.runId,
+          question: "Approve planner preview?",
+          plannerPreview: {
+            requestId: "command-shape-reject-preview",
+            proposedKind: "parallel",
+            childIds: ["A_REJECTED"],
+            response: { kind: "parallel", title: "Reject preview", children: [{ id: "A_REJECTED", title: "Rejected child" }] },
+            decompose: { kind: "parallel", children: [{ id: "A_REJECTED", title: "Rejected child" }] }
+          }
+        });
+      },
+      args: ["reject-preview", "--node", "A", "--reason", "too broad"]
     }
   ];
 
@@ -1428,6 +1527,8 @@ test("CLI help lists commands, flag kinds, defaults, environment variables, and 
     "answer",
     "fail",
     "decompose",
+    "apply-preview",
+    "reject-preview",
     "prompt",
     "worker",
     "reconcile",
@@ -1445,7 +1546,7 @@ test("CLI help lists commands, flag kinds, defaults, environment variables, and 
   assert.match(help, /--lease 1\.\.86400 seconds, --idle-ms 1\.\.86400000, --timeout-ms 1\.\.86400000, --port 0\.\.65535, --limit 1\.\.10000/);
   assert.match(help, /Path flags: --graph selects the graph; for plan only, --graph is the output graph path\. --report stays inside the graph directory; --template and --planner-template resolve from the graph directory; --planner-fixture resolves from the graph directory; --cwd controls worker process cwd\./);
   assert.match(help, /PLAN_GRAPH\s+Default graph path when --graph is omitted\./);
-  assert.match(help, /SLACK_WEBHOOK_URL\s+Enables notifications for done, block, answer, fail, and decompose\./);
+  assert.match(help, /SLACK_WEBHOOK_URL\s+Enables notifications for done, block, answer, fail, decompose, apply-preview, and reject-preview\./);
   assert.match(help, /SPG_SLACK_TIMEOUT_MS\s+Slack notification timeout in milliseconds\. Default: 5000\./);
   assert.match(help, /SPG_DEBUG=1\s+Include stack traces in CLI errors\./);
   assert.match(help, /SPG_GRAPH_LOCK_TIMEOUT_MS\s+Graph lock wait timeout in milliseconds\. Default: 5000\./);

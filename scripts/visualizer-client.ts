@@ -1644,6 +1644,7 @@ export function renderVisualizerHtml(): string {
       ["start", "Start"],
       ["block", "Block"],
       ["reset", "Reset"],
+      ...(node.pendingPlannerPreview ? [["apply-preview", "Apply Preview"], ["reject-preview", "Reject Preview"]] : []),
       ...((node.status === "claimed" || node.status === "running" || node.status === "blocked") && !children ? [["decompose", "Decompose"]] : [])
     ];
     const history = (node.history || []).slice().reverse().map((event) => event.event || "event").join(", ");
@@ -1837,6 +1838,27 @@ export function renderVisualizerHtml(): string {
         submitLabel: "Reset",
         fields: [{ name: "reason", label: "Reason", type: "textarea", value: "manual_reset", required: true }],
         onSubmit: (values) => apiPost("/api/reset", { nodeId: id, reason: values.reason })
+      });
+      return;
+    }
+    if (action === "apply-preview") {
+      openActionModal({
+        title: "Apply Preview " + id,
+        submitLabel: "Apply Preview",
+        fields: ownerFields(node),
+        onSubmit: (values) => apiPost("/api/apply-preview", { nodeId: id, session: values.session, runId: values.runId })
+      });
+      return;
+    }
+    if (action === "reject-preview") {
+      openActionModal({
+        title: "Reject Preview " + id,
+        submitLabel: "Reject Preview",
+        fields: [
+          { name: "reason", label: "Reason", type: "textarea", value: "operator_rejected_preview" },
+          { name: "responder", label: "Responder", value: "visualizer" }
+        ],
+        onSubmit: (values) => apiPost("/api/reject-preview", { nodeId: id, reason: values.reason, responder: values.responder })
       });
       return;
     }

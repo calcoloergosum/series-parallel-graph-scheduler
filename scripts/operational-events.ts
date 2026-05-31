@@ -29,7 +29,9 @@ export const operationalEvents = {
   mergeConflicted: "merge-conflicted",
   parentRefPublished: "parent-ref-published",
   plannerFailed: "planner-failed",
+  plannerPreviewApplied: "planner-preview-applied",
   plannerPreviewRejected: "planner-preview-rejected",
+  plannerPreviewRegenerated: "planner-preview-regenerated",
   workerStarted: "worker-started",
   workerStopped: "worker-stopped",
   lockAcquired: "lock-acquired",
@@ -163,10 +165,22 @@ export const operationalEventTaxonomy = [
     description: "Worker planner preflight failed validation or runtime execution and was converted to a controlled blocked or failed node."
   },
   {
+    name: operationalEvents.plannerPreviewApplied,
+    producer: "graph-history",
+    stableFields: ["at", "event", "previousStatus", "status", "session", "runId", "requestId", "proposedKind", "childIds", "report"],
+    description: "An operator approved and applied a stored planner decomposition preview through the guarded decompose mutation path."
+  },
+  {
     name: operationalEvents.plannerPreviewRejected,
     producer: "graph-history",
     stableFields: ["at", "event", "previousStatus", "status", "session", "runId", "requestId", "proposedKind", "childIds", "reason", "report"],
-    description: "Worker planner preflight produced a valid decomposition preview, but automatic application was rejected pending operator approval."
+    description: "A planner preview was held for approval or explicitly rejected without inserting child nodes."
+  },
+  {
+    name: operationalEvents.plannerPreviewRegenerated,
+    producer: "graph-history",
+    stableFields: ["at", "event", "previousStatus", "status", "session", "runId", "previousRequestId", "requestId", "proposedKind", "childIds", "reason", "report"],
+    description: "A valid planner preview replaced older pending preview metadata on the same node."
   },
   {
     name: operationalEvents.workerStarted,

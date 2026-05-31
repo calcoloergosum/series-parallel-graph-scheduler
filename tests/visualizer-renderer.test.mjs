@@ -385,6 +385,71 @@ test("visualizer node mutation routes reject lease mismatches without mutating g
   }
 });
 
+test("visualizer planner preview routes apply or reject stored previews", async () => {
+  await withTempGraph(async (graphPath) => {
+    const visualizer = await createVisualizerServer({ graphPath, port: 0 });
+    try {
+      const postNode = (route, body) => postNodeOrFail(visualizer.url, route, body);
+      const claim = await postNode("claim", { nodeId: "A", session: "codex-api-preview" });
+      await blockNode(graphPath, {
+        nodeId: "A",
+        session: "codex-api-preview",
+        runId: claim.runId,
+        question: "Approve planner preview?",
+        plannerPreview: {
+          requestId: "api-preview-apply",
+          proposedKind: "series",
+          childIds: ["A_API_PREVIEW"],
+          response: { kind: "series", title: "Apply API preview", children: [{ id: "A_API_PREVIEW", title: "API preview child" }] },
+          decompose: { kind: "series", children: [{ id: "A_API_PREVIEW", title: "API preview child" }] }
+        }
+      });
+
+      const apply = await postNode("apply-preview", { nodeId: "A", session: "codex-api-preview", runId: claim.runId });
+      assert.deepEqual(apply.children, ["A_API_PREVIEW"]);
+      assertSkippedSlack(apply.slack);
+      let graph = await assertSummaryMatchesGraph(visualizer.url, apply.summary, graphPath);
+      assert.equal(graph.graph.nodes.A.pendingPlannerPreview, undefined);
+      assert.equal(graph.graph.nodes.A_API_PREVIEW.title, "API preview child");
+      assert.equal(latestHistory(graph.graph.nodes.A).event, "planner-preview-applied");
+    } finally {
+      await visualizer.close();
+    }
+  });
+
+  await withTempGraph(async (graphPath) => {
+    const visualizer = await createVisualizerServer({ graphPath, port: 0 });
+    try {
+      const postNode = (route, body) => postNodeOrFail(visualizer.url, route, body);
+      const claim = await postNode("claim", { nodeId: "A", session: "codex-api-preview" });
+      await blockNode(graphPath, {
+        nodeId: "A",
+        session: "codex-api-preview",
+        runId: claim.runId,
+        question: "Approve planner preview?",
+        plannerPreview: {
+          requestId: "api-preview-reject",
+          proposedKind: "parallel",
+          childIds: ["A_API_REJECT"],
+          response: { kind: "parallel", title: "Reject API preview", children: [{ id: "A_API_REJECT", title: "Rejected API child" }] },
+          decompose: { kind: "parallel", children: [{ id: "A_API_REJECT", title: "Rejected API child" }] }
+        }
+      });
+
+      const reject = await postNode("reject-preview", { nodeId: "A", reason: "not the right split", responder: "api-test" });
+      assert.equal(reject.status, "pending");
+      assertSkippedSlack(reject.slack);
+      const graph = await assertSummaryMatchesGraph(visualizer.url, reject.summary, graphPath);
+      assert.equal(graph.graph.nodes.A.pendingPlannerPreview, undefined);
+      assert.equal(graph.graph.nodes.A.children, undefined);
+      assert.equal(graph.graph.nodes.A_API_REJECT, undefined);
+      assert.equal(latestHistory(graph.graph.nodes.A).event, "planner-preview-rejected");
+    } finally {
+      await visualizer.close();
+    }
+  });
+});
+
 test("visualizer done route rejects report body paths outside the graph directory", async () => {
   await withTempGraph(async (graphPath, dir) => {
     const visualizer = await createVisualizerServer({ graphPath, port: 0 });

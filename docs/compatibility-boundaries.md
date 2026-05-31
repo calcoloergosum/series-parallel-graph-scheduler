@@ -23,16 +23,16 @@ authoritative coverage that should fail when the surface regresses.
 | npm scripts | `ready`, `summary`, `serve`, `worker`, `render`, `schema:graph`, `smoke:migration`, `smoke:package`, `clean`, `format:check`, `audit:dependencies`, `lint`, `check`, `release:check`, `typecheck`, `build`, `test`, `coverage:core`, `test:visualizer`, `stress:deterministic`, `benchmark:lock-contention` | `README.md` "Command Entry Points"; `docs/testing.md`; `docs/lock-contention-benchmark.md` | `tests/package-smoke.test.mjs` "package npm scripts and bins target migrated build output"; `tests/fixtures/cli-goldens.json`; `scripts/migration-smoke.mjs`; `scripts/package-smoke.mjs` |
 | Package binaries | `spg-scheduler`, `spg-render-plan` | `README.md` "Command Entry Points" | `tests/package-smoke.test.mjs` "built package bin entry points smoke test scheduler and renderer CLIs" |
 | Compatibility wrappers | `node scripts/plan-scheduler.mjs ...`, `node scripts/render-plan.mjs ...`, `node scripts/sp-layout.mjs` as a layout wrapper | `README.md` "Command Entry Points"; this document "Stable CLI Surface" | `tests/package-smoke.test.mjs`; `scripts/migration-smoke.mjs` |
-| Scheduler commands | `plan`, `ready`, `summary`, `diagnostics`, `events`, `claim`, `start`, `renew`, `reset`, `reset-subtree`, `reset-reachable`, `done`, `block`, `answer`, `fail`, `decompose`, `prompt`, `worker`, `reconcile`, `release-expired`, `serve`, `help` | `README.md` "Scheduler Commands" and "Goal-Driven Planning"; `docs/operational-events.md`; this document "Stable CLI Surface" | `tests/fixtures/cli-goldens.json`; `tests/cli-goldens.test.mjs`; `tests/scheduler-mutations.test.mjs`; `tests/worker-runtime.test.mjs`; `tests/validation-contracts.test.mjs`; `tests/visualizer-renderer.test.mjs` |
+| Scheduler commands | `plan`, `ready`, `summary`, `diagnostics`, `events`, `claim`, `start`, `renew`, `reset`, `reset-subtree`, `reset-reachable`, `done`, `block`, `answer`, `fail`, `decompose`, `apply-preview`, `reject-preview`, `prompt`, `worker`, `reconcile`, `release-expired`, `serve`, `help` | `README.md` "Scheduler Commands" and "Goal-Driven Planning"; `docs/operational-events.md`; this document "Stable CLI Surface" | `tests/fixtures/cli-goldens.json`; `tests/cli-goldens.test.mjs`; `tests/scheduler-mutations.test.mjs`; `tests/worker-runtime.test.mjs`; `tests/validation-contracts.test.mjs`; `tests/visualizer-renderer.test.mjs` |
 | Scheduler flags | `--graph`, `--goal`, `--title`, `--dry-run`, `--plan-only`, `--then-run`, `--node`, `--event`, `--limit`, `--session`, `--run`, `--lease`, `--reason`, `--report`, `--report-body`, `--question`, `--answer`, `--responder`, `--kind`, `--child`, `--child-json`, `--template`, `--cwd`, `--once`, `--quiet`, `--idle-ms`, `--timeout-ms`, `--codex-command`, repeated `--codex-arg`, `--isolation`, `--remote`, `--workspace-root`, `--workspace-retention`, `--planner-mode`, `--planner-adapter`, `--planner-fixture`, `--planner-template`, `--planner-failure-policy`, repeated `--planner-allowed-kind`, `--planner-request-id-prefix`, `--port`, `--host`, `--visualizer-write-token`, `--unsafe-visualizer-write`, `--help` | `README.md`; `docs/operational-events.md`; this document "Stable CLI Surface", "Goal-Driven Mode Compatibility Note", and "Worker Execution Contract" | `tests/fixtures/cli-goldens.json`; `tests/cli-goldens.test.mjs`; `tests/worker-runtime.test.mjs`; `tests/visualizer-renderer.test.mjs` |
 | Renderer flags and positional arguments | `--graph`, `--output`, `--out`, first positional graph path, second positional output path | `README.md` "Renderer Usage"; this document "Renderer Output Locations" | `tests/visualizer-renderer.test.mjs` static renderer tests; `scripts/migration-smoke.mjs` |
 | Environment variables | `PLAN_GRAPH`, `SLACK_WEBHOOK_URL`, `SPG_SLACK_TIMEOUT_MS`, `SPG_DEBUG`, `SPG_GRAPH_LOCK_TIMEOUT_MS`, `SPG_GIT_CACHE_LOCK_TIMEOUT_MS` | `README.md`; `docs/security.md`; this document "Stable CLI Surface" | `tests/cli-goldens.test.mjs`; `tests/visualizer-renderer.test.mjs`; `tests/validation-contracts.test.mjs` |
-| JSON stdout shapes | Successful JSON from `plan`, `ready`, `summary`, `diagnostics`, `events`, `claim`, `start`, `renew`, `reset`, `reset-subtree`, `reset-reachable`, `done`, `block`, `answer`, `fail`, `decompose`, `worker`, `reconcile`, and `release-expired` | This document "JSON Output Shapes"; `docs/operational-events.md` | `tests/fixtures/cli-goldens.json`; `tests/cli-goldens.test.mjs`; `tests/validation-contracts.test.mjs` |
+| JSON stdout shapes | Successful JSON from `plan`, `ready`, `summary`, `diagnostics`, `events`, `claim`, `start`, `renew`, `reset`, `reset-subtree`, `reset-reachable`, `done`, `block`, `answer`, `fail`, `decompose`, `apply-preview`, `reject-preview`, `worker`, `reconcile`, and `release-expired` | This document "JSON Output Shapes"; `docs/operational-events.md` | `tests/fixtures/cli-goldens.json`; `tests/cli-goldens.test.mjs`; `tests/validation-contracts.test.mjs` |
 | Graph JSON format | Top-level graph metadata, `scheduler`, `document`, `graph.root`, `graph.nodes`, node status/kind/lease/history/report/ref fields, unknown metadata preservation, validation errors and warnings | `README.md` "Graph Validation"; `docs/graph-authoring.md`; `docs/mutation-ownership.md`; this document "Graph State Semantics" | `tests/validation-contracts.test.mjs`; `tests/fixtures/graphs/*`; `tests/graph-contracts.typecheck.ts` |
 | Graph behavior | Series/parallel/gate readiness, busy and terminal statuses, lease ownership and expiry, status transitions, reset scopes, decomposition, reconciliation, composition output refs | `README.md` "Operating Model"; this document "Graph State Semantics"; `docs/mutation-ownership.md`; `docs/worker-isolation-remote-cache.md` | `tests/scheduler-mutations.test.mjs`; `tests/worker-runtime.test.mjs`; `tests/validation-contracts.test.mjs` |
 | Prompt variables | `cwd`, `graphPath`, `nodeId`, `runId`, `session`, `reportPath`, `schedulerCommand`, `planTitle`, `planDescription`, `nodeTitle`, `nodeKind`, `nodeStatus`, `nodeJson`, `readyJson`, `summaryJson` | `README.md` "Worker Usage"; this document "Worker Execution Contract"; `prompts/codex-worker-task.md` | `tests/worker-runtime.test.mjs` "prompt command renders an external template"; `scripts/migration-smoke.mjs` |
 | Worker execution | Shared-cwd worker mode, Git-only isolation mode, report generation, Codex command invocation, streaming/quiet behavior, heartbeat renewal, workspace-retention controls | `README.md` "Worker Usage"; `docs/worker-isolation-remote-cache.md`; this document "Worker Execution Contract" | `tests/worker-runtime.test.mjs`; `tests/cli-goldens.test.mjs` worker CLI tests |
-| Visualizer routes | `GET /`, `GET /index.html`, `GET /api/graph`, `GET /api/workers`, `GET /api/summary`, `GET /api/ready`, `GET /api/diagnostics`, `GET /api/events`, `GET /api/prompt`, `GET /events`, `POST /api/answer`, `POST /api/node/claim`, `POST /api/node/start`, `POST /api/node/renew`, `POST /api/node/done`, `POST /api/node/block`, `POST /api/node/answer`, `POST /api/node/fail`, `POST /api/node/reset`, `POST /api/node/reset-subtree`, `POST /api/node/reset-reachable`, `POST /api/node/decompose`, `POST /api/graph/reconcile`, `POST /api/leases/release-expired`, `POST /api/workers/start`, `POST /api/workers/stop`, `POST /api/workers/stop-all` | `README.md` "Visualizer Safety"; `docs/security.md`; this document "Visualizer Contract" | `tests/visualizer-renderer.test.mjs` visualizer API and payload tests; `tests/visualizer-browser.test.mjs`; `scripts/migration-smoke.mjs` |
+| Visualizer routes | `GET /`, `GET /index.html`, `GET /api/graph`, `GET /api/workers`, `GET /api/summary`, `GET /api/ready`, `GET /api/diagnostics`, `GET /api/events`, `GET /api/prompt`, `GET /events`, `POST /api/answer`, `POST /api/node/claim`, `POST /api/node/start`, `POST /api/node/renew`, `POST /api/node/done`, `POST /api/node/block`, `POST /api/node/answer`, `POST /api/node/fail`, `POST /api/node/reset`, `POST /api/node/reset-subtree`, `POST /api/node/reset-reachable`, `POST /api/node/decompose`, `POST /api/node/apply-preview`, `POST /api/node/reject-preview`, `POST /api/graph/reconcile`, `POST /api/leases/release-expired`, `POST /api/workers/start`, `POST /api/workers/stop`, `POST /api/workers/stop-all` | `README.md` "Visualizer Safety"; `docs/security.md`; this document "Visualizer Contract" | `tests/visualizer-renderer.test.mjs` visualizer API and payload tests; `tests/visualizer-browser.test.mjs`; `scripts/migration-smoke.mjs` |
 | Renderer outputs | Static HTML output resolution, atomic replacement, escaped document text, safe href handling, structural tables, and planar graph SVG | `README.md` "Renderer Usage"; this document "Renderer Output Locations" | `tests/visualizer-renderer.test.mjs` static renderer and planar SVG tests; `scripts/migration-smoke.mjs` |
 | Reports and generated artifacts | `reports/<safe-node-id>-<safe-run-id>.md`, manual report writes, `dist/`, copied prompts, optional generated `plan.html`, graph lock metadata, two-space graph JSON with trailing newline | `README.md`; this document "Reports" and "Generated Artifacts"; `docs/output-safety-audit.md` | `tests/validation-contracts.test.mjs`; `tests/worker-runtime.test.mjs`; `tests/package-smoke.test.mjs` |
 | Operational events | Graph history names, worker-manager names, lock diagnostic names, stable fields, redaction rules | `docs/operational-events.md`; this document "Graph State Semantics" | `tests/validation-contracts.test.mjs`; `tests/scheduler-mutations.test.mjs`; `tests/visualizer-renderer.test.mjs`; `tests/worker-runtime.test.mjs`; `tests/graph-contracts.typecheck.ts` |
@@ -68,6 +68,8 @@ Keep these scheduler command names compatible:
 - `answer`
 - `fail`
 - `decompose`
+- `apply-preview`
+- `reject-preview`
 - `prompt`
 - `worker`
 - `reconcile`
@@ -91,7 +93,7 @@ Stable renderer flags include `--graph`, `--output`, and `--out`.
 Stable environment variables:
 
 - `PLAN_GRAPH`: default graph path for scheduler and renderer commands when `--graph` or a renderer positional graph path is not supplied.
-- `SLACK_WEBHOOK_URL`: enables Slack notifications for `done`, `block`, `answer`, `fail`, and `decompose`; when unset, successful JSON includes a skipped Slack result instead of failing.
+- `SLACK_WEBHOOK_URL`: enables Slack notifications for `done`, `block`, `answer`, `fail`, `decompose`, `apply-preview`, and `reject-preview`; when unset, successful JSON includes a skipped Slack result instead of failing.
 - `SPG_SLACK_TIMEOUT_MS`: Slack notification timeout in milliseconds; default `5000`.
 - `SPG_DEBUG=1`: prints stack traces with CLI errors.
 - `SPG_GRAPH_LOCK_TIMEOUT_MS`: graph lock wait timeout in milliseconds;
@@ -119,6 +121,7 @@ The goal-driven contract separates graph creation from graph execution:
   asks the planner to produce an initial series-parallel graph, validates the
   result with the existing graph validator, and writes a graph JSON file.
 - `worker`, `claim`, `start`, `done`, `block`, `fail`, `decompose`,
+  `apply-preview`, `reject-preview`,
   `reconcile`, `release-expired`, `serve`, and the read-only inspection
   commands execute, inspect, recover, or mutate an existing graph file. They do
   not create a new graph from `--goal`.
@@ -222,6 +225,8 @@ Commands that currently print JSON should continue to print a single JSON value 
 - `done`, `block`, and `fail`: object with at least `nodeId`, `status`, `summary`, and `slack`; `title` is present when known.
 - `answer`: object with at least `nodeId`, `status`, `answer`, `summary`, and `slack`.
 - `decompose`: object with at least `nodeId`, `children`, `summary`, and `slack`.
+- `apply-preview`: object with at least `nodeId`, `children`, `summary`, and `slack`.
+- `reject-preview`: object with at least `nodeId`, `status`, `childIds`, `summary`, and `slack`.
 - `worker`: object with at least `session`, `idle`, and `results`. In `--once` idle mode the shape is `{ session, idle: true, results: [] }`. Finalized result entries include at least `nodeId`, `runId`, `status`, `summary`, `code`, and `slack`. If a Codex run changed the node state itself, a result may include `note` instead of `summary` and `slack`.
 - `reconcile`: object with at least `changed` and `summary`.
 - `release-expired`: object with at least `released` and `summary`.
@@ -391,6 +396,12 @@ Mutation semantics are public behavior:
   the current `graphVersion`, blocked-node state, requested kind, and child
   definitions still match the stored preview. Stale approval previews are
   rejected and must be regenerated or reset before applying.
+- `apply-preview` reads `pendingPlannerPreview.decompose` and invokes the same
+  guarded decomposition mutation. It does not bypass lease ownership, graph
+  version, node-state, or child-definition checks.
+- `reject-preview` clears the stored preview and related blocked/lease fields
+  without creating child nodes. It is valid only for blocked or pending leaf
+  nodes that still carry `pendingPlannerPreview`.
 - The stricter safe-token id policy is planner-only. It applies to planner-provided
   ids and scheduler-generated planner child ids, not to manual/API child ids.
 - Mutation ownership rules for preserving unknown metadata and documenting cleared fields are maintained in [Mutation Ownership](mutation-ownership.md).
@@ -410,6 +421,8 @@ Status transitions are defined by command. Worker-owned commands require matchin
 | `reset-subtree` | operator | selected node and child-reachable descendants | any known status; custom statuses are also reset | `pending` | clears leases in the reset set without owner credentials |
 | `reset-reachable` | operator | selected node, descendants, and later execution-reachable series work | any known status; custom statuses are also reset | `pending` | clears leases in the reset set without owner credentials |
 | `decompose` | worker | leaf | `claimed`, `running`, `blocked` | selected node returns to `pending` as a `series`/`parallel` parent | requires owner if leased; clears lease and creates children |
+| `apply-preview` | operator | claimed, running, or blocked leaf with `pendingPlannerPreview` | `claimed`, `running`, `blocked` | selected node returns to `pending` as a `series`/`parallel` parent | delegates to `decompose`; requires matching owner if leased |
+| `reject-preview` | operator | blocked or pending leaf with `pendingPlannerPreview` | `blocked`, `pending` | `pending` | clears lease and preview metadata without owner credentials |
 | `reconcile` | system | non-leaf whose child subtrees are all `done`; composition buffers publish parent refs before downstream readiness | any non-`done` status except parked blocked/review/failed buffers until reset | `done`, `blocked`, or `review` | does not inspect leases |
 | `release-expired` | system | nodes with expired leases | `claimed`, `running` | `pending` | clears only expired `claimed`/`running` leases |
 
@@ -419,8 +432,9 @@ events use `claimed`, `running`, `renewed`, `done`, `blocked`, `answered`,
 Git isolation graph history events use `clone-prepared`, `branch-created`,
 `output-ref-recorded`, `merge-attempted`, `merge-conflicted`, and
 `parent-ref-published`.
-Planner preflight graph history events use `planner-failed` and
-`planner-preview-rejected`.
+Planner preflight graph history events use `planner-failed`,
+`planner-preview-applied`, `planner-preview-rejected`, and
+`planner-preview-regenerated`.
 Worker-manager events use `worker-started` and `worker-stopped`. Lock
 diagnostic events reserve `lock-acquired`, `lock-released`,
 `lock-stale-reaped`, and `lock-timeout`. Event names should not be renamed once
@@ -451,7 +465,7 @@ The local visualizer started by `serve` should keep these routes:
 - `POST /api/workers/stop`: stops one managed worker and returns `{ worker, workerManager }`.
 - `POST /api/workers/stop-all`: stops managed workers and returns `{ stopped, workerManager }`.
 - `POST /api/node/claim`, `/start`, `/renew`, `/reset`, `/reset-subtree`, and `/reset-reachable`: mutate nodes and return the same result shapes as the matching CLI commands.
-- `POST /api/node/done`, `/block`, `/answer`, `/fail`, and `/decompose`: mutate nodes and return the same result shapes as the matching CLI commands, including `slack`.
+- `POST /api/node/done`, `/block`, `/answer`, `/fail`, `/decompose`, `/apply-preview`, and `/reject-preview`: mutate nodes and return the same result shapes as the matching CLI commands, including `slack`.
 - `POST /api/graph/reconcile`: reconciles completed graph subtrees and returns the same result shape as the `reconcile` CLI command.
 - `POST /api/leases/release-expired`: releases expired leases and returns the same result shape as the `release-expired` CLI command.
 - `POST /api/answer`: legacy browser-flow alias for `POST /api/node/answer`.
@@ -517,6 +531,8 @@ Visualizer request contracts:
 - `POST /api/node/fail` and legacy alias `POST /api/fail` accept JSON with string `nodeId`, optional string `session`, optional string `runId` or `run`, optional string `reason`, and optional string `report`.
 - `POST /api/node/reset`, `/reset-subtree`, and `/reset-reachable` plus legacy aliases `POST /api/reset`, `/api/reset-subtree`, and `/api/reset-reachable` accept JSON with string `nodeId` and optional string `reason`.
 - `POST /api/node/decompose` and legacy alias `POST /api/decompose` accept JSON with string `nodeId`, optional string `session`, optional string `runId` or `run`, optional string `kind`, and `children`, an array of child node objects with string `id` and `title`.
+- `POST /api/node/apply-preview` and legacy alias `POST /api/apply-preview` accept JSON with string `nodeId`, optional string `session`, and optional string `runId` or `run`.
+- `POST /api/node/reject-preview` and legacy alias `POST /api/reject-preview` accept JSON with string `nodeId`, optional string `reason`, and optional string `responder`.
 - `POST /api/graph/reconcile` and `POST /api/leases/release-expired` do not require a body.
 - `POST /api/workers/start` accepts JSON with optional `count`,
   `sessionPrefix`, `cwd`, `codexCommand`, `codexArgs`, `idleMs`, `timeoutMs`,
@@ -1279,7 +1295,7 @@ These changes require explicit operator approval before implementation:
 - Removing or renaming a stable CLI command, npm script, package binary, flag, or environment variable.
 - Changing successful JSON output from a documented command by removing, renaming, retyping, nesting, or changing the meaning of existing fields.
 - Changing readiness traversal, terminal/busy status semantics, lease ownership checks, lease expiry behavior, or automatic internal-node reconciliation.
-- Changing graph mutation semantics for `answer`, `reset`, `reset-subtree`, `reset-reachable`, or `decompose`.
+- Changing graph mutation semantics for `answer`, `reset`, `reset-subtree`, `reset-reachable`, `decompose`, `apply-preview`, or `reject-preview`.
 - Changing default report location, report path confinement, graph node `report` semantics, or worker-generated Markdown report guarantees.
 - Changing worker default invocation, prompt variable names or meanings, report path passed into prompts, lease heartbeat behavior, or `--once` idle shape.
 - Removing visualizer routes, changing request fields or response envelopes, weakening local-only security warnings, or presenting the worker manager as safe for untrusted public access without an authentication design.

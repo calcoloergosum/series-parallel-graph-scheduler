@@ -503,6 +503,7 @@ async function blockForPlannerApproval(
   if (!plan.decompose) {
     throw new Error("Planner approval requires a decompose mutation");
   }
+  const previousPreview = runtime.getNode(await runtime.readGraph(graphPath), claim.nodeId).pendingPlannerPreview;
   await runtime.writeReportFile(graphPath, reportPath, formatPlannerPreflightReport({ claim, plan }));
   const result = await runtime.blockNode(graphPath, {
     nodeId: claim.nodeId,
@@ -524,12 +525,13 @@ async function blockForPlannerApproval(
       createdAt: new Date().toISOString()
     },
     extraHistoryEvents: [{
-      event: operationalEvents.plannerPreviewRejected,
+      event: previousPreview ? operationalEvents.plannerPreviewRegenerated : operationalEvents.plannerPreviewRejected,
       details: {
+        previousRequestId: previousPreview?.requestId,
         requestId: plan.requestId,
         proposedKind: plan.response.kind,
         childIds: plan.decompose?.children.map((child) => child.id) || [],
-        reason: "planner approval required",
+        reason: previousPreview ? "planner preview regenerated" : "planner approval required",
         report: reportPath
       }
     }]

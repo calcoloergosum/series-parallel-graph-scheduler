@@ -60,9 +60,10 @@ The blocked node also stores `pendingPlannerPreview` metadata with the request
 id, source and persisted graph versions, proposed kind, child ids, child titles,
 deliverables, acceptance criteria, parsed planner response, materialized
 decompose mutation, report path, and the node state snapshot required for safe
-approval. Applying that stored preview through `decompose` is rejected if the
-graph version or captured node state has changed; the operator must regenerate
-or reset before applying an obsolete preview.
+approval. Applying that stored preview through `apply-preview` delegates to the
+same guarded `decompose` mutation path and is rejected if the graph version or
+captured node state has changed; the operator must regenerate, reject, or reset
+before applying an obsolete preview.
 The planner runtime is selected separately with `adapterMode`: `fixture` reads
 a local JSON response or request-id map for deterministic tests and demos,
 `prompt` renders a prompt through the prompt adapter boundary, and `injected`
@@ -74,7 +75,10 @@ validated before the worker claims or starts a node.
 "fail"` marks the node failed with the planner report attached.
 Both paths append `planner-failed` history before the worker continues. Approval
 mode appends `planner-preview-rejected` when a valid preview is intentionally
-held for manual review instead of being applied.
+held for manual review, `planner-preview-applied` when the stored preview is
+accepted, `planner-preview-rejected` when an operator discards it, and
+`planner-preview-regenerated` when newer preview metadata replaces an older
+pending preview.
 
 Regenerate creates a replacement proposal, not an implicit edit to accepted
 state. If regeneration happens while a draft is open, the UI should show the
