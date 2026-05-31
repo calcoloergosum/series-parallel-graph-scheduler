@@ -1,0 +1,94 @@
+{
+  "graphVersion": 1,
+  "title": "Build fixture resume coverage",
+  "description": "Generated from a CLI goal.",
+  "statusModel": [
+    "pending",
+    "claimed",
+    "running",
+    "blocked",
+    "review",
+    "failed",
+    "done"
+  ],
+  "scheduler": {
+    "stateFile": "plan.graph.json",
+    "htmlView": "plan.html",
+    "reportsDir": "reports",
+    "leaseSeconds": 1800
+  },
+  "graph": {
+    "root": "ROOT",
+    "nodes": {
+      "ROOT": {
+        "title": "Build fixture resume coverage",
+        "kind": "series",
+        "status": "pending",
+        "children": [
+          "PLAN"
+        ],
+        "description": "Build fixture resume coverage",
+        "goal": {
+          "text": "Build fixture resume coverage",
+          "source": "operator",
+          "createdAt": "2026-05-31T00:00:00.000Z"
+        },
+        "history": [
+          {
+            "at": "2026-05-31T00:00:00.000Z",
+            "event": "goal-planned",
+            "source": "cli"
+          }
+        ]
+      },
+      "PLAN": {
+        "title": "Plan and execute goal",
+        "kind": "task",
+        "status": "pending",
+        "description": "Build fixture resume coverage",
+        "goal": {
+          "text": "Build fixture resume coverage",
+          "source": "parent",
+          "createdAt": "2026-05-31T00:00:00.000Z"
+        },
+        "deliverables": [
+          "A validated series-parallel graph decomposition or completed implementation for the goal."
+        ],
+        "acceptanceCriteria": [
+          "The goal is either decomposed into scheduler-ready child work or completed with reportable evidence."
+        ],
+        "history": [
+          {
+            "at": "2026-05-31T00:00:00.000Z",
+            "event": "created",
+            "source": "goal-graph-factory"
+          }
+        ]
+      }
+    }
+  },
+  "document": {
+    "pageTitle": "Build fixture resume coverage",
+    "meta": [
+      {
+        "label": "Goal",
+        "value": "Build fixture resume coverage"
+      },
+      {
+        "label": "Initial node",
+        "value": "PLAN"
+      }
+    ],
+    "intro": [
+      "Build fixture resume coverage"
+    ],
+    "sections": [
+      {
+        "heading": "Generated Graph",
+        "paragraphs": [
+          "This graph was generated from a single operator goal and starts with one claimable planning or execution task."
+        ]
+      }
+    ]
+  }
+}

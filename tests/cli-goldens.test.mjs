@@ -1,5 +1,5 @@
 import test from "node:test";
-import { answerNode, assert, assertCliFails, assertCliGolden, assertReadableGraphValidationOutput, blockNode, buildGoalGraph, buildVisualizerPayload, buildWorkerPrompt, captureSchedulerCli, claimNode, completeNode, createServer, createVisualizerServer, depthPriorityGraph, diagnoseGraph, dirname, execFileAsync, existsSync, fixtureGraph, graphValidationCases, join, listReadyLeafNodes, mkdir, mkdtemp, parseArgs, parseChildrenArgs, readGraph, renderCliHelp, renderVisualizerHtml, rendererDocumentFixture, rendererScriptPath, resolveWorkerIsolation, rm, schedulerScriptPath, symlink, tmpdir, utimes, validatePlanGraphFileResult, withTempGraph, writeFile } from "./helpers/plan-scheduler-harness.mjs";
+import { answerNode, assert, assertCliFails, assertCliGolden, assertReadableGraphValidationOutput, blockNode, buildGoalGraph, buildVisualizerPayload, buildWorkerPrompt, captureSchedulerCli, claimNode, completeNode, copyGraphFixtureToTemp, createServer, createVisualizerServer, depthPriorityGraph, diagnoseGraph, dirname, execFileAsync, existsSync, fixtureGraph, graphValidationCases, join, listReadyLeafNodes, mkdir, mkdtemp, parseArgs, parseChildrenArgs, readGraph, renderCliHelp, renderVisualizerHtml, rendererDocumentFixture, rendererScriptPath, resolveWorkerIsolation, rm, schedulerScriptPath, symlink, tmpdir, utimes, validatePlanGraphFileResult, withTempGraph, writeFile } from "./helpers/plan-scheduler-harness.mjs";
 
 test("answer records operator response and makes a blocked node ready", async () => {
   await withTempGraph(async (graphPath) => {
@@ -621,6 +621,200 @@ test("CLI plan-then-run keeps the generated graph when execution setup fails", a
     assert.equal(existsSync(graphPath), true);
     const graph = await readGraph(graphPath);
     assert.equal(graph.graph.root, "ROOT");
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("CLI plan dry-run output is a replayable generated graph", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "plan-dry-run-replay-"));
+  try {
+    const graphPath = join(dir, "nested", "dry-run.graph.json");
+    const cli = await execFileAsync(process.execPath, [
+      schedulerScriptPath,
+      "plan",
+      "--goal",
+      "Preview replayable graph",
+      "--title",
+      "Preview Replay Plan",
+      "--graph",
+      graphPath,
+      "--dry-run"
+    ]);
+    const result = JSON.parse(cli.stdout);
+
+    assert.equal(result.mode, "plan-only");
+    assert.equal(result.dryRun, true);
+    assert.equal(result.written, false);
+    assert.equal(existsSync(graphPath), false);
+    assert.deepEqual(validatePlanGraphFileResult(result.graph).errors, []);
+
+    await mkdir(dirname(graphPath), { recursive: true });
+    await writeFile(graphPath, `${JSON.stringify(result.graph, null, 2)}\n`, "utf8");
+
+    const summary = JSON.parse((await execFileAsync(process.execPath, [schedulerScriptPath, "summary", "--graph", graphPath])).stdout);
+    assert.equal(summary.totalNodes, 2);
+    assert.equal(summary.root, "ROOT");
+    assert.deepEqual(summary.counts, { pending: 2 });
+
+    const ready = JSON.parse((await execFileAsync(process.execPath, [schedulerScriptPath, "ready", "--graph", graphPath])).stdout);
+    assert.deepEqual(ready.map((node) => node.id), ["PLAN"]);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("generated plan-only graph replays through the worker command", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "generated-plan-replay-"));
+  try {
+    const graphPath = join(dir, "plan.graph.json");
+    const markerPath = join(dir, "replay-worker-ran.txt");
+    const runnerPath = join(dir, "replay-runner.mjs");
+    await writeFile(
+      runnerPath,
+      `import { writeFileSync } from "node:fs";\nconst prompt = process.argv.at(-1) || "";\nwriteFileSync(${JSON.stringify(markerPath)}, prompt.includes("Node: PLAN") ? "PLAN" : "missing");\nconsole.log("replay worker completed");\n`,
+      "utf8"
+    );
+
+    const plan = JSON.parse((await execFileAsync(process.execPath, [
+      schedulerScriptPath,
+      "plan",
+      "--goal",
+      "Replay generated graph",
+      "--graph",
+      graphPath,
+      "--plan-only"
+    ])).stdout);
+    assert.equal(plan.mode, "plan-only");
+    assert.equal(plan.written, true);
+
+    const firstRun = JSON.parse((await execFileAsync(process.execPath, [
+      schedulerScriptPath,
+      "worker",
+      "--graph",
+      graphPath,
+      "--session",
+      "generated-replay",
+      "--once",
+      "--quiet",
+      "--cwd",
+      dir,
+      "--codex-command",
+      process.execPath,
+      "--codex-arg",
+      runnerPath
+    ])).stdout);
+    assert.equal(firstRun.idle, false);
+    assert.equal(firstRun.results[0].nodeId, "PLAN");
+    assert.equal(firstRun.results[0].status, "done");
+    assert.equal(existsSync(markerPath), true);
+
+    const graph = await readGraph(graphPath);
+    assert.equal(graph.graph.nodes.PLAN.status, "done");
+
+    const events = JSON.parse((await execFileAsync(process.execPath, [
+      schedulerScriptPath,
+      "events",
+      "--graph",
+      graphPath,
+      "--node",
+      "PLAN",
+      "--limit",
+      "5"
+    ])).stdout);
+    assert.deepEqual(events.slice(0, 3).map((event) => event.event), ["done", "running", "claimed"]);
+
+    const replayIdle = JSON.parse((await execFileAsync(process.execPath, [
+      schedulerScriptPath,
+      "worker",
+      "--graph",
+      graphPath,
+      "--session",
+      "generated-replay",
+      "--once",
+      "--quiet",
+      "--cwd",
+      dir,
+      "--codex-command",
+      process.execPath,
+      "--codex-arg",
+      runnerPath
+    ])).stdout);
+    assert.equal(replayIdle.idle, true);
+    assert.deepEqual(replayIdle.results, []);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("generated goal fixture resumes after releasing an expired worker lease", async () => {
+  const { dir, graphPath } = await copyGraphFixtureToTemp("valid-generated-goal.graph.json");
+  try {
+    const claim = JSON.parse((await execFileAsync(process.execPath, [
+      schedulerScriptPath,
+      "claim",
+      "--graph",
+      graphPath,
+      "--node",
+      "PLAN",
+      "--session",
+      "stale-generated-worker",
+      "--lease",
+      "1"
+    ])).stdout);
+    await execFileAsync(process.execPath, [
+      schedulerScriptPath,
+      "start",
+      "--graph",
+      graphPath,
+      "--node",
+      "PLAN",
+      "--session",
+      "stale-generated-worker",
+      "--run",
+      claim.runId
+    ]);
+
+    const staleGraph = await readGraph(graphPath);
+    staleGraph.graph.nodes.PLAN.lease.expiresAt = "2026-05-27T00:00:01.000Z";
+    await writeFile(graphPath, `${JSON.stringify(staleGraph, null, 2)}\n`, "utf8");
+
+    const release = JSON.parse((await execFileAsync(process.execPath, [
+      schedulerScriptPath,
+      "release-expired",
+      "--graph",
+      graphPath
+    ])).stdout);
+    assert.deepEqual(release.released, ["PLAN"]);
+
+    const ready = JSON.parse((await execFileAsync(process.execPath, [schedulerScriptPath, "ready", "--graph", graphPath])).stdout);
+    assert.deepEqual(ready.map((node) => node.id), ["PLAN"]);
+
+    const runnerPath = join(dir, "resume-runner.mjs");
+    await writeFile(runnerPath, "console.log('resumed generated fixture');\n", "utf8");
+    const resumed = JSON.parse((await execFileAsync(process.execPath, [
+      schedulerScriptPath,
+      "worker",
+      "--graph",
+      graphPath,
+      "--session",
+      "generated-resume",
+      "--once",
+      "--quiet",
+      "--cwd",
+      dir,
+      "--codex-command",
+      process.execPath,
+      "--codex-arg",
+      runnerPath
+    ])).stdout);
+    assert.equal(resumed.idle, false);
+    assert.equal(resumed.results[0].nodeId, "PLAN");
+    assert.equal(resumed.results[0].status, "done");
+
+    const graph = await readGraph(graphPath);
+    assert.equal(graph.graph.nodes.PLAN.status, "done");
+    assert.equal(graph.graph.nodes.PLAN.history.some((event) => event.event === "expired"), true);
   } finally {
     await rm(dir, { recursive: true, force: true });
   }

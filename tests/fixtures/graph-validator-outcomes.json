@@ -44,6 +44,29 @@
     ]
   },
   {
+    "fixture": "valid-generated-goal.graph.json",
+    "matrixCategory": "generated-goal",
+    "valid": true,
+    "errors": [],
+    "warnings": [],
+    "covers": [
+      "passes:graph-object",
+      "passes:graph-body",
+      "passes:root-string",
+      "passes:root-in-nodes",
+      "passes:nodes-map",
+      "passes:node-object",
+      "passes:children-array",
+      "passes:child-id-string",
+      "passes:child-exists",
+      "passes:no-duplicate-child",
+      "passes:acyclic",
+      "passes:non-empty-series",
+      "passes:history-shape",
+      "matrix:generated-goal"
+    ]
+  },
+  {
     "fixture": "valid-legacy-compatible-warning.graph.json",
     "matrixCategory": "legacy-compatible",
     "valid": true,

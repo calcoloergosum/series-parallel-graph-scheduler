@@ -1,5 +1,5 @@
 import test from "node:test";
-import { assert, assertCliFails, blockNode, buildNodeWorkBranchName, buildWorkerPrompt, claimNode, collectGitDiffStat, completeNode, createFixturePlannerRuntime, createRawWorkerManager, createRunClone, createSourceBranch, createWorkBranch, decomposeNode, depthPriorityGraph, dirname, escapeRegExp, execFileAsync, existsSync, failNode, fixtureGraph, formatWorkerReport, gitShow, join, knownTransitionStatuses, lastHistory, listReadyLeafNodes, mkdir, mkdtemp, normalizeWorkerReport, operationalEvents, parallelWorkerIsolationGraph, parseCodexArgs, prepareBareRepository, prepareCompositionBareRepository, publishOutputRef, readFile, readGraph, readyIds, realpath, reconcileGraphStatus, recordWorkerRefMetadata, releaseExpiredLeases, renewNodeLease, resetSubtree, resolveNodeBaseRef, rm, runCodexPrompt, runGitCommand, runWorker, schedulerTransitionTable, setNodeStatus, startLeaseHeartbeat, startNode, tmpdir, waitFor, withLocalBareRemote, withTempGraph, writeCommittingWorkerRunner, writeFile, writeNoopWorkerRunner, writeWorkerIsolationGraph } from "./helpers/plan-scheduler-harness.mjs";
+import { assert, assertCliFails, blockNode, buildNodeWorkBranchName, buildWorkerPrompt, claimNode, collectGitDiffStat, completeNode, copyGraphFixtureToTemp, createFixturePlannerRuntime, createRawWorkerManager, createRunClone, createSourceBranch, createWorkBranch, decomposeNode, depthPriorityGraph, dirname, escapeRegExp, execFileAsync, existsSync, failNode, fixtureGraph, formatWorkerReport, gitShow, join, knownTransitionStatuses, lastHistory, listReadyLeafNodes, mkdir, mkdtemp, normalizeWorkerReport, operationalEvents, parallelWorkerIsolationGraph, parseCodexArgs, prepareBareRepository, prepareCompositionBareRepository, publishOutputRef, readFile, readGraph, readyIds, realpath, reconcileGraphStatus, recordWorkerRefMetadata, releaseExpiredLeases, renewNodeLease, resetSubtree, resolveNodeBaseRef, rm, runCodexPrompt, runGitCommand, runWorker, schedulerTransitionTable, setNodeStatus, startLeaseHeartbeat, startNode, tmpdir, waitFor, withLocalBareRemote, withTempGraph, writeCommittingWorkerRunner, writeFile, writeNoopWorkerRunner, writeWorkerIsolationGraph } from "./helpers/plan-scheduler-harness.mjs";
 
 test("worker report formatting includes auditable fields and stable volatile normalization", () => {
   const report = normalizeWorkerReport(formatWorkerReport({
@@ -1981,6 +1981,66 @@ test("worker planner preflight auto-decomposes parallel decisions before Codex",
     assert.deepEqual(updated.graph.nodes.A.children, ["A_LEFT", "A_RIGHT"]);
     assert.deepEqual(listReadyLeafNodes(updated).map((node) => node.id), ["A_LEFT", "A_RIGHT"]);
   });
+});
+
+test("worker planner preflight decomposes generated goal fixtures deterministically", async () => {
+  const { dir, graphPath } = await copyGraphFixtureToTemp("valid-generated-goal.graph.json");
+  try {
+    const graph = await readGraph(graphPath);
+    graph.scheduler.workerPlanner = {
+      mode: "auto-decompose",
+      requestIdPrefix: "fixture-plan"
+    };
+    await writeFile(graphPath, `${JSON.stringify(graph, null, 2)}\n`, "utf8");
+
+    const markerPath = join(dir, "generated-fixture-codex-ran");
+    const fakeRunnerPath = join(dir, "fake-generated-fixture-runner.mjs");
+    await writeFile(fakeRunnerPath, `import { writeFileSync } from 'node:fs'; writeFileSync(${JSON.stringify(markerPath)}, 'ran');\n`, "utf8");
+
+    const planner = createFixturePlannerRuntime((request) => {
+      assert.equal(request.nodeId, "PLAN");
+      assert.equal(request.goal, "Build fixture resume coverage");
+      assert.match(request.requestId, /^fixture-plan-PLAN-run_/);
+      return {
+        kind: "series",
+        title: "Split generated goal",
+        children: [
+          {
+            id: "PLAN_DISCOVER",
+            title: "Discover resume path",
+            goal: { text: "Build fixture resume coverage", source: "planner" }
+          },
+          {
+            id: "PLAN_VERIFY",
+            title: "Verify replay path",
+            goal: { text: "Build fixture resume coverage", source: "planner" }
+          }
+        ]
+      };
+    });
+    const result = await runWorker(graphPath, {
+      session: "codex-generated-planner",
+      once: true,
+      cwd: dir,
+      stream: false,
+      codexCommand: process.execPath,
+      codexArgs: [fakeRunnerPath],
+      planner
+    });
+
+    assert.equal(result.results[0].nodeId, "PLAN");
+    assert.equal(result.results[0].status, "pending");
+    assert.equal(result.results[0].note, "planner decomposed node as series");
+    assert.equal(existsSync(markerPath), false);
+    const updated = await readGraph(graphPath);
+    assert.equal(updated.graph.nodes.PLAN.kind, "series");
+    assert.deepEqual(updated.graph.nodes.PLAN.children, ["PLAN_DISCOVER", "PLAN_VERIFY"]);
+    assert.equal(updated.graph.nodes.PLAN_DISCOVER.goal.text, "Build fixture resume coverage");
+    assert.equal(updated.graph.nodes.PLAN_DISCOVER.goal.source, "planner");
+    assert.deepEqual(listReadyLeafNodes(updated).map((node) => node.id), ["PLAN_DISCOVER"]);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
 });
 
 test("worker planner preflight ask-approval blocks valid decomposition proposals", async () => {
