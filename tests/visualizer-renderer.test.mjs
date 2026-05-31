@@ -1584,6 +1584,39 @@ test("planar SVG escapes node labels", () => {
   assert.doesNotMatch(svg, /"quoted"/);
 });
 
+test("planar SVG renders compact ref and diffstat labels inside nodes", () => {
+  const graph = fixtureGraph();
+  graph.graph.nodes.A.outputRef = {
+    name: "refs/heads/spg/node/A/run-a",
+    commit: "2222222222222222222222222222222222222222",
+    diffStat: { filesChanged: 3, insertions: 1200, deletions: 45, totalChanges: 1245 }
+  };
+  graph.graph.nodes.B.workRef = {
+    name: "refs/heads/spg/node/B/run-b",
+    commit: "3333333333333333333333333333333333333333"
+  };
+  graph.graph.nodes.C.baseRef = {
+    name: "refs/heads/spg/node/C/fallback-ref-name-with-extra-text"
+  };
+
+  const layout = buildPlanarLayout(graph);
+  const nodeA = layout.boxes.find((box) => box.id === "A");
+  const nodeB = layout.boxes.find((box) => box.id === "B");
+  const nodeC = layout.boxes.find((box) => box.id === "C");
+  assert.deepEqual(nodeA.refLabel, { commit: "2222222", insertions: "+1.2k", deletions: "-45", filesChanged: "3f" });
+  assert.deepEqual(nodeB.refLabel, { fallback: "3333333 ref" });
+  assert.deepEqual(nodeC.refLabel, { fallback: "ref spg/node/C/fall..." });
+
+  const svg = renderPlanarSvg(graph, { layout });
+  assert.match(svg, /class="sp-node-ref"/);
+  assert.match(svg, /<tspan class="sp-node-commit">2222222<\/tspan>/);
+  assert.match(svg, /<tspan class="sp-node-insertions"> \+1\.2k<\/tspan>/);
+  assert.match(svg, /<tspan class="sp-node-deletions"> -45<\/tspan>/);
+  assert.match(svg, /<tspan class="sp-node-files"> 3f<\/tspan>/);
+  assert.match(svg, /3333333 ref/);
+  assert.match(svg, /ref spg\/node\/C\/fall\.\.\./);
+});
+
 test("planar SVG escapes hostile graph titles and node ids in attributes", () => {
   const nodeId = 'A" onload="alert(1)<script>';
   const graph = fixtureGraph();
