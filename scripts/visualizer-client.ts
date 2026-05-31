@@ -721,6 +721,10 @@ export function renderVisualizerHtml(): string {
     return value ? '<div class="meta">' + label + ': ' + escapeHtml(boundedText(value)) + '</div>' : "";
   }
 
+  function goalText(goal) {
+    return typeof goal === "string" ? goal : goal?.text;
+  }
+
   function nodeSearchText(node) {
     const isolation = node.isolation || {};
     return [
@@ -730,6 +734,7 @@ export function renderVisualizerHtml(): string {
       node.kind,
       node.session,
       node.runId,
+      goalText(node.goal),
       node.expiresAt,
       node.question,
       node.answer,
@@ -1171,6 +1176,7 @@ export function renderVisualizerHtml(): string {
       '<p><strong>' + escapeHtml(id) + '</strong><br>' + escapeHtml(node.title || id) + '</p>' +
       '<div class="selected-actions" aria-label="Selected node actions">' + actions + '</div>' +
       metaLine("kind", node.kind || "task") +
+      metaLine("goal", goalText(node.goal)) +
       metaLine("children", children) +
       metaLine("session", node.lease?.session || node.session) +
       metaLine("run", node.lease?.runId || node.runId) +

@@ -783,6 +783,7 @@ export interface VisualizerNodeDetail {
   kind: NodeKind;
   status: NodeStatus;
   description?: string;
+  goal?: string | NodeGoalMetadata;
   children: NodeId[];
   deliverables: string[];
   acceptanceCriteria: string[];
@@ -827,6 +828,7 @@ export interface VisualizerServerHandle {
 export type VisualizerClient = ServerResponse;
 
 export type CliCommand =
+  | "plan"
   | "ready"
   | "summary"
   | "diagnostics"

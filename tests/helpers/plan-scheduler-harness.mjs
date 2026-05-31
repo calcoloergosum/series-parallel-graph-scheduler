@@ -52,6 +52,7 @@ export const {
   answerNode,
   attachReadyPriorityFields,
   blockNode,
+  buildGoalGraph,
   buildSlackNotificationText,
   buildNodeWorkBranchName,
   buildReachableDepthMap,

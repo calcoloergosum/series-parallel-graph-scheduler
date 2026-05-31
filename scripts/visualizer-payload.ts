@@ -71,6 +71,7 @@ function normalizeVisualizerNode(
     kind: node.kind || "task",
     status: node.status || "pending",
     description: node.description,
+    goal: node.goal,
     children: Array.isArray(node.children) ? [...node.children] : [],
     deliverables: Array.isArray(node.deliverables) ? [...node.deliverables] : [],
     acceptanceCriteria: Array.isArray(node.acceptanceCriteria) ? [...node.acceptanceCriteria] : [],
