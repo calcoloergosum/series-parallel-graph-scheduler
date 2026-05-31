@@ -1168,10 +1168,19 @@ export interface LayoutBox {
   title: string;
   kind: NodeKind;
   status: NodeStatus;
+  refLabel?: LayoutRefLabel;
   x: number;
   y: number;
   width: number;
   height: number;
+}
+
+export interface LayoutRefLabel {
+  commit?: string;
+  insertions?: string;
+  deletions?: string;
+  filesChanged?: string;
+  fallback?: string;
 }
 
 export interface LayoutFrame extends LayoutBox {

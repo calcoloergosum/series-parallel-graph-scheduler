@@ -1449,6 +1449,57 @@ test("visualizer normalizes git details for old, task, and aggregate nodes", asy
   });
 });
 
+test("visualizer selected-node inspector renders git refs, diffstat, and changed files", async () => {
+  await withTempGraph(async (graphPath) => {
+    const graph = await readGraph(graphPath);
+    graph.graph.nodes.A.status = "done";
+    graph.graph.nodes.A.baseRef = {
+      name: "refs/remotes/origin/main",
+      commit: "1111111111111111111111111111111111111111"
+    };
+    graph.graph.nodes.A.workRef = {
+      name: "refs/heads/spg/node/A/run-a",
+      commit: "2222222222222222222222222222222222222222"
+    };
+    graph.graph.nodes.A.outputRef = {
+      name: "refs/heads/spg/node/A/run-a",
+      commit: "2222222222222222222222222222222222222222",
+      diffStat: { filesChanged: 2, additions: 10, deletions: 3, totalChanges: 13 },
+      files: [
+        { path: "src/app.ts", changeType: "modified", additions: 8, deletions: 3, totalChanges: 11 },
+        { path: "docs/new.md", changeType: "added", additions: 2, deletions: 0, totalChanges: 2 }
+      ],
+      collectedAt: "2026-05-27T00:05:01.000Z"
+    };
+    graph.graph.nodes.A.workspace = {
+      remote: "https://user:secret-token@github.com/example-org/example-repo.git",
+      cloneCwd: "/tmp/spg/workspaces/codex-A/A/run-a"
+    };
+    await writeFile(graphPath, `${JSON.stringify(graph, null, 2)}\n`, "utf8");
+
+    const payload = await buildVisualizerPayload(graphPath);
+    const { context, element } = runVisualizerClientScript();
+    context.render(payload);
+    context.selectNode("A");
+
+    let html = element("selected-node-details").innerHTML;
+    assert.match(html, /Git Refs/);
+    assert.match(html, /Diffstat/);
+    assert.match(html, /Changed Files/);
+    assert.match(html, /src\/app\.ts/);
+    assert.match(html, /docs\/new\.md/);
+    assert.match(html, /href="https:\/\/github\.com\/example-org\/example-repo\/compare\/1111111111111111111111111111111111111111\.\.\.2222222222222222222222222222222222222222\.diff"/);
+    assert.match(html, /href="https:\/\/github\.com\/example-org\/example-repo\/compare\/1111111111111111111111111111111111111111\.\.\.2222222222222222222222222222222222222222"/);
+    assert.doesNotMatch(html, /secret-token/);
+
+    context.selectNode("B");
+    html = element("selected-node-details").innerHTML;
+    assert.match(html, /No git refs recorded for this node/);
+    assert.match(html, /compare disabled: Missing base ref and head ref\./);
+    assert.match(html, /No changed files recorded for this node/);
+  });
+});
+
 test("visualizer diagnostics payload exposes attention, events, and read-only lock state", async () => {
   await withTempGraph(async (graphPath) => {
     const graph = await readGraph(graphPath);
@@ -1803,6 +1854,39 @@ test("planar SVG escapes node labels", () => {
   assert.match(svg, /&quot;quoted&quot;/);
   assert.doesNotMatch(svg, /<script>/);
   assert.doesNotMatch(svg, /"quoted"/);
+});
+
+test("planar SVG renders compact ref and diffstat labels inside nodes", () => {
+  const graph = fixtureGraph();
+  graph.graph.nodes.A.outputRef = {
+    name: "refs/heads/spg/node/A/run-a",
+    commit: "2222222222222222222222222222222222222222",
+    diffStat: { filesChanged: 3, insertions: 1200, deletions: 45, totalChanges: 1245 }
+  };
+  graph.graph.nodes.B.workRef = {
+    name: "refs/heads/spg/node/B/run-b",
+    commit: "3333333333333333333333333333333333333333"
+  };
+  graph.graph.nodes.C.baseRef = {
+    name: "refs/heads/spg/node/C/fallback-ref-name-with-extra-text"
+  };
+
+  const layout = buildPlanarLayout(graph);
+  const nodeA = layout.boxes.find((box) => box.id === "A");
+  const nodeB = layout.boxes.find((box) => box.id === "B");
+  const nodeC = layout.boxes.find((box) => box.id === "C");
+  assert.deepEqual(nodeA.refLabel, { commit: "2222222", insertions: "+1.2k", deletions: "-45", filesChanged: "3f" });
+  assert.deepEqual(nodeB.refLabel, { fallback: "3333333 ref" });
+  assert.deepEqual(nodeC.refLabel, { fallback: "ref spg/node/C/fall..." });
+
+  const svg = renderPlanarSvg(graph, { layout });
+  assert.match(svg, /class="sp-node-ref"/);
+  assert.match(svg, /<tspan class="sp-node-commit">2222222<\/tspan>/);
+  assert.match(svg, /<tspan class="sp-node-insertions"> \+1\.2k<\/tspan>/);
+  assert.match(svg, /<tspan class="sp-node-deletions"> -45<\/tspan>/);
+  assert.match(svg, /<tspan class="sp-node-files"> 3f<\/tspan>/);
+  assert.match(svg, /3333333 ref/);
+  assert.match(svg, /ref spg\/node\/C\/fall\.\.\./);
 });
 
 test("planar SVG escapes hostile graph titles and node ids in attributes", () => {

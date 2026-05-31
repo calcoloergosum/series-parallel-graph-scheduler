@@ -505,6 +505,17 @@ function renderHtml(): string {
       font-size: 13px;
       font-weight: 750;
     }
+    .sp-node-ref {
+      fill: var(--muted);
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      font-size: 10.5px;
+      font-weight: 800;
+      letter-spacing: 0;
+      text-anchor: end;
+    }
+    .sp-node-insertions { fill: var(--done); }
+    .sp-node-deletions { fill: var(--failed); }
+    .sp-node-files { fill: var(--muted); }
 
     .sp-node.status-done rect { stroke: var(--done); fill: #f0faf4; }
     .sp-node.status-claimed rect,

@@ -188,6 +188,17 @@ export function renderVisualizerHtml(): string {
       font-size: 13px;
       font-weight: 750;
     }
+    .sp-node-ref {
+      fill: var(--muted);
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      font-size: 10.5px;
+      font-weight: 800;
+      letter-spacing: 0;
+      text-anchor: end;
+    }
+    .sp-node-insertions { fill: var(--done); }
+    .sp-node-deletions { fill: var(--failed); }
+    .sp-node-files { fill: var(--muted); }
     .sp-node.status-done rect { stroke: var(--done); fill: #f0faf4; }
     .sp-node.status-claimed rect,
     .sp-node.status-running rect { stroke: var(--running); fill: #eef6ff; }
@@ -458,6 +469,83 @@ export function renderVisualizerHtml(): string {
       gap: 8px;
       margin: 10px 0;
     }
+    .inspector-section {
+      margin-top: 14px;
+      padding-top: 12px;
+      border-top: 1px solid var(--line);
+    }
+    .inspector-section h3 {
+      margin: 0 0 8px;
+      font-size: 14px;
+      letter-spacing: 0;
+    }
+    .git-action-row {
+      display: flex;
+      gap: 8px;
+      flex-wrap: wrap;
+      margin: 10px 0;
+    }
+    .git-action-link,
+    .git-action-disabled {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      min-height: 32px;
+      border-radius: 8px;
+      padding: 6px 10px;
+      font-size: 12px;
+      font-weight: 800;
+      text-decoration: none;
+    }
+    .git-action-link {
+      border: 1px solid var(--line);
+      color: var(--ink);
+      background: #fff;
+    }
+    .git-action-disabled {
+      border: 1px solid var(--line);
+      color: var(--muted);
+      background: #f1f4f8;
+      cursor: not-allowed;
+    }
+    .git-file-table-wrap {
+      max-height: 240px;
+      overflow: auto;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: #fff;
+    }
+    .git-file-table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 12px;
+    }
+    .git-file-table th,
+    .git-file-table td {
+      padding: 6px 8px;
+      border-bottom: 1px solid #edf1f5;
+      text-align: left;
+      vertical-align: top;
+    }
+    .git-file-table th {
+      position: sticky;
+      top: 0;
+      z-index: 1;
+      background: #f8fafc;
+      color: var(--muted);
+      font-size: 11px;
+      text-transform: uppercase;
+    }
+    .git-file-table td.number {
+      text-align: right;
+      white-space: nowrap;
+      font-variant-numeric: tabular-nums;
+    }
+    .git-file-path {
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      overflow-wrap: anywhere;
+      word-break: break-word;
+    }
     .modal-backdrop {
       position: fixed;
       inset: 0;
@@ -721,6 +809,18 @@ export function renderVisualizerHtml(): string {
     return value ? '<div class="meta">' + label + ': ' + escapeHtml(boundedText(value)) + '</div>' : "";
   }
 
+  function numericValue(value) {
+    return typeof value === "number" && Number.isFinite(value) ? value : undefined;
+  }
+
+  function additionsValue(value) {
+    return numericValue(value?.additions) ?? numericValue(value?.insertions);
+  }
+
+  function formatCount(value) {
+    return value === null || value === undefined ? "n/a" : String(value);
+  }
+
   function goalText(goal) {
     return typeof goal === "string" ? goal : goal?.text;
   }
@@ -970,6 +1070,10 @@ export function renderVisualizerHtml(): string {
       return { id: detail.id, node: detail };
     }
     return graphNodeEntries().find((entry) => entry.id === selectedNodeId);
+  }
+
+  function selectedDetail() {
+    return (latestPayload?.nodes || []).find((node) => node.id === selectedNodeId);
   }
 
   function nodeIsReady(nodeId) {
@@ -1260,6 +1364,231 @@ export function renderVisualizerHtml(): string {
     }).join("");
   }
 
+  function refLabel(ref) {
+    if (!ref) {
+      return "";
+    }
+    return ref.display || [ref.name, ref.commit ? ref.commit.slice(0, 12) : ""].filter(Boolean).join(" @ ");
+  }
+
+  function compareToken(ref) {
+    const value = ref?.commit || ref?.name;
+    if (!value) {
+      return "";
+    }
+    return String(value)
+      .replace(/^refs\\/heads\\//, "")
+      .replace(/^refs\\/remotes\\/origin\\//, "")
+      .replace(/^refs\\/remotes\\/[^/]+\\//, "");
+  }
+
+  function githubProjectUrl(remote) {
+    const text = String(remote || "").trim();
+    const httpsMatch = text.match(/^https?:\\/\\/(?:[^/@]+@)?github\\.com\\/([^/\\s]+)\\/([^/\\s]+?)(?:\\.git)?\\/?$/i);
+    const sshMatch = text.match(/^git@github\\.com:([^/\\s]+)\\/([^/\\s]+?)(?:\\.git)?$/i)
+      || text.match(/^ssh:\\/\\/git@github\\.com\\/([^/\\s]+)\\/([^/\\s]+?)(?:\\.git)?\\/?$/i);
+    const match = httpsMatch || sshMatch;
+    if (!match) {
+      return "";
+    }
+    return "https://github.com/" + encodeURIComponent(match[1]) + "/" + encodeURIComponent(match[2].replace(/\\.git$/i, ""));
+  }
+
+  function gitActionAvailability(detail) {
+    const refs = detail?.refs || {};
+    const footprint = detail?.gitFootprint || refs.gitFootprint || {};
+    const git = detail?.git || {};
+    const baseRef = git.baseRef || footprint.baseRef || refs.baseRef || detail?.baseRef;
+    const headRef = git.headRef || footprint.headRef || git.outputRef || refs.outputRef || refs.integrationRef || refs.workRef || detail?.outputRef || detail?.integrationRef || detail?.workRef || git.integrationRef || git.workRef;
+    const base = compareToken(baseRef);
+    const head = compareToken(headRef);
+    const remote = detail?.workspace?.remote || detail?.workspaceDisplay?.remote || git.remoteDisplay;
+    const projectUrl = githubProjectUrl(remote);
+    const missing = [];
+    if (!base) {
+      missing.push("base ref");
+    }
+    if (!head) {
+      missing.push("head ref");
+    }
+    if (missing.length) {
+      return { disabledReason: "Missing " + missing.join(" and ") + "." };
+    }
+    if (!remote) {
+      return { disabledReason: "Missing git remote metadata." };
+    }
+    if (!projectUrl) {
+      return { disabledReason: "Compare links require a GitHub remote." };
+    }
+    const range = encodeURIComponent(base) + "..." + encodeURIComponent(head);
+    const compareUrl = projectUrl + "/compare/" + range;
+    return {
+      compareUrl,
+      diffUrl: compareUrl + ".diff"
+    };
+  }
+
+  function appendGitActionLinks(parent, detail) {
+    const availability = gitActionAvailability(detail);
+    const row = document.createElement("div");
+    row.className = "git-action-row";
+    if (availability.compareUrl && availability.diffUrl) {
+      for (const [label, href] of [["Open diff", availability.diffUrl], ["Compare", availability.compareUrl]]) {
+        const link = document.createElement("a");
+        link.className = "git-action-link";
+        link.setAttribute("target", "_blank");
+        link.setAttribute("rel", "noreferrer");
+        link.setAttribute("href", href);
+        link.textContent = label;
+        row.append(link);
+      }
+      parent.append(row);
+      return;
+    }
+    const reason = availability.disabledReason || "Compare metadata is incomplete.";
+    for (const label of ["Open diff", "Compare"]) {
+      const disabled = document.createElement("span");
+      disabled.className = "git-action-disabled";
+      disabled.setAttribute("aria-disabled", "true");
+      disabled.setAttribute("title", reason);
+      disabled.textContent = label;
+      row.append(disabled);
+    }
+    parent.append(row);
+    appendMetaLine(parent, "compare disabled", reason);
+  }
+
+  function appendGitDiffStat(parent, stat) {
+    if (!stat) {
+      const empty = document.createElement("p");
+      empty.className = "meta";
+      empty.textContent = "No diffstat totals recorded.";
+      parent.append(empty);
+      return;
+    }
+    const additions = additionsValue(stat);
+    const grid = document.createElement("div");
+    grid.className = "detail-grid";
+    appendMetaLine(parent, "diffstat", stat.filesChanged + " files, +" + additions + " / -" + stat.deletions);
+    appendMetaLine(grid, "files", stat.filesChanged);
+    appendMetaLine(grid, "insertions", additions);
+    appendMetaLine(grid, "deletions", stat.deletions);
+    appendMetaLine(grid, "total", stat.totalChanges);
+    appendMetaLine(grid, "binary", stat.binaryFiles);
+    parent.append(grid);
+  }
+
+  function appendChangedFiles(parent, files, truncated) {
+    if (!files?.length) {
+      const empty = document.createElement("p");
+      empty.className = "meta";
+      empty.textContent = "No changed files recorded for this node.";
+      parent.append(empty);
+      return;
+    }
+    const summaryRows = files.map((file) => {
+      const oldPath = file.oldPath ? " from " + file.oldPath : "";
+      const type = file.changeType ? " [" + file.changeType + "]" : "";
+      return file.path + oldPath + type + " +" + formatCount(additionsValue(file)) + " / -" + formatCount(file.deletions);
+    });
+    if (truncated > 0) {
+      summaryRows.push("+" + truncated + " more files");
+    }
+    appendMetaLine(parent, "changed files", summaryRows.join("\\n"));
+    const wrap = document.createElement("div");
+    wrap.className = "git-file-table-wrap";
+    const table = document.createElement("table");
+    table.className = "git-file-table";
+    table.setAttribute("aria-label", "Changed files");
+    const thead = document.createElement("thead");
+    const headRow = document.createElement("tr");
+    for (const label of ["Path", "Ins", "Del"]) {
+      const th = document.createElement("th");
+      th.setAttribute("scope", "col");
+      th.textContent = label;
+      headRow.append(th);
+    }
+    thead.append(headRow);
+    const tbody = document.createElement("tbody");
+    for (const file of files) {
+      const additions = additionsValue(file);
+      const path = file.oldPath && file.oldPath !== file.path ? file.oldPath + " -> " + file.path : file.path;
+      const changeType = file.changeType || (file.binary ? "binary" : "");
+      const row = document.createElement("tr");
+      const pathCell = document.createElement("td");
+      pathCell.className = "git-file-path";
+      pathCell.append(path);
+      if (changeType) {
+        const type = document.createElement("div");
+        type.className = "meta";
+        type.textContent = changeType;
+        pathCell.append(type);
+      }
+      const insertionsCell = document.createElement("td");
+      insertionsCell.className = "number";
+      insertionsCell.textContent = formatCount(additions);
+      const deletionsCell = document.createElement("td");
+      deletionsCell.className = "number";
+      deletionsCell.textContent = formatCount(file.deletions);
+      row.append(pathCell, insertionsCell, deletionsCell);
+      tbody.append(row);
+    }
+    table.append(thead, tbody);
+    wrap.append(table);
+    parent.append(wrap);
+  }
+
+  function appendGitInspectorSection(parent, detail) {
+    const refs = detail?.refs || {};
+    const footprint = detail?.gitFootprint || refs.gitFootprint || {};
+    const git = detail?.git || {};
+    const section = document.createElement("section");
+    section.className = "inspector-section";
+    section.setAttribute("aria-label", "Git inspector");
+
+    for (const label of ["Git Footprint", "Git Refs"]) {
+      const heading = document.createElement("h3");
+      heading.textContent = label;
+      section.append(heading);
+    }
+
+    const hasGitMetadata = git.commit || git.branch || git.baseRef || git.workRef || git.outputRef || git.integrationRef || git.headRef
+      || refs.baseRef || refs.workRef || refs.outputRef || refs.integrationRef || detail?.baseRef || detail?.workRef || detail?.outputRef || detail?.integrationRef
+      || footprint.commit || footprint.branch || footprint.baseRef || footprint.headRef || git.source || footprint.source || git.remoteDisplay || git.workspaceDisplay;
+    if (hasGitMetadata) {
+      appendMetaLine(section, "commit", git.commit || footprint.commit);
+      appendMetaLine(section, "branch", git.branch || footprint.branch);
+      appendMetaLine(section, "base", refLabel(git.baseRef || footprint.baseRef || refs.baseRef || detail?.baseRef));
+      appendMetaLine(section, "work", refLabel(git.workRef || refs.workRef || detail?.workRef));
+      appendMetaLine(section, "head", refLabel(git.headRef || git.outputRef || footprint.headRef || refs.outputRef || refs.integrationRef || detail?.outputRef || detail?.integrationRef));
+      appendMetaLine(section, "output", refLabel(git.outputRef || refs.outputRef || detail?.outputRef));
+      appendMetaLine(section, "integration", git.integrationRef?.name || refs.integrationRef?.name || detail?.integrationRef?.name);
+      appendMetaLine(section, "source", git.source || footprint.source);
+      appendMetaLine(section, "collected", git.collectedAt || footprint.collectedAt || detail?.outputRef?.collectedAt);
+      appendMetaLine(section, "remote", git.remoteDisplay);
+      appendMetaLine(section, "workspace", git.workspaceDisplay);
+    } else {
+      const empty = document.createElement("p");
+      empty.className = "meta";
+      empty.textContent = "No git refs recorded for this node.";
+      section.append(empty);
+    }
+
+    appendGitActionLinks(section, detail || {});
+
+    const diffHeading = document.createElement("h3");
+    diffHeading.textContent = "Diffstat";
+    section.append(diffHeading);
+    appendGitDiffStat(section, git.diffStat || detail?.gitDiffStat || footprint.diffStat || detail?.outputRef?.diffStat);
+
+    const filesHeading = document.createElement("h3");
+    filesHeading.textContent = "Changed Files";
+    section.append(filesHeading);
+    appendChangedFiles(section, git.changedFiles || detail?.changedFiles || footprint.files || detail?.outputRef?.files || [], git.changedFilesTruncated || 0);
+
+    parent.append(section);
+  }
+
   function renderFilterSummary(visibleReady, visibleWorking, visibleWorkers) {
     const query = filters.query ? ' / search "' + filters.query + '"' : "";
     const message = "Showing " + visibleReady.length + " ready, " + visibleWorking.length + " active, " + visibleWorkers.length + " workers" + query + ".";
@@ -1271,7 +1600,8 @@ export function renderVisualizerHtml(): string {
     const details = document.getElementById("selected-node-details");
     const summary = document.getElementById("selected-worker-summary");
     const entry = selectedEntry();
-    if (!entry) {
+    const detail = selectedDetail();
+    if (!entry && !detail) {
       details.textContent = "";
       const empty = document.createElement("p");
       empty.textContent = "Select a node to inspect it.";
@@ -1280,7 +1610,11 @@ export function renderVisualizerHtml(): string {
       document.getElementById("start-selected-worker").disabled = true;
       return;
     }
-    const { id, node } = entry;
+    const id = detail?.id || entry?.id;
+    const node = detail || entry?.node;
+    if (!id || !node) {
+      return;
+    }
     const ready = nodeIsReady(id);
     document.getElementById("start-selected-worker").disabled = !ready;
     summary.textContent = ready ? "Selected: " + id + " is ready." : "Selected: " + id + " is " + (node.status || "pending") + ".";
@@ -1333,9 +1667,10 @@ export function renderVisualizerHtml(): string {
     appendMetaLine(details, "run", node.lease?.runId || node.runId);
     appendMetaLine(details, "question", node.question);
     appendMetaLine(details, "answer", node.answer);
-    appendGitFootprintSection(details, node.git);
+    appendGitInspectorSection(details, detail || node);
 
     const section = document.createElement("section");
+    section.className = "inspector-section";
     const historyHeading = document.createElement("h3");
     historyHeading.textContent = "History";
     const historyBody = document.createElement("p");
@@ -1348,7 +1683,7 @@ export function renderVisualizerHtml(): string {
   }
 
   function appendMetaLine(parent, label, value) {
-    if (!value) {
+    if (value === undefined || value === null || value === "") {
       return;
     }
     const line = document.createElement("div");
