@@ -65,7 +65,7 @@ export const operationalEventTaxonomy = [
   {
     name: operationalEvents.done,
     producer: "graph-history",
-    stableFields: ["at", "event", "previousStatus", "status", "session", "runId", "completedAt", "report", "clearedFields"],
+    stableFields: ["at", "event", "previousStatus", "status", "session", "runId", "completedAt", "report", "clearedFields", "diffStatCollected", "diffStat"],
     description: "A worker completed a leaf."
   },
   {
@@ -131,7 +131,7 @@ export const operationalEventTaxonomy = [
   {
     name: operationalEvents.outputRefRecorded,
     producer: "graph-history",
-    stableFields: ["at", "event", "session", "runId", "workRef", "outputRef", "commit", "report"],
+    stableFields: ["at", "event", "session", "runId", "workRef", "outputRef", "commit", "report", "diffStatCollected", "diffStat"],
     description: "An isolated worker recorded the output ref produced by a completed run."
   },
   {
@@ -149,7 +149,7 @@ export const operationalEventTaxonomy = [
   {
     name: operationalEvents.parentRefPublished,
     producer: "graph-history",
-    stableFields: ["at", "event", "parentId", "kind", "integrationRef", "outputRef", "commit", "result"],
+    stableFields: ["at", "event", "parentId", "kind", "integrationRef", "outputRef", "commit", "result", "diffStatCollected", "diffStat"],
     description: "A composition parent published the output ref used by downstream isolated work."
   },
   {

@@ -7,6 +7,7 @@ import {
   knownNodeStatuses,
   type AnswerNodeResult,
   type DecomposeNodeResult,
+  type GitDiffStatMetadata,
   type GraphNode,
   type LeaseClaimResult,
   type NodeBaseRefMetadata,
@@ -31,6 +32,7 @@ import {
 import { validatePlanGraphFileResult } from "./contracts.js";
 
 import { defaultGraphPath, readGraph, withGraphLock, writeGraphAtomic, writeReportFile } from "./graph-io.js";
+import { collectGitDiffStat } from "./git-runtime.js";
 import {
   findAncestorIds,
   getNode,
@@ -136,7 +138,7 @@ interface UpdateNodeStatusOptions {
   status: NodeStatus;
   owner?: LeaseOwner;
   validate?: (graph: PlanGraphFile, node: GraphNode) => void;
-  patch?: (node: GraphNode, graph: PlanGraphFile) => Record<string, unknown> | void;
+  patch?: (node: GraphNode, graph: PlanGraphFile) => Record<string, unknown> | void | Promise<Record<string, unknown> | void>;
 }
 
 export type SchedulerTransitionActor = "worker" | "operator" | "system";
@@ -282,9 +284,11 @@ const resetClearedFields = [
   "workspace",
   "workRef",
   "outputRef",
-  "integrationRef"
+  "integrationRef",
+  "gitFootprint",
+  "gitFootprintWarning"
 ] as const;
-const compositionResetClearedFields = ["outputRef", "integrationRef"] as const;
+const compositionResetClearedFields = ["outputRef", "integrationRef", "gitFootprint", "gitFootprintWarning"] as const;
 
 export async function claimNode(
   graphPath: string,
@@ -399,9 +403,14 @@ export async function completeNode(
       assertStatus(node, schedulerTransitionTable.done.allowedFrom, "complete");
       assertOutputRefWhenIsolationRequired(graph, nodeId, node, refMetadata);
     },
-    patch: (node) => {
+    patch: async (node, graph) => {
       node.completedAt = new Date().toISOString();
       applyWorkerRefMetadata(node, refMetadata, { session, runId, report, now: node.completedAt });
+      const footprintDetails = await attachGitFootprintMetadata(graph, graphPath, nodeId as NodeId, node, {
+        now: node.completedAt,
+        cloneCwd: refMetadata?.cloneCwd,
+        bareRepoPath: refMetadata?.bareRepo
+      });
       if (report) {
         node.report = report;
       }
@@ -411,7 +420,8 @@ export async function completeNode(
       return {
         completedAt: node.completedAt,
         report,
-        clearedFields: ["lease", "blockedReason", "question"]
+        clearedFields: ["lease", "blockedReason", "question"],
+        ...footprintDetails
       };
     }
   });
@@ -752,6 +762,10 @@ export async function publishResolvedIntegration(
     if (reportPath) {
       node.report = reportPath;
     }
+    const footprintDetails = await attachGitFootprintMetadata(graph, graphPath, nodeId, node, {
+      now: completedAt,
+      cloneCwd: typeof node.integrationRef.workspace === "string" ? node.integrationRef.workspace : undefined
+    });
     appendHistory(node, operationalEvents.parentRefPublished, {
       parentId: nodeId,
       kind: "parallel",
@@ -760,7 +774,8 @@ export async function publishResolvedIntegration(
       commit,
       result: "manual-resolution",
       ...(reportPath ? { report: reportPath } : {}),
-      ...(clearedFields.length > 0 ? { clearedFields } : {})
+      ...(clearedFields.length > 0 ? { clearedFields } : {}),
+      ...footprintDetails
     });
     appendHistory(node, operationalEvents.subtreeDone, {
       previousStatus,
@@ -881,7 +896,7 @@ async function updateNodeStatus(graphPath: string, { nodeId, status, owner, vali
     assertLeaseOwner(node, owner);
     const previousStatus = node.status || "pending";
     node.status = status;
-    const patchDetails = patch?.(node, graph) || {};
+    const patchDetails = await patch?.(node, graph) || {};
     appendHistory(node, mutationEventForStatus(status), {
       previousStatus,
       status,
@@ -1057,6 +1072,10 @@ async function publishSeriesAliasIfRequired(
     source: "series-alias",
     aliasOfNodeId: finalChildId
   };
+  const footprintDetails = await attachGitFootprintMetadata(graph, graphPath, parentId, node, {
+    now: publishedAt,
+    bareRepoPath: parallelBareRepoPath(graphPath)
+  });
   appendHistory(node, operationalEvents.parentRefPublished, {
     parentId,
     kind: "series",
@@ -1065,7 +1084,8 @@ async function publishSeriesAliasIfRequired(
     commit: finalOutput.commit,
     result: "clean",
     finalChildId,
-    childOutputRef: finalOutput.name
+    childOutputRef: finalOutput.name,
+    ...footprintDetails
   });
   return "published";
 }
@@ -1224,6 +1244,7 @@ async function publishParallelIntegrationIfRequired(
 
   const commit = gitText(["-C", workspace, "rev-parse", "HEAD"]).trim();
   const reportPath = parallelIntegrationReportPath(parentId, reportAttemptId);
+  const producedAt = new Date().toISOString();
   node.integrationRef = {
     ...node.integrationRef,
     status: "clean",
@@ -1236,9 +1257,14 @@ async function publishParallelIntegrationIfRequired(
     commit,
     runId: reportAttemptId,
     report: reportPath,
-    producedAt: new Date().toISOString(),
+    producedAt,
     source: "parallel-integration"
   };
+  const footprintDetails = await attachGitFootprintMetadata(graph, graphPath, parentId, node, {
+    now: producedAt,
+    cloneCwd: workspace,
+    bareRepoPath: bareRepo
+  });
   const clearedFields = clearCompositionBlockState(node);
   await writeReportFile(graphPath, reportPath, formatParallelIntegrationReport({
     parentId,
@@ -1260,7 +1286,8 @@ async function publishParallelIntegrationIfRequired(
     commit,
     result: "clean",
     report: reportPath,
-    ...(clearedFields.length > 0 ? { clearedFields } : {})
+    ...(clearedFields.length > 0 ? { clearedFields } : {}),
+    ...footprintDetails
   });
   return "published";
 }
@@ -1778,6 +1805,114 @@ function reopenUnresolvedCompositionAncestors(
   return reopened;
 }
 
+interface GitFootprintHistoryDetails {
+  diffStatCollected?: boolean;
+  diffStat?: GitDiffStatMetadata;
+  gitFootprintCollectedAt?: string;
+  gitFootprintWarning?: string;
+}
+
+async function attachGitFootprintMetadata(
+  graph: PlanGraphFile,
+  graphPath: string,
+  nodeId: NodeId,
+  node: GraphNode,
+  {
+    now,
+    cloneCwd,
+    bareRepoPath
+  }: {
+    now: string;
+    cloneCwd?: string;
+    bareRepoPath?: string;
+  }
+): Promise<GitFootprintHistoryDetails> {
+  if (!node.outputRef?.name) {
+    return {};
+  }
+
+  if (node.outputRef.diffStat && node.gitFootprint?.diffStat) {
+    return {
+      diffStatCollected: true,
+      diffStat: node.outputRef.diffStat,
+      gitFootprintCollectedAt: node.outputRef.collectedAt || node.gitFootprint.collectedAt
+    };
+  }
+
+  const baseRef = ensureNodeBaseRef(graph, nodeId, node, now);
+  if (!baseRef?.name) {
+    return recordGitFootprintWarning(node, `Git diffstat omitted: missing baseRef.name for ${nodeId}`);
+  }
+
+  const effectiveCloneCwd = cloneCwd || node.workspace?.cloneCwd;
+  const effectiveBareRepoPath = bareRepoPath || node.workspace?.bareRepo;
+  if (!effectiveCloneCwd && !effectiveBareRepoPath) {
+    return recordGitFootprintWarning(node, `Git diffstat omitted: missing cloneCwd or bareRepo for ${nodeId}`);
+  }
+
+  try {
+    const collected = await collectGitDiffStat({
+      cloneCwd: effectiveCloneCwd,
+      bareRepoPath: effectiveCloneCwd ? undefined : effectiveBareRepoPath,
+      baseRef: baseRef.commit || baseRef.name,
+      baseRefName: baseRef.name,
+      headRef: node.outputRef.commit || node.outputRef.name,
+      headRefName: node.outputRef.name,
+      collectedAt: now
+    });
+    if (!collected.ok) {
+      return recordGitFootprintWarning(node, collected.warning);
+    }
+
+    node.gitFootprint = mergeDefined(node.gitFootprint, collected.footprint);
+    node.outputRef = mergeDefined(node.outputRef, {
+      commit: node.outputRef.commit || collected.footprint.headRef?.commit,
+      diffStat: collected.diffStat,
+      files: collected.files,
+      collectedAt: collected.footprint.collectedAt
+    });
+    delete node.gitFootprintWarning;
+    return {
+      diffStatCollected: true,
+      diffStat: collected.diffStat,
+      gitFootprintCollectedAt: collected.footprint.collectedAt
+    };
+  } catch (error) {
+    return recordGitFootprintWarning(node, `Git diffstat collection failed: ${errorMessage(error)}`);
+  }
+}
+
+function ensureNodeBaseRef(
+  graph: PlanGraphFile,
+  nodeId: NodeId,
+  node: GraphNode,
+  now: string
+): NodeBaseRefMetadata | undefined {
+  if (node.baseRef?.name) {
+    return node.baseRef;
+  }
+
+  try {
+    const resolved = resolveNodeBaseRef(graph, nodeId);
+    node.baseRef = {
+      ...node.baseRef,
+      ...resolved,
+      resolvedAt: now
+    };
+    return node.baseRef;
+  } catch {
+    return undefined;
+  }
+}
+
+function recordGitFootprintWarning(node: GraphNode, warning: string): GitFootprintHistoryDetails {
+  node.gitFootprintWarning = warning;
+  return {
+    diffStatCollected: false,
+    gitFootprintWarning: warning
+  };
+}
+
 function applyWorkerRefMetadata(
   node: GraphNode,
   refMetadata: WorkerRunRefMetadata | undefined,
@@ -1815,6 +1950,9 @@ function applyWorkerRefMetadata(
   if (refMetadata.gitFootprint) {
     node.gitFootprint = mergeDefined(node.gitFootprint, refMetadata.gitFootprint);
   }
+  if (refMetadata.gitFootprintWarning) {
+    node.gitFootprintWarning = refMetadata.gitFootprintWarning;
+  }
 
   if (workspace) {
     appendHistory(node, operationalEvents.clonePrepared, {
@@ -1842,9 +1980,27 @@ function applyWorkerRefMetadata(
       workRef: node.workRef?.name,
       outputRef: node.outputRef?.name,
       commit: node.outputRef?.commit,
-      report
+      report,
+      ...outputRefFootprintHistoryDetails(node)
     });
   }
+}
+
+function outputRefFootprintHistoryDetails(node: GraphNode): GitFootprintHistoryDetails {
+  if (node.outputRef?.diffStat) {
+    return {
+      diffStatCollected: true,
+      diffStat: node.outputRef.diffStat,
+      gitFootprintCollectedAt: node.outputRef.collectedAt || node.gitFootprint?.collectedAt
+    };
+  }
+  if (node.gitFootprintWarning) {
+    return {
+      diffStatCollected: false,
+      gitFootprintWarning: node.gitFootprintWarning
+    };
+  }
+  return {};
 }
 
 function buildWorkspaceMetadata(

@@ -923,10 +923,22 @@ test("nested parallel and series composition buffers publish refs before downstr
     assert.equal(reconciled.graph.nodes.FANOUT.status, "done");
     assert.equal(reconciled.graph.nodes.FANOUT.integrationRef.status, "clean");
     assert.deepEqual(reconciled.graph.nodes.FANOUT.integrationRef.inputRefs.map((input) => input.nodeId), ["LEFT", "RIGHT"]);
+    assert.deepEqual(reconciled.graph.nodes.FANOUT.outputRef.diffStat, { filesChanged: 2, additions: 2, deletions: 0, totalChanges: 2 });
+    assert.deepEqual(reconciled.graph.nodes.FANOUT.gitFootprint.diffStat, reconciled.graph.nodes.FANOUT.outputRef.diffStat);
     assert.equal(reconciled.graph.nodes.SERIES.status, "done");
     assert.equal(reconciled.graph.nodes.SERIES.outputRef.name, tailRef.name);
+    assert.deepEqual(reconciled.graph.nodes.SERIES.outputRef.diffStat, { filesChanged: 1, additions: 1, deletions: 0, totalChanges: 1 });
+    assert.deepEqual(reconciled.graph.nodes.SERIES.gitFootprint.diffStat, reconciled.graph.nodes.SERIES.outputRef.diffStat);
     assert.deepEqual(reconciled.graph.nodes.SERIES.integrationRef.inputRefs.map((input) => input.nodeId), ["FANOUT", "TAIL"]);
     assert.equal(reconciled.graph.nodes.SERIES.integrationRef.inputRefs[0].outputRef, reconciled.graph.nodes.FANOUT.outputRef.name);
+    const fanoutPublishEvent = reconciled.graph.nodes.FANOUT.history.find((entry) => entry.event === "parent-ref-published");
+    assert.equal(fanoutPublishEvent.diffStatCollected, true);
+    assert.deepEqual(fanoutPublishEvent.diffStat, reconciled.graph.nodes.FANOUT.outputRef.diffStat);
+    assert.equal("files" in fanoutPublishEvent, false);
+    const seriesPublishEvent = reconciled.graph.nodes.SERIES.history.find((entry) => entry.event === "parent-ref-published");
+    assert.equal(seriesPublishEvent.diffStatCollected, true);
+    assert.deepEqual(seriesPublishEvent.diffStat, reconciled.graph.nodes.SERIES.outputRef.diffStat);
+    assert.equal("files" in seriesPublishEvent, false);
     assert.deepEqual(listReadyLeafNodes(reconciled).map((node) => node.id), ["DOWNSTREAM"]);
   });
 });
@@ -1146,6 +1158,123 @@ test("git diffstat collector returns a warning for missing refs", async () => {
 
     assert.equal(collected.ok, false);
     assert.match(collected.warning, /missing base ref refs\/heads\/missing-base/);
+  });
+});
+
+test("completeNode backfills git footprint metadata from output refs", async () => {
+  await withLocalBareRemote(async ({ dir, sourcePath, remotePath }) => {
+    const graphDir = join(dir, "graph");
+    const graphPath = join(graphDir, "plan.graph.json");
+    await mkdir(graphDir);
+    const outputRef = await createSourceBranch({
+      sourcePath,
+      remotePath,
+      branchName: "direct-complete",
+      files: { "direct.txt": "done\n" },
+      message: "direct complete"
+    });
+    const bareRepoPath = await prepareCompositionBareRepository({ graphDir, remotePath });
+    const graph = {
+      graphVersion: 1,
+      scheduler: { remote: remotePath, baseRef: "refs/heads/main" },
+      graph: {
+        root: "A",
+        nodes: {
+          A: {
+            title: "Direct complete",
+            kind: "task",
+            status: "running",
+            vendorMetadata: { preserved: true },
+            lease: {
+              session: "codex-A",
+              runId: "run-direct",
+              claimedAt: "2026-05-31T00:00:00.000Z",
+              expiresAt: "2999-01-01T00:00:00.000Z"
+            },
+            baseRef: { name: "refs/heads/main" }
+          }
+        }
+      }
+    };
+    await writeFile(graphPath, `${JSON.stringify(graph, null, 2)}\n`, "utf8");
+
+    await completeNode(graphPath, {
+      nodeId: "A",
+      session: "codex-A",
+      runId: "run-direct",
+      report: "reports/A.md",
+      refMetadata: {
+        bareRepo: bareRepoPath,
+        outputRef
+      }
+    });
+
+    const completed = await readGraph(graphPath);
+    const node = completed.graph.nodes.A;
+    assert.equal(node.status, "done");
+    assert.deepEqual(node.vendorMetadata, { preserved: true });
+    assert.equal(node.outputRef.name, outputRef.name);
+    assert.deepEqual(node.outputRef.diffStat, { filesChanged: 1, additions: 1, deletions: 0, totalChanges: 1 });
+    assert.deepEqual(node.gitFootprint.diffStat, node.outputRef.diffStat);
+    assert.equal(node.gitFootprint.headRef.name, outputRef.name);
+    const doneEvent = lastHistory(node);
+    assert.equal(doneEvent.event, "done");
+    assert.equal(doneEvent.diffStatCollected, true);
+    assert.deepEqual(doneEvent.diffStat, node.outputRef.diffStat);
+    assert.equal("files" in doneEvent, false);
+  });
+});
+
+test("completeNode keeps successful completion when git footprint collection fails", async () => {
+  await withLocalBareRemote(async ({ dir }) => {
+    const graphDir = join(dir, "graph");
+    const graphPath = join(graphDir, "plan.graph.json");
+    await mkdir(graphDir);
+    const graph = {
+      graphVersion: 1,
+      graph: {
+        root: "A",
+        nodes: {
+          A: {
+            title: "Direct complete without stats",
+            kind: "task",
+            status: "running",
+            lease: {
+              session: "codex-A",
+              runId: "run-direct-warning",
+              claimedAt: "2026-05-31T00:00:00.000Z",
+              expiresAt: "2999-01-01T00:00:00.000Z"
+            },
+            baseRef: { name: "refs/heads/main" }
+          }
+        }
+      }
+    };
+    await writeFile(graphPath, `${JSON.stringify(graph, null, 2)}\n`, "utf8");
+
+    await completeNode(graphPath, {
+      nodeId: "A",
+      session: "codex-A",
+      runId: "run-direct-warning",
+      refMetadata: {
+        bareRepo: join(dir, "missing.git"),
+        outputRef: {
+          name: "refs/heads/missing-output",
+          commit: "1".repeat(40)
+        }
+      }
+    });
+
+    const completed = await readGraph(graphPath);
+    const node = completed.graph.nodes.A;
+    assert.equal(node.status, "done");
+    assert.equal(node.outputRef.name, "refs/heads/missing-output");
+    assert.equal(node.outputRef.diffStat, undefined);
+    assert.match(node.gitFootprintWarning, /Git diffstat omitted/);
+    const doneEvent = lastHistory(node);
+    assert.equal(doneEvent.diffStatCollected, false);
+    assert.match(doneEvent.gitFootprintWarning, /Git diffstat omitted/);
+    assert.equal("files" in doneEvent, false);
   });
 });
 

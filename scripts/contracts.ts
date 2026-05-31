@@ -257,6 +257,7 @@ export interface GraphNode {
   outputRef?: NodeOutputRefMetadata;
   integrationRef?: NodeIntegrationRefMetadata;
   gitFootprint?: NodeGitFootprintMetadata;
+  gitFootprintWarning?: string;
   workspace?: NodeWorkspaceMetadata;
   [metadata: string]: unknown;
 }
