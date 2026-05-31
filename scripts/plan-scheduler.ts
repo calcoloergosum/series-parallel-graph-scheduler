@@ -39,6 +39,7 @@ import {
 } from "./graph-traversal.js";
 import {
   answerNode,
+  applyPlannerPreview,
   blockNode,
   claimNode,
   completeNode,
@@ -49,6 +50,7 @@ import {
   recordWorkerPlannerAttempt,
   recordWorkerRefMetadata,
   releaseExpiredLeases,
+  rejectPlannerPreview,
   renewNodeLease,
   resetNode,
   resetReachable,
@@ -102,6 +104,7 @@ export {
 } from "./graph-traversal.js";
 export {
   answerNode,
+  applyPlannerPreview,
   blockNode,
   claimNode,
   completeNode,
@@ -112,6 +115,7 @@ export {
   recordWorkerPlannerAttempt,
   recordWorkerRefMetadata,
   releaseExpiredLeases,
+  rejectPlannerPreview,
   renewNodeLease,
   resetNode,
   resetReachable,
@@ -271,6 +275,8 @@ function cliHandlers(): CliCommandHandlers {
     answerNode,
     failNode,
     decomposeNode,
+    applyPlannerPreview,
+    rejectPlannerPreview,
     buildWorkerPrompt,
     runWorker,
     reconcileGraphStatus,
@@ -299,6 +305,7 @@ function workerRuntime() {
     failNode,
     blockNode,
     decomposeNode,
+    applyPlannerPreview,
     publishResolvedIntegration,
     recordWorkerPlannerAttempt,
     recordWorkerRefMetadata,
@@ -333,6 +340,8 @@ function visualizerRuntime() {
     resetSubtree,
     resetReachable,
     decomposeNode,
+    applyPlannerPreview,
+    rejectPlannerPreview,
     reconcileGraphStatus,
     releaseExpiredLeases,
     renderPlanAfterUpdate,

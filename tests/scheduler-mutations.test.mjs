@@ -1,5 +1,5 @@
 import test from "node:test";
-import { addUnknownMetadata, answerNode, assert, assertUnknownMetadata, attachReadyPriorityFields, blockNode, buildGoalGraphFromPlannerResponse, buildPlannerPrompt, buildPlannerRuntimeRequest, buildReachableParentMap, buildReadyPrioritySelections, buildRelevantContext, buildStableRootPathMap, buildVisualizerPayload, buildWorkerPrompt, checkSchedulerTransitionReference, claimNode, compareReadyPriorityCandidates, completeNode, completedDeepReadinessGraph, concurrentMutationGraph, countSharedParentsWithCurrentTask, createFixturePlannerRuntime, createPromptPlannerRuntime, decomposeNode, deepReadinessGraph, depthPriorityGraph, diagnoseGraph, dirname, escapeRegExp, execFileAsync, failNode, knownTransitionStatuses, lastHistory, leafOnlyChildCountPriorityGraph, listReadyLeafNodes, listWorkingNodes, lockArtifacts, mutationOwnershipDocsPath, nestedResetReachabilityGraph, parsePlannerResponse, planNodeDecomposition, plannerResponseToDecomposeMutation, readGraph, readyIds, reconcileGraphStatus, releaseExpiredLeases, renewNodeLease, resetNode, resetReachable, resetSubtree, schedulerScriptPath, schedulerTransitionTable, setNodeStatus, sharedParentPriorityGraph, startNode, stressScriptPath, validatePlanGraphFileResult, validatePlannerResponse, withTempGraph, writeFile } from "./helpers/plan-scheduler-harness.mjs";
+import { addUnknownMetadata, answerNode, applyPlannerPreview, assert, assertUnknownMetadata, attachReadyPriorityFields, blockNode, buildGoalGraphFromPlannerResponse, buildPlannerPrompt, buildPlannerRuntimeRequest, buildReachableParentMap, buildReadyPrioritySelections, buildRelevantContext, buildStableRootPathMap, buildVisualizerPayload, buildWorkerPrompt, checkSchedulerTransitionReference, claimNode, compareReadyPriorityCandidates, completeNode, completedDeepReadinessGraph, concurrentMutationGraph, countSharedParentsWithCurrentTask, createFixturePlannerRuntime, createPromptPlannerRuntime, decomposeNode, deepReadinessGraph, depthPriorityGraph, diagnoseGraph, dirname, escapeRegExp, execFileAsync, failNode, knownTransitionStatuses, lastHistory, leafOnlyChildCountPriorityGraph, listReadyLeafNodes, listWorkingNodes, lockArtifacts, mutationOwnershipDocsPath, nestedResetReachabilityGraph, parsePlannerResponse, planNodeDecomposition, plannerResponseToDecomposeMutation, readGraph, readyIds, reconcileGraphStatus, rejectPlannerPreview, releaseExpiredLeases, renewNodeLease, resetNode, resetReachable, resetSubtree, schedulerScriptPath, schedulerTransitionTable, setNodeStatus, sharedParentPriorityGraph, startNode, stressScriptPath, validatePlanGraphFileResult, validatePlannerResponse, withTempGraph, writeFile } from "./helpers/plan-scheduler-harness.mjs";
 
 function priorityCandidate(id, depth, childCount, sharedParentCountWithCurrentTask) {
   return {
@@ -59,6 +59,29 @@ function activateSharedParentCurrent(graph, session = "codex-A") {
 
 function cloneGraph(graph) {
   return JSON.parse(JSON.stringify(graph));
+}
+
+async function attachTransitionPreview(graphPath, { requestId, kind, childId, childTitle }) {
+  const graph = await readGraph(graphPath);
+  const node = graph.graph.nodes.A;
+  node.pendingPlannerPreview = {
+    requestId,
+    proposedKind: kind,
+    graphVersion: graph.graphVersion,
+    nodeState: {
+      status: node.status,
+      kind: node.kind,
+      children: Array.isArray(node.children) ? [...node.children] : undefined,
+      lease: node.lease ? { session: node.lease.session, runId: node.lease.runId } : undefined,
+      blockedReason: node.blockedReason,
+      question: node.question,
+      report: node.report
+    },
+    childIds: [childId],
+    response: { kind, title: "Transition preview", children: [{ id: childId, title: childTitle }] },
+    decompose: { kind, children: [{ id: childId, title: childTitle }] }
+  };
+  await writeFile(graphPath, `${JSON.stringify(graph, null, 2)}\n`, "utf8");
 }
 
 function reorderGraphNodes(graph, nodeOrder) {
@@ -1146,6 +1169,7 @@ test("mutations preserve unknown metadata and record contextual history", async 
 test("scheduler transition table documents mutating commands and actors", () => {
   assert.deepEqual(Object.keys(schedulerTransitionTable).sort(), [
     "answer",
+    "apply-preview",
     "block",
     "claim",
     "decompose",
@@ -1157,6 +1181,7 @@ test("scheduler transition table documents mutating commands and actors", () => 
     "reset",
     "reset-reachable",
     "reset-subtree",
+    "reject-preview",
     "start"
   ].sort());
   assert.equal(schedulerTransitionTable.start.actor, "worker");
@@ -1165,6 +1190,8 @@ test("scheduler transition table documents mutating commands and actors", () => 
   assert.equal(schedulerTransitionTable.claim.additionalAllowedFrom, "custom non-busy, non-terminal leaf statuses");
   assert.equal(schedulerTransitionTable.reset.lease.includes("clears any lease"), true);
   assert.equal(schedulerTransitionTable["reset-reachable"].additionalAllowedFrom, "custom statuses");
+  assert.equal(schedulerTransitionTable["apply-preview"].implementation, "applyPlannerPreview");
+  assert.equal(schedulerTransitionTable["reject-preview"].actor, "operator");
   assert.equal(schedulerTransitionTable["release-expired"].actor, "system");
 });
 
@@ -1243,6 +1270,30 @@ test("transition contract covers every known status for every mutating command",
         children: [{ id: "A1", title: "Child" }]
       }),
       rejects: /Cannot decompose node from status/
+    },
+    {
+      command: "apply-preview",
+      target: "pending",
+      setup: (graphPath) => attachTransitionPreview(graphPath, {
+        requestId: "transition-apply-preview",
+        kind: "series",
+        childId: "A_PREVIEW_APPLY",
+        childTitle: "Apply preview child"
+      }),
+      run: (graphPath) => applyPlannerPreview(graphPath, { nodeId: "A", session: "owner" }),
+      rejects: /Cannot decompose node from status/
+    },
+    {
+      command: "reject-preview",
+      target: "pending",
+      setup: (graphPath) => attachTransitionPreview(graphPath, {
+        requestId: "transition-reject-preview",
+        kind: "parallel",
+        childId: "A_PREVIEW_REJECT",
+        childTitle: "Reject preview child"
+      }),
+      run: (graphPath) => rejectPlannerPreview(graphPath, { nodeId: "A", reason: "transition test" }),
+      rejects: /Cannot reject-preview node from status/
     }
   ];
 
@@ -1253,6 +1304,7 @@ test("transition contract covers every known status for every mutating command",
         await t.test(`${item.command} from ${status} with ${lease ? "lease" : "no lease"}`, async () => {
           await withTempGraph(async (graphPath) => {
             await setNodeStatus(graphPath, "A", status, { lease });
+            await item.setup?.(graphPath, status, lease);
             const shouldMutate = item.shouldMutate?.(status, lease) ?? allowedFrom.has(status);
 
             if (shouldMutate && (!item.requiresLease || lease)) {

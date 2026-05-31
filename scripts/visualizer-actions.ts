@@ -126,6 +126,36 @@ const actionDefinitions: ActionDefinition[] = [
     danger: "caution",
     requiredFields: [...workerCredentialFields, "children", "kind?"],
     disabledReason: workerActionDisabledReason("decompose")
+  },
+  {
+    id: "apply-preview",
+    label: "Apply Preview",
+    danger: "caution",
+    requiredFields: workerCredentialFields,
+    disabledReason: (graph, nodeId, node, context) => {
+      if (!node.pendingPlannerPreview) {
+        return "Node has no pending planner preview.";
+      }
+      return workerActionDisabledReason("apply-preview")(graph, nodeId, node, context, new Set());
+    }
+  },
+  {
+    id: "reject-preview",
+    label: "Reject Preview",
+    danger: "caution",
+    requiredFields: ["nodeId", "reason?", "responder?"],
+    confirmation: (nodeId) => destructiveConfirmation("Reject preview", `Reject the planner preview for ${nodeId}`),
+    disabledReason: (graph, nodeId, node) => {
+      if (!isLeaf(graph, nodeId)) {
+        return "Only leaf nodes can have pending planner previews rejected.";
+      }
+      if (!node.pendingPlannerPreview) {
+        return "Node has no pending planner preview.";
+      }
+      return (schedulerTransitionTable["reject-preview"].allowedFrom as readonly string[]).includes(node.status || "pending")
+        ? undefined
+        : "reject-preview requires blocked or pending status.";
+    }
   }
 ];
 

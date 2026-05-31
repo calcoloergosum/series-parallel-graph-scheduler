@@ -400,6 +400,7 @@ export interface GraphNode {
   workerPlanner?: NodeWorkerPlannerMetadata;
   plannerDecision?: string;
   decompositionReason?: string;
+  pendingPlannerPreview?: PendingPlannerPreviewMetadata;
   rationale?: string;
   contextRefs?: NodeContextRefMetadata[];
   resultSummary?: NodeResultSummary;
@@ -569,6 +570,35 @@ export interface PlannerDecomposeChildSpec extends PlannerProposalBase {
 export interface PlannerDecomposeMutation {
   kind: "series" | "parallel";
   children: PlannerDecomposeChildSpec[];
+}
+
+export interface PendingPlannerPreviewNodeState {
+  status?: NodeStatus;
+  kind?: NodeKind;
+  children?: NodeId[];
+  lease?: {
+    session?: string;
+    runId?: string;
+  };
+  blockedReason?: string;
+  question?: string;
+  report?: string;
+}
+
+export interface PendingPlannerPreviewMetadata {
+  requestId: string;
+  sourceGraphVersion?: number;
+  graphVersion?: number;
+  nodeState?: PendingPlannerPreviewNodeState;
+  proposedKind: PlannerOutputKind;
+  childIds: NodeId[];
+  report?: string;
+  planner?: NodePlannerMetadata;
+  response: PlannerResponse;
+  decompose: PlannerDecomposeMutation;
+  validation?: PlannerValidationResult;
+  createdAt?: IsoDateString;
+  [metadata: string]: unknown;
 }
 
 export interface PlannerValidationError {
@@ -890,6 +920,15 @@ export interface DecomposeNodeResult {
   summary: GraphSummary;
 }
 
+export interface PlannerPreviewMutationResult {
+  nodeId: NodeId;
+  status: NodeStatus;
+  title?: string;
+  requestId?: string;
+  childIds: NodeId[];
+  summary: GraphSummary;
+}
+
 export interface WorkerLogEntry {
   at: IsoDateString;
   stream: "stdout" | "stderr" | (string & {});
@@ -1072,7 +1111,9 @@ type VisualizerActionId =
   | "reset"
   | "reset-subtree"
   | "reset-reachable"
-  | "decompose";
+  | "decompose"
+  | "apply-preview"
+  | "reject-preview";
 
 export interface VisualizerActionConfirmation {
   required: boolean;
@@ -1112,6 +1153,7 @@ export interface VisualizerNodeDetail {
   planner?: NodePlannerMetadata;
   plannerDecision?: string;
   decompositionReason?: string;
+  pendingPlannerPreview?: PendingPlannerPreviewMetadata;
   contextRefs?: NodeContextRefMetadata[];
   outputContract?: NodeOutputContract;
   resultSummary?: NodeResultSummary;
@@ -1181,6 +1223,8 @@ export type CliCommand =
   | "answer"
   | "fail"
   | "decompose"
+  | "apply-preview"
+  | "reject-preview"
   | "prompt"
   | "worker"
   | "reconcile"

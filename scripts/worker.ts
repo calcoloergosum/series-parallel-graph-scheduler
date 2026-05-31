@@ -9,6 +9,7 @@ import type {
   LeaseClaimResult,
   NodeIsolationDetails,
   NodeMutationResult,
+  PendingPlannerPreviewMetadata,
   PlanGraphFile,
   PlannerResponse,
   PlannerOutputKind,
@@ -114,6 +115,7 @@ export interface WorkerRuntime extends WorkerPromptRuntime {
     report?: string;
     session?: string;
     runId?: string;
+    plannerPreview?: PendingPlannerPreviewMetadata;
     extraHistoryEvents?: Array<{ event: OperationalEventName; details?: Record<string, unknown> }>;
   }): Promise<NodeMutationResult>;
   decomposeNode(graphPath: string, options: {
@@ -450,7 +452,13 @@ async function runPlannerPreflight(
         decisionStatus: "approval-required",
         reason: "planner approval required"
       }, runtime);
-      return blockForPlannerApproval(graphPath, { claim, session, plan, reportPath }, runtime);
+      return blockForPlannerApproval(graphPath, {
+        claim,
+        session,
+        plan,
+        reportPath,
+        sourceGraphVersion: graph.graphVersion
+      }, runtime);
     }
     await recordPlannerAttempt(graphPath, {
       claim,
@@ -602,15 +610,21 @@ async function blockForPlannerApproval(
     claim,
     session,
     plan,
-    reportPath
+    reportPath,
+    sourceGraphVersion
   }: {
     claim: LeaseClaimResult;
     session: string;
     plan: PlannerRuntimeResponse;
     reportPath: string;
+    sourceGraphVersion?: number;
   },
   runtime: WorkerRuntime
 ): Promise<WorkerOutcome> {
+  if (!plan.decompose) {
+    throw new Error("Planner approval requires a decompose mutation");
+  }
+  const previousPreview = runtime.getNode(await runtime.readGraph(graphPath), claim.nodeId).pendingPlannerPreview;
   await runtime.writeReportFile(graphPath, reportPath, formatPlannerPreflightReport({ claim, plan }));
   const result = await runtime.blockNode(graphPath, {
     nodeId: claim.nodeId,
@@ -618,14 +632,27 @@ async function blockForPlannerApproval(
     runId: claim.runId,
     report: reportPath,
     reason: `planner proposed ${plan.response.kind} decomposition`,
-    question: plannerApprovalQuestion(claim, plan),
+    question: plannerApprovalQuestion(claim, plan, reportPath),
+    plannerPreview: {
+      requestId: plan.requestId,
+      sourceGraphVersion,
+      proposedKind: plan.response.kind,
+      childIds: plan.decompose?.children.map((child) => child.id) || [],
+      report: reportPath,
+      planner: plan.planner,
+      response: plan.response,
+      decompose: plan.decompose,
+      validation: plan.validation,
+      createdAt: new Date().toISOString()
+    },
     extraHistoryEvents: [{
-      event: operationalEvents.plannerPreviewRejected,
+      event: previousPreview ? operationalEvents.plannerPreviewRegenerated : operationalEvents.plannerPreviewRejected,
       details: {
+        previousRequestId: previousPreview?.requestId,
         requestId: plan.requestId,
         proposedKind: plan.response.kind,
         childIds: plan.decompose?.children.map((child) => child.id) || [],
-        reason: "planner approval required",
+        reason: previousPreview ? "planner preview regenerated" : "planner approval required",
         report: reportPath
       }
     }]
@@ -931,9 +958,15 @@ function stringConfigValue(value: unknown): string | undefined {
   return typeof value === "string" && value.trim() ? value.trim() : undefined;
 }
 
-function plannerApprovalQuestion(claim: LeaseClaimResult, plan: PlannerRuntimeResponse): string {
+function plannerApprovalQuestion(claim: LeaseClaimResult, plan: PlannerRuntimeResponse, reportPath: string): string {
   const childIds = plan.decompose?.children.map((child) => child.id).join(", ") || "none";
-  return `Planner proposed ${plan.response.kind} decomposition for ${claim.nodeId}: ${childIds}. Approve by decomposing the node from the report, or reset/fail it.`;
+  const childJson = JSON.stringify(plan.decompose?.children || []);
+  return [
+    `Planner proposed ${plan.response.kind} decomposition for ${claim.nodeId}: ${childIds}.`,
+    `Inspect ${reportPath}.`,
+    `Approve with decompose --node ${claim.nodeId} --session ${claim.lease.session} --run ${claim.runId} --kind ${plan.decompose?.kind || plan.response.kind} --child-json '${childJson}'.`,
+    "Regenerate by resetting this node and rerunning the planner worker, discard with reset, or reject with fail."
+  ].join(" ");
 }
 
 function formatPlannerPreflightReport({
@@ -953,6 +986,10 @@ function formatPlannerPreflightReport({
     `- Decomposition kind: ${reportInlineValue(plan.decompose?.kind || "none")}`,
     `- Children: ${reportInlineValue(plan.decompose?.children.map((child) => child.id).join(", ") || "none")}`,
     "",
+    "## Proposed Children",
+    "",
+    formatPlannerPreviewChildren(plan.decompose?.children || []),
+    "",
     "## Response",
     "",
     reportCodeBlock(JSON.stringify(plan.response, null, 2)),
@@ -961,6 +998,20 @@ function formatPlannerPreflightReport({
     "",
     reportCodeBlock(JSON.stringify(plan.decompose || null, null, 2))
   ].join("\n");
+}
+
+function formatPlannerPreviewChildren(children: NonNullable<PlannerRuntimeResponse["decompose"]>["children"]): string {
+  if (children.length === 0) {
+    return "- none";
+  }
+  return children
+    .map((child) => [
+      `- ${reportInlineValue(child.id)}: ${reportInlineValue(child.title)}`,
+      `  - Kind: ${reportInlineValue(child.kind || "task")}`,
+      `  - Deliverables: ${reportInlineValue(child.deliverables?.join("; ") || "none")}`,
+      `  - Acceptance criteria: ${reportInlineValue(child.acceptanceCriteria?.join("; ") || "none")}`
+    ].join("\n"))
+    .join("\n");
 }
 
 function formatPlannerFailureReport({

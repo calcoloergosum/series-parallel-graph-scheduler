@@ -130,6 +130,12 @@ function metadataApprovalBrowserFixtureGraph() {
           status: "blocked",
           session: "codex-planner-approval",
           runId: "run_approval_preview",
+          lease: {
+            session: "codex-planner-approval",
+            runId: "run_approval_preview",
+            claimedAt: "2026-05-31T00:00:00.000Z",
+            expiresAt: "2026-05-31T00:30:00.000Z"
+          },
           question: "Planner proposed series decomposition; approve by decomposing this node?",
           blockedReason: "planner approval required",
           report: "reports/APPROVAL-planner-preview.md",
@@ -140,6 +146,31 @@ function metadataApprovalBrowserFixtureGraph() {
             requestId: "worker-plan-APPROVAL-run_approval_preview",
             decision: "Split approval work into one implementation child",
             decompositionReason: "ask-approval mode parks valid planner output for operator review"
+          },
+          pendingPlannerPreview: {
+            requestId: "worker-plan-APPROVAL-run_approval_preview",
+            sourceGraphVersion: 1,
+            graphVersion: 1,
+            nodeState: {
+              status: "blocked",
+              kind: "task",
+              lease: { session: "codex-planner-approval", runId: "run_approval_preview" },
+              blockedReason: "planner approval required",
+              question: "Planner proposed series decomposition; approve by decomposing this node?",
+              report: "reports/APPROVAL-planner-preview.md"
+            },
+            proposedKind: "series",
+            childIds: ["APPROVALa"],
+            report: "reports/APPROVAL-planner-preview.md",
+            response: {
+              kind: "series",
+              title: "Approve planner preview",
+              children: [{ id: "APPROVALa", title: "Approved child" }]
+            },
+            decompose: {
+              kind: "series",
+              children: [{ id: "APPROVALa", title: "Approved child", kind: "task" }]
+            }
           },
           history: [
             {
@@ -852,14 +883,12 @@ test("visualizer token-protected approval flow shows planner and changed-file pr
           await page.locator("#selected-node-details", { hasText: "planner-preview-rejected" }).waitFor();
           await page.locator("#selected-node-details", { hasText: "goal: Approve the planner preview safely" }).waitFor();
           await page.locator("#selected-node-details", { hasText: "decision: Split approval work into one implementation child" }).waitFor();
+          await page.locator("#selected-node-details", { hasText: "pending planner preview: request worker-plan-APPROVAL-run_approval_preview" }).waitFor();
 
           await page.locator('[data-node-action="decompose"]').click();
-          await page.locator("[data-decompose-preview]", { hasText: "title cannot be empty" }).waitFor();
-          await page.locator("#decompose-session").fill("codex-planner-approval");
-          await page.locator('[name="childTitle"]').first().fill("Approved child");
+          await page.locator("[data-decompose-preview]", { hasText: '"title": "Approved child"' }).waitFor();
           await page.locator("[data-decompose-preview]", { hasText: '"nodeId": "APPROVAL"' }).waitFor();
           await page.locator("[data-decompose-preview]", { hasText: '"session": "codex-planner-approval"' }).waitFor();
-          await page.locator("[data-decompose-preview]", { hasText: '"title": "Approved child"' }).waitFor();
           await page.locator('form[data-decompose-form] button[type="submit"]').click();
           await page.locator(".modal-dialog").waitFor({ state: "detached" });
           await page.locator("#selected-node-details", { hasText: "children: APPROVALa" }).waitFor();

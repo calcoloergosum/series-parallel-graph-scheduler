@@ -16,6 +16,7 @@ import type {
   LeaseClaimResult,
   NodeMutationResult,
   PlanGraphFile,
+  PlannerPreviewMutationResult,
   ReadyNode,
   ReconcileGraphResult,
   ReleaseExpiredLeasesResult,
@@ -112,6 +113,16 @@ export interface VisualizerRuntime {
     session?: string;
     runId?: string;
   }): Promise<DecomposeNodeResult>;
+  applyPlannerPreview(graphPath: string, options: {
+    nodeId?: string;
+    session?: string;
+    runId?: string;
+  }): Promise<DecomposeNodeResult>;
+  rejectPlannerPreview(graphPath: string, options: {
+    nodeId?: string;
+    reason?: string;
+    responder?: string;
+  }): Promise<PlannerPreviewMutationResult>;
   reconcileGraphStatus(graphPath: string): Promise<ReconcileGraphResult>;
   releaseExpiredLeases(graphPath: string): Promise<ReleaseExpiredLeasesResult>;
   renderPlanAfterUpdate(graphPath: string): Promise<void>;
@@ -551,6 +562,55 @@ export async function createVisualizerServer({
           };
           await runtime.renderPlanAfterUpdate(graphPath);
           mutationResult.slack = await runtime.sendSlackNotification(graphPath, operationalEvents.decomposed, { nodeId });
+          await broadcast();
+          return mutationResult;
+        });
+        res.writeHead(200, { "content-type": "application/json; charset=utf-8", "cache-control": "no-store" });
+        res.end(JSON.stringify(result));
+        return;
+      }
+
+      if (req.method === "POST" && (url.pathname === "/api/node/apply-preview" || url.pathname === "/api/apply-preview")) {
+        if (!authorizeWriteRequest(req, res, requiredWriteToken)) {
+          return;
+        }
+        const body = await readRequestJson(req);
+        const nodeId = stringBodyField(body, "nodeId");
+        const result = await runVisualizerWriteRoute(async () => {
+          const mutationResult: DecomposeNodeResult & { slack?: SlackNotificationResult } = {
+            ...await runtime.applyPlannerPreview(graphPath, {
+              nodeId,
+              session: optionalStringBodyField(body, "session"),
+              runId: optionalRunIdBodyField(body)
+            })
+          };
+          await runtime.renderPlanAfterUpdate(graphPath);
+          mutationResult.slack = await runtime.sendSlackNotification(graphPath, operationalEvents.plannerPreviewApplied, { nodeId });
+          await broadcast();
+          return mutationResult;
+        });
+        res.writeHead(200, { "content-type": "application/json; charset=utf-8", "cache-control": "no-store" });
+        res.end(JSON.stringify(result));
+        return;
+      }
+
+      if (req.method === "POST" && (url.pathname === "/api/node/reject-preview" || url.pathname === "/api/reject-preview")) {
+        if (!authorizeWriteRequest(req, res, requiredWriteToken)) {
+          return;
+        }
+        const body = await readRequestJson(req);
+        const nodeId = stringBodyField(body, "nodeId");
+        const reason = optionalStringBodyField(body, "reason");
+        const result = await runVisualizerWriteRoute(async () => {
+          const mutationResult: PlannerPreviewMutationResult & { slack?: SlackNotificationResult } = {
+            ...await runtime.rejectPlannerPreview(graphPath, {
+              nodeId,
+              reason,
+              responder: optionalStringBodyField(body, "responder")
+            })
+          };
+          await runtime.renderPlanAfterUpdate(graphPath);
+          mutationResult.slack = await runtime.sendSlackNotification(graphPath, operationalEvents.plannerPreviewRejected, { nodeId, reason });
           await broadcast();
           return mutationResult;
         });
