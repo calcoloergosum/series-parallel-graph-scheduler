@@ -294,6 +294,24 @@ function metadataApprovalBrowserFixtureGraph() {
   };
 }
 
+function appliedMetadataApprovalBrowserFixtureGraph() {
+  const graph = metadataApprovalBrowserFixtureGraph();
+  const approval = graph.graph.nodes.APPROVAL;
+  approval.kind = "series";
+  approval.status = "pending";
+  approval.children = ["APPROVALa"];
+  delete approval.pendingPlannerPreview;
+  delete approval.lease;
+  delete approval.question;
+  delete approval.blockedReason;
+  graph.graph.nodes.APPROVALa = {
+    title: "Approved child",
+    kind: "task",
+    status: "pending"
+  };
+  return graph;
+}
+
 function layoutRegressionGraphs() {
   const seriesIds = Array.from({ length: 18 }, (_, index) => `L${index + 1}`);
   const wideIds = Array.from({ length: 12 }, (_, index) => `W${index + 1}`);
@@ -634,6 +652,48 @@ async function waitForGraphCondition(graphPath, predicate, timeoutMs = 8000) {
   return graph;
 }
 
+async function assertCriticalTextDoesNotOverlap(page, rootSelector, label) {
+  const result = await page.locator(rootSelector).evaluate((root) => {
+    const intersects = (a, b) => a.left < b.right - 0.5
+      && b.left < a.right - 0.5
+      && a.top < b.bottom - 0.5
+      && b.top < a.bottom - 0.5;
+    const candidates = [...root.querySelectorAll("button, input, textarea, select, h1, h2, h3, p, .meta, li, th, td")]
+      .filter((element) => {
+        const rect = element.getBoundingClientRect();
+        const style = globalThis.getComputedStyle(element);
+        return rect.width > 0
+          && rect.height > 0
+          && style.visibility !== "hidden"
+          && style.display !== "none"
+          && (element.textContent?.trim() || ["INPUT", "TEXTAREA", "SELECT"].includes(element.tagName));
+      })
+      .map((element, index) => ({ element, index, rect: element.getBoundingClientRect(), text: element.textContent?.trim() || element.getAttribute("aria-label") || element.tagName }));
+    const failures = [];
+    for (let index = 0; index < candidates.length; index += 1) {
+      for (let otherIndex = index + 1; otherIndex < candidates.length; otherIndex += 1) {
+        const left = candidates[index];
+        const right = candidates[otherIndex];
+        if (left.element.contains(right.element) || right.element.contains(left.element)) {
+          continue;
+        }
+        if (intersects(left.rect, right.rect)) {
+          failures.push(`${left.text.slice(0, 60)} overlaps ${right.text.slice(0, 60)}`);
+        }
+      }
+    }
+    return failures;
+  });
+  assert.deepEqual(result, [], `${label} should not overlap critical text or controls`);
+}
+
+async function assertInteractiveGraphAfterMutation(page, graph, nodeId, title) {
+  await page.locator(`#graph g.sp-node[data-id="${nodeId}"]`).waitFor();
+  await assertGraphLayoutInvariants(page, graph);
+  await page.locator(`#ready [data-select-node="${nodeId}"]`).click();
+  await page.locator("#selected-node-details", { hasText: title }).waitFor();
+}
+
 test("visualizer selected-node actions claim, start, block, answer, and reset ready work", async (t) => {
   const browser = await launchChromiumOrSkip(t);
   if (!browser) {
@@ -756,6 +816,124 @@ test("visualizer goal planner previews and creates a fixture-generated graph wit
           assert.equal(graph.graph.nodes.ROOT.kind, "series");
           assert.deepEqual(graph.graph.nodes.ROOT.children, ["GOAL_CONTRACT", "GOAL_IMPLEMENT", "GOAL_VERIFY"]);
           assert.equal(graph.graph.nodes.ROOT.goal.text, "Build a browser-created graph");
+        });
+      } finally {
+        await context.close();
+        await visualizer.close();
+      }
+    });
+  } finally {
+    await browser.close();
+  }
+});
+
+test("visualizer applies a node-level planner preview through the token-protected workbench", async (t) => {
+  const browser = await launchChromiumOrSkip(t);
+  if (!browser) {
+    return;
+  }
+
+  try {
+    await withTempGraph(metadataApprovalBrowserFixtureGraph, async (graphPath, dir) => {
+      const visualizer = await createVisualizerServer({
+        graphPath,
+        port: 0,
+        defaultWorkerCwd: dir,
+        writeToken: "preview-apply-secret"
+      });
+      const context = await browser.newContext({ viewport: { width: 1280, height: 900 } });
+      try {
+        const forbidden = await fetch(`${visualizer.url}/api/node/apply-preview`, {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ nodeId: "APPROVAL", session: "codex-planner-approval", runId: "run_approval_preview" })
+        });
+        assert.equal(forbidden.status, 403);
+
+        const page = await context.newPage();
+        page.setDefaultTimeout(10000);
+        await runWithPageDiagnostics(page, "visualizer-apply-planner-preview", graphPath, async () => {
+          await page.goto(`${visualizer.url}/#write-token=preview-apply-secret`);
+          await page.locator("#graph svg.sp-graph").waitFor();
+          await assertGraphLayoutInvariants(page, metadataApprovalBrowserFixtureGraph());
+
+          await page.locator('#working [data-select-node="APPROVAL"]').click();
+          await page.locator("#selected-node-details", { hasText: "Planner Preview" }).waitFor();
+          await assertCriticalTextDoesNotOverlap(page, "#selected-node-details", "planner preview inspector before apply");
+          assert.equal(await page.locator('[data-node-action="apply-preview"]').isEnabled(), true);
+
+          await page.locator('[data-node-action="apply-preview"]').click();
+          await page.getByRole("heading", { name: "Apply Preview APPROVAL" }).waitFor();
+          await submitModal(page);
+          await page.locator("#selected-node-details", { hasText: "children: APPROVALa" }).waitFor();
+          await assertInteractiveGraphAfterMutation(page, appliedMetadataApprovalBrowserFixtureGraph(), "APPROVALa", "Approved child");
+
+          const graph = await readGraph(graphPath);
+          assert.equal(graph.graph.nodes.APPROVAL.status, "pending");
+          assert.deepEqual(graph.graph.nodes.APPROVAL.children, ["APPROVALa"]);
+          assert.equal(graph.graph.nodes.APPROVAL.pendingPlannerPreview, undefined);
+          assert.equal(graph.graph.nodes.APPROVALa.title, "Approved child");
+          assert.match(JSON.stringify(graph.graph.nodes.APPROVAL.history), /planner-preview-applied/);
+        });
+      } finally {
+        await context.close();
+        await visualizer.close();
+      }
+    });
+  } finally {
+    await browser.close();
+  }
+});
+
+test("visualizer rejects a node-level planner preview through the token-protected workbench", async (t) => {
+  const browser = await launchChromiumOrSkip(t);
+  if (!browser) {
+    return;
+  }
+
+  try {
+    await withTempGraph(metadataApprovalBrowserFixtureGraph, async (graphPath, dir) => {
+      const visualizer = await createVisualizerServer({
+        graphPath,
+        port: 0,
+        defaultWorkerCwd: dir,
+        writeToken: "preview-reject-secret"
+      });
+      const context = await browser.newContext({ viewport: { width: 390, height: 900 } });
+      try {
+        const forbidden = await fetch(`${visualizer.url}/api/node/reject-preview`, {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ nodeId: "APPROVAL", reason: "missing token" })
+        });
+        assert.equal(forbidden.status, 403);
+
+        const page = await context.newPage();
+        page.setDefaultTimeout(10000);
+        await runWithPageDiagnostics(page, "visualizer-reject-planner-preview", graphPath, async () => {
+          await page.goto(`${visualizer.url}/#write-token=preview-reject-secret`);
+          await page.locator("#graph svg.sp-graph").waitFor();
+          await assertGraphLayoutInvariants(page, metadataApprovalBrowserFixtureGraph());
+
+          await page.locator('#working [data-select-node="APPROVAL"]').click();
+          await page.locator("#selected-node-details", { hasText: "pending planner preview" }).waitFor();
+          await page.locator('[data-node-action="reject-preview"]').click();
+          await page.getByRole("heading", { name: "Reject Preview APPROVAL" }).waitFor();
+          await page.locator(".modal-dialog").getByLabel("Reason").fill("browser rejected preview");
+          await submitModal(page);
+
+          await page.locator("#ready", { hasText: "Approve planner preview" }).waitFor();
+          await page.locator('#ready [data-select-node="APPROVAL"]').click();
+          await page.locator("#selected-node-details", { hasText: "No pending planner preview." }).waitFor();
+          await assertGraphLayoutInvariants(page, metadataApprovalBrowserFixtureGraph());
+          await assertCriticalTextDoesNotOverlap(page, "#selected-node-details", "planner preview inspector after reject");
+
+          const graph = await readGraph(graphPath);
+          assert.equal(graph.graph.nodes.APPROVAL.status, "pending");
+          assert.equal(graph.graph.nodes.APPROVAL.children, undefined);
+          assert.equal(graph.graph.nodes.APPROVAL.pendingPlannerPreview, undefined);
+          assert.equal(graph.graph.nodes.APPROVAL.question, undefined);
+          assert.match(JSON.stringify(graph.graph.nodes.APPROVAL.history), /planner-preview-rejected/);
         });
       } finally {
         await context.close();
@@ -992,6 +1170,7 @@ test("visualizer token-protected approval flow shows planner and changed-file pr
           await page.locator("#selected-node-details", { hasText: "1 files, +12 / -2" }).waitFor();
           await page.locator("#selected-node-details", { hasText: "Changed Files" }).waitFor();
           await page.locator("#selected-node-details", { hasText: "docs/audit-log.md [modified] +12 / -2" }).waitFor();
+          await assertCriticalTextDoesNotOverlap(page, "#selected-node-details", "git metadata inspector");
           assert.doesNotMatch(await page.locator("#selected-node-details").textContent(), /secret-token|workspace-secret/);
         });
       } finally {
