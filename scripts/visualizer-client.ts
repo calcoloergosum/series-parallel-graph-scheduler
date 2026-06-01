@@ -28,23 +28,36 @@ export function renderVisualizerHtml(): string {
       line-height: 1.5;
     }
     main {
-      width: min(1280px, calc(100% - 32px));
-      margin: 24px auto 40px;
+      width: min(1520px, calc(100% - 32px));
+      margin: 0 auto 40px;
     }
-    header {
+    .topbar {
+      position: sticky;
+      top: 0;
+      z-index: 10;
       display: flex;
       justify-content: space-between;
       gap: 16px;
-      align-items: flex-start;
-      margin-bottom: 18px;
+      align-items: center;
+      padding: 12px 0;
+      margin-bottom: 12px;
+      background: rgba(246, 248, 251, 0.94);
+      backdrop-filter: blur(10px);
     }
-    h1 { margin: 0 0 6px; font-size: 28px; letter-spacing: 0; }
+    h1 { margin: 0 0 3px; font-size: 19px; letter-spacing: 0; }
     p { margin: 0; color: var(--muted); }
     .summary {
       display: flex;
       gap: 8px;
       flex-wrap: wrap;
       justify-content: flex-end;
+    }
+    .top-actions {
+      display: flex;
+      gap: 8px;
+      flex-wrap: wrap;
+      justify-content: flex-end;
+      align-items: center;
     }
     .pill {
       border: 1px solid var(--line);
@@ -55,10 +68,76 @@ export function renderVisualizerHtml(): string {
       font-size: 13px;
       font-weight: 700;
     }
-    .layout {
+    .run-state-banner {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 14px;
+      min-height: 50px;
+      margin-bottom: 12px;
+      border: 1px solid var(--line);
+      border-left: 6px solid var(--accent);
+      border-radius: 8px;
+      padding: 10px 12px;
+      background: var(--paper);
+      box-shadow: 0 8px 20px rgba(20, 30, 42, 0.05);
+    }
+    .run-state-banner.severity-critical { border-left-color: var(--failed); background: #fff6f6; }
+    .run-state-banner.severity-warning { border-left-color: var(--blocked); background: #fff9ef; }
+    .run-state-banner.severity-success { border-left-color: var(--done); background: #f2fbf5; }
+    .run-state-title {
+      margin: 0;
+      color: var(--ink);
+      font-size: 14px;
+      font-weight: 850;
+    }
+    .health-strip {
       display: grid;
-      grid-template-columns: minmax(0, 1fr) 340px;
-      gap: 18px;
+      grid-template-columns: repeat(8, minmax(92px, 1fr));
+      gap: 8px;
+      margin-bottom: 14px;
+    }
+    .health-tile {
+      min-height: 58px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 8px 10px;
+      background: var(--paper);
+      color: var(--ink);
+      text-align: left;
+      cursor: pointer;
+    }
+    .health-tile strong {
+      display: block;
+      font-size: 21px;
+      line-height: 1;
+      font-variant-numeric: tabular-nums;
+    }
+    .health-tile span {
+      display: block;
+      margin-top: 5px;
+      color: var(--muted);
+      font-size: 11px;
+      font-weight: 850;
+      text-transform: uppercase;
+    }
+    .health-tile.critical {
+      border-color: #efb4b4;
+      background: #fff5f5;
+      color: var(--failed);
+    }
+    .health-tile.warning {
+      border-color: #e7b767;
+      background: #fff9ef;
+      color: var(--blocked);
+    }
+    .health-tile.selected {
+      box-shadow: inset 0 0 0 2px var(--accent);
+    }
+    .operator-grid {
+      display: grid;
+      grid-template-columns: minmax(250px, 320px) minmax(0, 1fr) minmax(300px, 380px);
+      gap: 14px;
       align-items: start;
     }
     .panel {
@@ -68,6 +147,20 @@ export function renderVisualizerHtml(): string {
       border-radius: 8px;
       padding: 16px;
       box-shadow: 0 10px 28px rgba(20, 30, 42, 0.07);
+    }
+    .work-queue,
+    .inspector-panel {
+      position: sticky;
+      top: 88px;
+      max-height: calc(100vh - 104px);
+      overflow: auto;
+    }
+    .support-grid {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 14px;
+      margin-top: 14px;
+      align-items: start;
     }
     .panel-heading {
       display: flex;
@@ -83,7 +176,7 @@ export function renderVisualizerHtml(): string {
     }
     .toolbar {
       display: grid;
-      grid-template-columns: minmax(220px, 1fr) auto;
+      grid-template-columns: minmax(220px, 1fr) auto auto;
       gap: 12px;
       align-items: end;
       margin-bottom: 14px;
@@ -113,7 +206,8 @@ export function renderVisualizerHtml(): string {
       box-shadow: inset 0 0 0 1px var(--accent);
     }
     .filter-button[data-filter="attention"][aria-pressed="true"],
-    .filter-button[data-worker-filter="needs-review"][aria-pressed="true"] {
+    .filter-button[data-worker-filter="needs-review"][aria-pressed="true"],
+    .filter-button[data-queue-section="attention"][aria-pressed="true"] {
       border-color: var(--failed);
       background: #fff1f1;
       color: var(--failed);
@@ -205,6 +299,36 @@ export function renderVisualizerHtml(): string {
     .sp-node.status-blocked rect,
     .sp-node.status-review rect { stroke: var(--blocked); fill: #fff7eb; }
     .sp-node.status-failed rect { stroke: var(--failed); fill: #fff1f1; stroke-width: 2.4; }
+    .sp-node.is-selected rect {
+      stroke: var(--accent);
+      stroke-width: 3;
+    }
+    .sp-node.is-muted,
+    .sp-frame.is-muted,
+    .sp-edge.is-muted {
+      opacity: 0.22;
+    }
+    .legend-row {
+      display: flex;
+      gap: 8px;
+      flex-wrap: wrap;
+      align-items: center;
+      color: var(--muted);
+      font-size: 12px;
+      font-weight: 700;
+    }
+    .legend-dot {
+      display: inline-block;
+      width: 10px;
+      height: 10px;
+      border-radius: 999px;
+      margin-right: 4px;
+      background: var(--pending);
+    }
+    .legend-dot.ready { background: var(--pending); }
+    .legend-dot.active { background: var(--running); }
+    .legend-dot.attention { background: var(--failed); }
+    .legend-dot.done { background: var(--done); }
     .badge {
       flex: 0 0 auto;
       border-radius: 999px;
@@ -264,6 +388,58 @@ export function renderVisualizerHtml(): string {
       display: grid;
       gap: 8px;
       margin-top: 10px;
+    }
+    .queue-tabs {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 6px;
+      margin: 10px 0 8px;
+    }
+    .queue-tabs .filter-button {
+      width: 100%;
+      padding-inline: 6px;
+    }
+    .queue-section[hidden] { display: none; }
+    .queue-section {
+      margin-top: 14px;
+      padding-top: 12px;
+      border-top: 1px solid var(--line);
+    }
+    .queue-section.is-current {
+      border-top-color: #b7ddd9;
+    }
+    .queue-section-title {
+      margin: 0 0 8px;
+      font-size: 13px;
+      color: var(--muted);
+      text-transform: uppercase;
+    }
+    .queue-row {
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 9px;
+      background: #fbfcfd;
+      overflow-wrap: anywhere;
+      word-break: break-word;
+    }
+    .queue-row + .queue-row {
+      margin-top: 8px;
+    }
+    .queue-row.critical {
+      border-color: #efa9a9;
+      border-left: 6px solid var(--failed);
+      background: #fff5f5;
+    }
+    .queue-row.warning {
+      border-color: #e7b767;
+      border-left: 6px solid var(--blocked);
+      background: #fff9ef;
+    }
+    .queue-action {
+      margin-top: 7px;
+      color: var(--accent);
+      font-size: 12px;
+      font-weight: 850;
     }
     .planner-result {
       margin-top: 10px;
@@ -478,6 +654,21 @@ export function renderVisualizerHtml(): string {
       gap: 8px;
       margin: 10px 0;
     }
+    .recommended-action {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+      margin: 10px 0;
+      border: 1px solid #b7ddd9;
+      border-radius: 8px;
+      padding: 8px;
+      background: #edf9f7;
+    }
+    .recommended-action strong {
+      color: #084a45;
+      font-size: 13px;
+    }
     .selected-actions button[disabled] {
       cursor: not-allowed;
       opacity: 0.55;
@@ -616,78 +807,74 @@ export function renderVisualizerHtml(): string {
       font-weight: 700;
     }
     @media (max-width: 900px) {
-      header, .layout { display: block; }
+      .topbar, .operator-grid, .support-grid { display: block; }
       .summary { justify-content: flex-start; margin-top: 12px; }
       .panel { margin-bottom: 16px; }
+      .work-queue,
+      .inspector-panel {
+        position: static;
+        max-height: none;
+      }
       .toolbar { grid-template-columns: 1fr; }
       .field-row { grid-template-columns: 1fr; }
-      main { width: min(100% - 20px, 1280px); margin-top: 12px; }
+      main { width: min(100% - 20px, 1280px); }
+      .health-strip { grid-template-columns: repeat(2, minmax(0, 1fr)); }
       .sp-graph { min-width: 760px; }
     }
   </style>
 </head>
 <body>
 <main>
-  <header>
+  <header class="topbar">
     <div>
       <h1>Plan Graph Scheduler</h1>
       <p id="subtitle">Loading plan graph...</p>
     </div>
-    <div id="summary" class="summary"></div>
+    <div class="top-actions">
+      <div id="summary" class="summary" aria-label="Graph metadata"></div>
+      <button class="secondary" type="button" id="refresh-graph">Refresh</button>
+      <button class="secondary" type="button" data-run-primary="reconcile">Reconcile</button>
+      <button class="secondary" type="button" data-run-primary="release-expired">Release expired</button>
+      <button type="button" data-run-primary="start-workers">Start workers</button>
+    </div>
   </header>
   <div id="status-announcer" class="sr-only" aria-live="polite" aria-atomic="true"></div>
-  <div class="layout">
-    <section class="panel" aria-labelledby="graph-heading">
+  <section id="run-state-banner" class="run-state-banner severity-neutral" aria-live="polite">
+    <div>
+      <p class="run-state-title">Loading scheduler state...</p>
+      <p id="run-state-reason">Waiting for graph payload.</p>
+    </div>
+    <button class="secondary" type="button" data-run-primary="view-diagnostics">View diagnostics</button>
+  </section>
+  <section id="health-strip" class="health-strip" aria-label="Scheduler health"></section>
+  <div class="operator-grid">
+    <section class="panel work-queue" aria-labelledby="work-queue-heading">
       <div class="panel-heading">
         <div>
-          <h2 id="graph-heading">Graph</h2>
-          <p id="graph-filter-summary">All nodes visible.</p>
-        </div>
-        <div id="attention-summary" class="summary" aria-label="Attention summary"></div>
-      </div>
-      <div class="toolbar" aria-label="Graph filters">
-        <div class="field">
-          <label for="graph-search">Search nodes, paths, logs</label>
-          <input id="graph-search" type="search" autocomplete="off" placeholder="Filter lists by id, title, status, session, path, or log text">
-        </div>
-        <div>
-          <div class="filter-label" id="activity-filter-label">Active Work</div>
-          <div class="filter-row" role="group" aria-labelledby="activity-filter-label">
-            <button class="filter-button" type="button" data-filter="all" aria-pressed="true">All</button>
-            <button class="filter-button" type="button" data-filter="ready" aria-pressed="false">Ready</button>
-            <button class="filter-button" type="button" data-filter="working" aria-pressed="false">Working</button>
-            <button class="filter-button" type="button" data-filter="attention" aria-pressed="false">Attention</button>
-          </div>
+          <h2 id="work-queue-heading">Work Queue</h2>
+          <p id="work-queue-sort">Attention first.</p>
         </div>
       </div>
-      <div id="graph" class="graph-viewport" role="region" aria-label="Scrollable graph diagram" tabindex="0"></div>
-    </section>
-    <aside class="panel" aria-label="Scheduler controls and status lists">
-      <section class="sidebar-section" aria-labelledby="goal-planner-heading">
-        <h2 id="goal-planner-heading">Goal Planner</h2>
-        <form id="goal-planner-form" class="manager-form">
-          <div class="field">
-            <label for="goal-text">Goal</label>
-            <textarea id="goal-text" name="goal" placeholder="Describe the outcome to plan" required></textarea>
-          </div>
-          <div class="field">
-            <label for="goal-title">Title</label>
-            <input id="goal-title" name="title" autocomplete="off" placeholder="Optional plan title">
-          </div>
-          <div class="field">
-            <label for="goal-planner-fixture">Planner Fixture</label>
-            <input id="goal-planner-fixture" name="plannerFixturePath" autocomplete="off" placeholder="Optional fixture path relative to graph">
-          </div>
-          <div id="goal-planner-error" class="action-error" role="alert"></div>
-          <div class="button-row">
-            <button class="secondary" type="submit" name="intent" value="preview">Preview</button>
-            <button type="submit" name="intent" value="create">Create Graph</button>
-          </div>
-        </form>
-        <div id="goal-planner-result" class="planner-result">No goal preview generated.</div>
-      </section>
-      <section class="sidebar-section" aria-labelledby="worker-manager-heading">
-        <h2 id="worker-manager-heading">Worker Manager</h2>
+      <div id="work-queue-tabs" class="queue-tabs" role="tablist" aria-label="Work queue sections">
+        <button class="filter-button" type="button" data-queue-section="attention" aria-pressed="true">Attention</button>
+        <button class="filter-button" type="button" data-queue-section="ready" aria-pressed="false">Ready</button>
+        <button class="filter-button" type="button" data-queue-section="active" aria-pressed="false">Active</button>
+        <button class="filter-button" type="button" data-queue-section="workers" aria-pressed="false">Workers</button>
+      </div>
+      <div class="queue-section" data-queue-panel="attention">
+        <h3 class="queue-section-title">Attention</h3>
+        <div id="attention-dashboard"></div>
+      </div>
+      <div class="queue-section" data-queue-panel="ready">
+        <h3 class="queue-section-title">Ready Leaf Nodes</h3>
+        <div id="ready" class="ready-list" role="list"></div>
+      </div>
+      <div class="queue-section" data-queue-panel="active">
+        <h3 class="queue-section-title">Active Sessions</h3>
+        <div id="working" class="working-list" role="list"></div>
+      </div>
+      <div class="queue-section" data-queue-panel="workers">
+        <h3 class="queue-section-title">Worker Manager</h3>
         <div id="worker-manager-summary" class="meta"></div>
         <form id="worker-manager-form" class="manager-form">
           <div class="field-row">
@@ -766,38 +953,56 @@ export function renderVisualizerHtml(): string {
           </div>
         </div>
         <div id="workers" class="worker-list" role="list"></div>
-      </section>
-      <section class="sidebar-section" aria-labelledby="working-heading">
-        <h2 id="working-heading">Active Sessions</h2>
-        <p>Claimed, running, blocked, review, and failed nodes.</p>
-        <div id="working" class="working-list" role="list"></div>
-      </section>
-      <section class="sidebar-section" aria-labelledby="diagnostics-heading">
-        <h2 id="diagnostics-heading">Diagnostics</h2>
-        <div id="diagnostics" class="diagnostic-list" role="list"></div>
-      </section>
-      <section class="sidebar-section" aria-labelledby="events-heading">
-        <h2 id="events-heading">Recent Events</h2>
-        <div id="recent-events" class="event-list" role="list"></div>
-      </section>
-      <section class="sidebar-section" aria-labelledby="ready-heading">
-        <h2 id="ready-heading">Ready Leaf Nodes</h2>
-        <p>These are claimable by Codex sessions.</p>
-        <div id="ready" class="ready-list" role="list"></div>
-      </section>
-      <section class="sidebar-section" aria-labelledby="selected-node-heading">
+      </div>
+    </section>
+    <section class="panel graph-panel" aria-labelledby="graph-heading">
+      <div class="panel-heading">
+        <div>
+          <h2 id="graph-heading">Graph</h2>
+          <p id="graph-filter-summary">All nodes visible.</p>
+        </div>
+        <div id="attention-summary" class="summary" aria-label="Attention summary"></div>
+      </div>
+      <div class="toolbar" aria-label="Graph filters">
+        <div class="field">
+          <label for="graph-search">Search nodes, paths, logs</label>
+          <input id="graph-search" type="search" autocomplete="off" placeholder="Filter lists by id, title, status, session, path, or log text">
+        </div>
+        <div>
+          <div class="filter-label" id="activity-filter-label">Active Work</div>
+          <div class="filter-row" role="group" aria-labelledby="activity-filter-label">
+            <button class="filter-button" type="button" data-filter="all" aria-pressed="true">All</button>
+            <button class="filter-button" type="button" data-filter="ready" aria-pressed="false">Ready</button>
+            <button class="filter-button" type="button" data-filter="working" aria-pressed="false">Working</button>
+            <button class="filter-button" type="button" data-filter="attention" aria-pressed="false">Attention</button>
+          </div>
+        </div>
+        <div class="legend-row" aria-label="Graph legend">
+          <span><span class="legend-dot ready"></span>Ready</span>
+          <span><span class="legend-dot active"></span>Active</span>
+          <span><span class="legend-dot attention"></span>Attention</span>
+          <span><span class="legend-dot done"></span>Done</span>
+        </div>
+      </div>
+      <div id="graph" class="graph-viewport" role="region" aria-label="Scrollable graph diagram" tabindex="0"></div>
+    </section>
+    <aside class="panel inspector-panel" aria-labelledby="selected-node-heading">
+      <section aria-labelledby="selected-node-heading">
         <h2 id="selected-node-heading">Node Detail</h2>
         <div id="selected-node-details"><p>Select a node to inspect it.</p></div>
       </section>
-      <section class="sidebar-section" aria-labelledby="attention-heading">
-        <h2 id="attention-heading">Attention</h2>
-        <div id="attention-dashboard"></div>
-      </section>
-      <section class="sidebar-section" aria-labelledby="triage-heading">
-        <h2 id="triage-heading">Triage</h2>
-        <div id="diagnostics-panel"></div>
-      </section>
-      <section class="sidebar-section" aria-labelledby="event-browser-heading">
+    </aside>
+  </div>
+  <div class="support-grid">
+    <section class="panel" aria-labelledby="diagnostics-heading">
+      <h2 id="diagnostics-heading">Diagnostics</h2>
+      <div id="diagnostics" class="diagnostic-list" role="list"></div>
+      <div id="diagnostics-panel" class="inspector-section"></div>
+    </section>
+    <section class="panel" aria-labelledby="events-heading">
+      <h2 id="events-heading">Recent Events</h2>
+      <div id="recent-events" class="event-list" role="list"></div>
+      <section class="inspector-section" aria-labelledby="event-browser-heading">
         <h2 id="event-browser-heading">Event Browser</h2>
         <div class="field-row">
           <div class="field">
@@ -811,7 +1016,30 @@ export function renderVisualizerHtml(): string {
         </div>
         <div id="events-list"></div>
       </section>
-    </aside>
+    </section>
+    <section class="panel" aria-labelledby="goal-planner-heading">
+      <h2 id="goal-planner-heading">Goal Planner</h2>
+      <form id="goal-planner-form" class="manager-form">
+        <div class="field">
+          <label for="goal-text">Goal</label>
+          <textarea id="goal-text" name="goal" placeholder="Describe the outcome to plan" required></textarea>
+        </div>
+        <div class="field">
+          <label for="goal-title">Title</label>
+          <input id="goal-title" name="title" autocomplete="off" placeholder="Optional plan title">
+        </div>
+        <div class="field">
+          <label for="goal-planner-fixture">Planner Fixture</label>
+          <input id="goal-planner-fixture" name="plannerFixturePath" autocomplete="off" placeholder="Optional fixture path relative to graph">
+        </div>
+        <div id="goal-planner-error" class="action-error" role="alert"></div>
+        <div class="button-row">
+          <button class="secondary" type="submit" name="intent" value="preview">Preview</button>
+          <button type="submit" name="intent" value="create">Create Graph</button>
+        </div>
+      </form>
+      <div id="goal-planner-result" class="planner-result">No goal preview generated.</div>
+    </section>
   </div>
   <div id="modal-root"></div>
 </main>
@@ -820,6 +1048,7 @@ export function renderVisualizerHtml(): string {
   let latestPayload = undefined;
   let lastAnnouncement = "";
   let selectedNodeId = "";
+  let selectedQueueSection = "";
   const eventFilters = { node: "", event: "" };
   const filters = {
     activity: "all",
@@ -862,6 +1091,25 @@ export function renderVisualizerHtml(): string {
 
   function formatCount(value) {
     return value === null || value === undefined ? "n/a" : String(value);
+  }
+
+  function formatDuration(ms) {
+    if (typeof ms !== "number" || !Number.isFinite(ms)) {
+      return "";
+    }
+    const abs = Math.abs(ms);
+    const suffix = ms < 0 ? " ago" : "";
+    if (abs < 60000) {
+      return Math.max(1, Math.round(abs / 1000)) + "s" + suffix;
+    }
+    if (abs < 3600000) {
+      return Math.round(abs / 60000) + "m" + suffix;
+    }
+    return Math.round(abs / 3600000) + "h" + suffix;
+  }
+
+  function currentWriteState() {
+    return visualizerWriteToken() ? "token set" : "local writes";
   }
 
   function goalText(goal) {
@@ -1269,6 +1517,108 @@ export function renderVisualizerHtml(): string {
     (form.querySelector("input, textarea") || form.querySelector("button[type=submit]"))?.focus();
   }
 
+  function ensureDefaultSelection(payload) {
+    if (selectedNodeId && (payload.nodes || []).some((node) => node.id === selectedNodeId)) {
+      return;
+    }
+    if (payload.defaultSelection?.type === "node") {
+      selectedNodeId = payload.defaultSelection.id;
+    }
+  }
+
+  function renderRunState(payload) {
+    const state = payload.runState || {};
+    const banner = document.getElementById("run-state-banner");
+    banner.className = "run-state-banner severity-" + statusToken(state.severity || "neutral");
+    const action = state.primaryAction;
+    banner.innerHTML =
+      '<div><p class="run-state-title">' + escapeHtml(state.message || "Scheduler state unavailable.") + '</p>' +
+      '<p id="run-state-reason">' + escapeHtml(state.reason || "") + '</p></div>' +
+      (action ? '<button class="secondary" type="button" data-run-primary="' + escapeHtml(action.id) + '">' + escapeHtml(action.label) + '</button>' : "");
+  }
+
+  function healthTile(label, value, target, severity) {
+    const selected = (
+      (target === "attention" && selectedQueueSection === "attention")
+      || (target === "ready" && selectedQueueSection === "ready")
+      || (target === "active" && selectedQueueSection === "active")
+      || (target === "workers" && selectedQueueSection === "workers")
+    );
+    return '<button class="health-tile ' + escapeHtml(severity || "") + (selected ? " selected" : "") + '" type="button" data-health-target="' + escapeHtml(target) + '">' +
+      '<strong>' + escapeHtml(value) + '</strong><span>' + escapeHtml(label) + '</span></button>';
+  }
+
+  function renderHealthStrip(payload) {
+    const counts = payload.summary?.counts || {};
+    const attention = payload.attention || {};
+    const failed = Number(attention.failed?.count || counts.failed || 0);
+    const blocked = Number(attention.blocked?.count || 0);
+    const expired = Number(attention.expired?.count || 0);
+    const ready = Number((payload.ready || []).length);
+    const running = Number(counts.running || 0) + Number(counts.claimed || 0);
+    const done = Number(counts.done || 0);
+    const workers = (payload.workerManager?.running || 0) + "/" + (payload.workerManager?.retainedWorkers ?? (payload.workerManager?.workers || []).length);
+    const lock = payload.diagnostics?.lock?.exists ? (payload.diagnostics.lock.stale ? "stale" : "present") : "clear";
+    document.getElementById("health-strip").innerHTML = [
+      healthTile("failed", failed, "attention", failed ? "critical" : ""),
+      healthTile("blocked", blocked, "attention", blocked ? "warning" : ""),
+      healthTile("expired", expired, "attention", expired ? "warning" : ""),
+      healthTile("ready", ready, "ready", ""),
+      healthTile("running", running, "active", ""),
+      healthTile("done", done, "done", ""),
+      healthTile("workers", workers, "workers", attention.workerErrors?.count ? "critical" : ""),
+      healthTile("lock", lock, "diagnostics", payload.diagnostics?.lock?.stale ? "critical" : "")
+    ].join("");
+  }
+
+  function queueItemSearchText(item) {
+    return [
+      item.id,
+      item.nodeId,
+      item.workerId,
+      item.status,
+      item.title,
+      item.reason,
+      item.latestEvent?.event,
+      item.latestEvent?.nodeId
+    ].map(normalize).join(" ");
+  }
+
+  function queueItemHtml(item) {
+    const token = statusToken(item.status || item.severity || "info");
+    const nodeButton = item.nodeId
+      ? '<button class="node-select-button" type="button" data-select-node="' + escapeHtml(item.nodeId) + '" aria-current="' + (selectedNodeId === item.nodeId ? "true" : "false") + '">'
+      : '<div>';
+    const close = item.nodeId ? '</button>' : '</div>';
+    const age = item.ageMs !== undefined ? metaLine("age", formatDuration(item.ageMs)) : "";
+    const lease = item.leaseRemainingMs !== undefined ? metaLine(item.leaseRemainingMs < 0 ? "expired" : "lease", formatDuration(item.leaseRemainingMs)) : "";
+    const latest = item.latestEvent?.event ? metaLine("last event", item.latestEvent.event) : "";
+    const action = item.recommendedAction?.label ? '<div class="queue-action">' + escapeHtml(item.recommendedAction.label) + '</div>' : "";
+    return '<div class="queue-row ' + escapeHtml(item.severity || "") + '" role="listitem">' +
+      nodeButton +
+      '<span class="badge status-' + token + '">' + escapeHtml(item.status || item.severity || "item") + '</span>' +
+      '<div><strong>' + escapeHtml(item.nodeId || item.workerId || item.title || item.id) + '</strong><br>' + escapeHtml(item.title || item.id) + '</div>' +
+      close +
+      metaLine("reason", item.reason) + age + lease + latest + action +
+      '</div>';
+  }
+
+  function renderWorkQueue(payload) {
+    const queue = payload.workQueue || {};
+    if (!selectedQueueSection || !(queue.sectionOrder || []).includes(selectedQueueSection)) {
+      selectedQueueSection = queue.defaultSection || "attention";
+    }
+    setPressed("[data-queue-section]", selectedQueueSection, "data-queue-section");
+    document.querySelectorAll("[data-queue-panel]").forEach((panel) => {
+      panel.classList.toggle("is-current", panel.getAttribute("data-queue-panel") === selectedQueueSection);
+    });
+    document.getElementById("work-queue-sort").textContent = queue.sort || "Attention first.";
+    const attentionItems = (queue.attention || []).filter((item) => matchesQuery(queueItemSearchText(item)));
+    document.getElementById("attention-dashboard").innerHTML = attentionItems.length
+      ? attentionItems.map(queueItemHtml).join("")
+      : '<p>No failed, blocked, expired, or worker-error items.</p>';
+  }
+
   function renderReady(ready) {
     if (!ready.length) {
       return '<p>No ready nodes match the current filters.</p>';
@@ -1397,7 +1747,14 @@ export function renderVisualizerHtml(): string {
 
   function renderSummary(summary) {
     const counts = summary.counts || {};
-    return Object.keys(counts).sort().map((status) => '<span class="pill">' + escapeHtml(status) + ': ' + counts[status] + '</span>').join("");
+    const metadata = [
+      "graph v" + summary.graphVersion,
+      summary.totalNodes + " nodes",
+      currentWriteState(),
+      "updated " + new Date().toLocaleTimeString()
+    ];
+    return metadata.map((value) => '<span class="pill">' + escapeHtml(value) + '</span>').join("")
+      + Object.keys(counts).sort().map((status) => '<span class="pill">' + escapeHtml(status) + ': ' + counts[status] + '</span>').join("");
   }
 
   function renderAttentionSummary(payload) {
@@ -1794,6 +2151,40 @@ export function renderVisualizerHtml(): string {
     announce(message);
   }
 
+  function hydrateGraphInteractivity(payload) {
+    const root = document.getElementById("graph");
+    if (!root?.querySelectorAll) {
+      return;
+    }
+    const readyIds = new Set((payload.ready || []).map((node) => node.id));
+    const attentionIds = new Set([...(payload.attention?.failed?.nodeIds || []), ...(payload.attention?.blocked?.nodeIds || []), ...(payload.attention?.expired?.nodeIds || [])]);
+    const activeIds = new Set((payload.working || []).filter((node) => node.status === "claimed" || node.status === "running").map((node) => node.id));
+    const visibleIds = new Set();
+    for (const detail of payload.nodes || []) {
+      const matchesActivity = filters.activity === "all"
+        || (filters.activity === "ready" && readyIds.has(detail.id))
+        || (filters.activity === "working" && activeIds.has(detail.id))
+        || (filters.activity === "attention" && attentionIds.has(detail.id));
+      if (matchesActivity && matchesQuery(nodeSearchText(detail))) {
+        visibleIds.add(detail.id);
+      }
+    }
+    root.querySelectorAll("g.sp-node, g.sp-frame").forEach((nodeGroup) => {
+      const id = nodeGroup.getAttribute("data-id") || "";
+      nodeGroup.classList.toggle("is-selected", id === selectedNodeId);
+      nodeGroup.classList.toggle("is-muted", !visibleIds.has(id));
+      nodeGroup.setAttribute("tabindex", "0");
+      nodeGroup.setAttribute("role", "button");
+      nodeGroup.addEventListener("click", () => selectNode(id));
+      nodeGroup.addEventListener("keydown", (event) => {
+        if (event.key === "Enter" || event.key === " ") {
+          event.preventDefault();
+          selectNode(id);
+        }
+      });
+    });
+  }
+
   function renderSelectedNode() {
     const details = document.getElementById("selected-node-details");
     const summary = document.getElementById("selected-worker-summary");
@@ -1848,6 +2239,22 @@ export function renderVisualizerHtml(): string {
     heading.append(strong, document.createElement("br"), node.title || id);
     details.append(heading);
 
+    const recommended = latestPayload?.nodeUi?.[id]?.recommendedAction;
+    if (recommended) {
+      const recommendedWrap = document.createElement("div");
+      recommendedWrap.className = "recommended-action";
+      const recommendedText = document.createElement("strong");
+      recommendedText.textContent = "Recommended: " + recommended.label;
+      recommendedWrap.append(recommendedText);
+      if (recommended.disabledReason) {
+        const reason = document.createElement("span");
+        reason.className = "meta";
+        reason.textContent = recommended.disabledReason;
+        recommendedWrap.append(reason);
+      }
+      details.append(recommendedWrap);
+    }
+
     const actionWrap = document.createElement("div");
     actionWrap.className = "selected-actions";
     actionWrap.setAttribute("aria-label", "Selected node actions");
@@ -1867,7 +2274,6 @@ export function renderVisualizerHtml(): string {
       if (disabledReason) {
         button.disabled = true;
         button.title = disabledReason;
-        button.setAttribute("aria-label", control.label + ": " + disabledReason);
       }
       actionWrap.append(button);
     }
@@ -1923,10 +2329,6 @@ export function renderVisualizerHtml(): string {
     const working = payload.working || [];
     const blocked = working.filter((node) => isAttentionStatus(node.status));
     const failed = graphNodeEntries(payload).filter(({ node }) => node.status === "failed").map(({ id, node }) => ({ id, ...node }));
-    const attentionItems = [...blocked, ...failed];
-    document.getElementById("attention-dashboard").innerHTML = attentionItems.length
-      ? attentionItems.map((node) => '<div class="working-item status-' + statusToken(node.status) + '"><strong>' + escapeHtml(node.id) + '</strong><br>' + escapeHtml(node.title || node.id) + metaLine("detail", node.question || node.failureReason || node.blockedReason || node.report) + '</div>').join("")
-      : '<p>No blocked or failed nodes need attention.</p>';
 
     document.getElementById("diagnostics-panel").innerHTML =
       '<div class="detail-grid">' +
@@ -1978,20 +2380,28 @@ export function renderVisualizerHtml(): string {
 
   function render(payload) {
     latestPayload = payload;
+    ensureDefaultSelection(payload);
+    if (!selectedQueueSection) {
+      selectedQueueSection = payload.workQueue?.defaultSection || "attention";
+    }
     setPressed("[data-filter]", filters.activity, "data-filter");
     setPressed("[data-worker-filter]", filters.worker, "data-worker-filter");
     const visibleReady = filterReadyNodes(payload.ready || []);
     const visibleWorking = filterWorkingNodes(payload.working || []);
     const visibleWorkers = filterWorkers(payload.workerManager?.workers || []);
-    document.getElementById("subtitle").textContent = "graph v" + payload.summary.graphVersion + " / " + payload.summary.totalNodes + " nodes";
+    document.getElementById("subtitle").textContent = (payload.summary.title || payload.graph?.title || "Plan graph") + " / graph v" + payload.summary.graphVersion + " / " + payload.summary.totalNodes + " nodes";
     document.getElementById("summary").innerHTML = renderSummary(payload.summary);
+    renderRunState(payload);
+    renderHealthStrip(payload);
     document.getElementById("graph").innerHTML = payload.graphSvg;
+    hydrateGraphInteractivity(payload);
     document.getElementById("working").innerHTML = renderWorking(visibleWorking);
     document.getElementById("diagnostics").innerHTML = renderDiagnostics(payload);
     document.getElementById("recent-events").innerHTML = renderRecentEvents(payload.recentEvents || []);
     document.getElementById("ready").innerHTML = renderReady(visibleReady);
     renderAttentionSummary(payload);
     renderFilterSummary(visibleReady, visibleWorking, visibleWorkers);
+    renderWorkQueue(payload);
     renderWorkerManager(payload.workerManager);
     renderSelectedNode();
     renderDiagnosticsAndEvents(payload);
@@ -2241,6 +2651,59 @@ export function renderVisualizerHtml(): string {
     refresh();
   }
 
+  async function handleRunPrimary(actionId) {
+    if (actionId === "open-attention") {
+      selectedQueueSection = "attention";
+      filters.activity = "attention";
+      if (latestPayload) {
+        render(latestPayload);
+      }
+      return;
+    }
+    if (actionId === "start-workers") {
+      selectedQueueSection = "workers";
+      if (latestPayload) {
+        render(latestPayload);
+      }
+      document.getElementById("worker-manager-form")?.scrollIntoView({ block: "center" });
+      return;
+    }
+    if (actionId === "view-active") {
+      selectedQueueSection = latestPayload?.runState?.primaryAction?.section || "active";
+      filters.activity = selectedQueueSection === "workers" ? filters.activity : "working";
+      if (latestPayload) {
+        render(latestPayload);
+      }
+      return;
+    }
+    if (actionId === "review-results") {
+      filters.activity = "all";
+      if (latestPayload) {
+        render(latestPayload);
+      }
+      return;
+    }
+    if (actionId === "view-diagnostics") {
+      document.getElementById("diagnostics-heading")?.scrollIntoView({ block: "start" });
+      return;
+    }
+    if (actionId === "reconcile") {
+      try {
+        await apiPost("/api/graph/reconcile", {});
+      } catch (error) {
+        showRouteError("Reconcile failed", error);
+      }
+      return;
+    }
+    if (actionId === "release-expired") {
+      try {
+        await apiPost("/api/leases/release-expired", {});
+      } catch (error) {
+        showRouteError("Release expired failed", error);
+      }
+    }
+  }
+
   document.addEventListener("submit", async (event) => {
     const form = event.target.closest("[data-answer-form]");
     if (!form) {
@@ -2417,7 +2880,46 @@ export function renderVisualizerHtml(): string {
     await load();
   });
 
+  document.getElementById("refresh-graph").addEventListener("click", () => {
+    load().catch((error) => showRouteError("Refresh failed", error));
+  });
+
   document.addEventListener("click", (event) => {
+    const queueButton = event.target.closest("[data-queue-section]");
+    if (queueButton) {
+      selectedQueueSection = queueButton.dataset.queueSection || "attention";
+      if (latestPayload) {
+        render(latestPayload);
+      }
+      return;
+    }
+    const healthButton = event.target.closest("[data-health-target]");
+    if (healthButton) {
+      const target = healthButton.dataset.healthTarget || "attention";
+      if (target === "done") {
+        filters.activity = "all";
+      } else if (target === "diagnostics") {
+        document.getElementById("diagnostics-heading")?.scrollIntoView({ block: "start" });
+      } else {
+        selectedQueueSection = target;
+        if (target === "attention") {
+          filters.activity = "attention";
+        } else if (target === "ready") {
+          filters.activity = "ready";
+        } else if (target === "active") {
+          filters.activity = "working";
+        }
+      }
+      if (latestPayload) {
+        render(latestPayload);
+      }
+      return;
+    }
+    const runPrimary = event.target.closest("[data-run-primary]");
+    if (runPrimary) {
+      handleRunPrimary(runPrimary.dataset.runPrimary);
+      return;
+    }
     const activityButton = event.target.closest("[data-filter]");
     if (activityButton) {
       filters.activity = activityButton.dataset.filter || "all";
@@ -2475,6 +2977,9 @@ export function renderVisualizerHtml(): string {
   };
 
   function visualizerWriteToken() {
+    if (typeof URLSearchParams !== "function") {
+      return localStorage.getItem("spgVisualizerWriteToken") || "";
+    }
     const hash = new URLSearchParams(location.hash.replace(/^#/, ""));
     const hashToken = hash.get("write-token") || hash.get("writeToken");
     if (hashToken) {
