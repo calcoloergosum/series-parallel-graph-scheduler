@@ -110,6 +110,31 @@ spawn failed
   assert.doesNotMatch(report, /user:token|super-secret|T000\/B000\/SECRET/);
 });
 
+test("worker report formatting handles many markdown fence fragments", () => {
+  const report = formatWorkerReport({
+    claim: {
+      nodeId: "A",
+      title: "Backtick-heavy output",
+      runId: "run-many-fences"
+    },
+    run: {
+      code: 1,
+      signal: null,
+      stdout: "`chunk`\n".repeat(200000),
+      stderr: "",
+      command: "codex",
+      args: ["exec"],
+      cwd: "/tmp/work",
+      startedAt: "2026-05-27T01:02:03.004Z",
+      finishedAt: "2026-05-27T01:02:04.005Z",
+      durationMs: 1001
+    }
+  });
+
+  assert.match(report, /## Stdout/);
+  assert.match(report, /`chunk`/);
+});
+
 test("concurrent explicit claims allow only one worker to claim a ready leaf", async () => {
   await withTempGraph(async (graphPath) => {
     const attempts = Array.from({ length: 10 }, (_, index) =>

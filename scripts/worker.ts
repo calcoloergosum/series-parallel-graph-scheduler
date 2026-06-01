@@ -2082,7 +2082,10 @@ function reportInlineValue(value: unknown): string {
 
 function reportCodeBlock(value: string): string {
   const redacted = redactSecrets(value);
-  const longestFence = Math.max(2, ...Array.from(redacted.matchAll(/`+/g), (match) => match[0].length));
+  let longestFence = 2;
+  for (const match of redacted.matchAll(/`+/g)) {
+    longestFence = Math.max(longestFence, match[0].length);
+  }
   const fence = "`".repeat(longestFence + 1);
   return `${fence}text\n${redacted}\n${fence}`;
 }
