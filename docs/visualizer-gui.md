@@ -678,7 +678,10 @@ The current visualizer payload already supports most of the redesign:
 | Worker health | `workerManager` |
 | Git inspector | `nodes[].git`, `nodes[].gitFootprint` |
 | Available node actions | `nodes[].actions`, `actionPolicy` |
-| Run state banner | Derived from `summary`, `attention`, `ready`, `working`, `diagnostics`, `workerManager` |
+| Run state banner | `runState` |
+| Work Queue | `workQueue` |
+| Initial inspector selection | `defaultSelection` |
+| Per-node UI helpers | `nodeUi` |
 
 Only add payload fields when the browser cannot derive the display safely or
 consistently. Additive payload fields are preferred over changing existing
@@ -737,6 +740,21 @@ The view model should be boring and deterministic:
   guess.
 - Keep server mutation guards authoritative even when the view model recommends
   an action.
+
+The Phase 0 queue sort is deterministic and intentionally simple:
+
+- `workQueue.attention`: failed nodes, stale lock, expired leases,
+  blocked/review nodes, worker errors. Node groups use diagnostics order;
+  worker errors sort by worker id.
+- `workQueue.ready`: scheduler ready priority order, matching `payload.ready`.
+- `workQueue.active`: existing working-node order, filtered to claimed and
+  running nodes.
+- `workQueue.workers`: error, running, stopping, exited, then worker id.
+
+This ordering is an operability contract for the browser, not a claim that the
+GUI is finished. Future changes can adjust ranking when operator evidence
+justifies it, but the browser should continue to consume a server-computed
+queue instead of recreating scheduler logic.
 
 ### Minimum Backend Slice
 

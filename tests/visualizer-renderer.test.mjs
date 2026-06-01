@@ -1943,6 +1943,160 @@ test("visualizer diagnostics payload exposes attention, events, and read-only lo
   });
 });
 
+test("visualizer payload exposes server-computed operational view model", async () => {
+  await withTempGraph(async (graphPath) => {
+    const graph = {
+      graphVersion: 1,
+      title: "Operational View Fixture",
+      graph: {
+        root: "ROOT",
+        nodes: {
+          ROOT: { title: "Root", kind: "parallel", status: "pending", children: ["READY", "PARENT", "FAILED", "BLOCKED", "EXPIRED", "ACTIVE", "DONE"] },
+          READY: { title: "Ready leaf", kind: "task", status: "pending" },
+          PARENT: { title: "Parent path", kind: "series", status: "pending", children: ["CHILD"] },
+          CHILD: { title: "Child ready", kind: "task", status: "pending" },
+          FAILED: {
+            title: "Failed leaf",
+            kind: "task",
+            status: "failed",
+            failureReason: "unit failure",
+            report: "reports/FAILED.md",
+            history: [{ at: "2026-05-27T00:03:00.000Z", event: "failed", status: "failed", failureReason: "unit failure" }]
+          },
+          BLOCKED: {
+            title: "Blocked leaf",
+            kind: "task",
+            status: "blocked",
+            question: "Proceed?",
+            blockedReason: "needs operator",
+            history: [{ at: "2026-05-27T00:02:00.000Z", event: "blocked", status: "blocked", question: "Proceed?" }]
+          },
+          EXPIRED: {
+            title: "Expired lease",
+            kind: "task",
+            status: "running",
+            lease: {
+              session: "codex-expired",
+              runId: "run-expired",
+              claimedAt: "2026-05-27T00:00:00.000Z",
+              expiresAt: "2026-05-27T00:00:01.000Z"
+            },
+            history: [{ at: "2026-05-27T00:00:00.000Z", event: "running", status: "running", session: "codex-expired", runId: "run-expired" }]
+          },
+          ACTIVE: {
+            title: "Active lease",
+            kind: "task",
+            status: "running",
+            lease: {
+              session: "codex-active",
+              runId: "run-active",
+              claimedAt: "2026-05-27T00:04:00.000Z",
+              expiresAt: "2099-01-01T00:00:00.000Z"
+            },
+            history: [{ at: "2026-05-27T00:04:01.000Z", event: "running", status: "running", session: "codex-active", runId: "run-active" }]
+          },
+          DONE: {
+            title: "Done with Git",
+            kind: "task",
+            status: "done",
+            baseRef: { name: "refs/remotes/origin/main", commit: "1".repeat(40) },
+            outputRef: { name: "refs/heads/spg/node/DONE/run", commit: "2".repeat(40) },
+            workspace: { remote: "https://github.com/example-org/example-repo.git" },
+            history: [{ at: "2026-05-27T00:05:00.000Z", event: "done", status: "done" }]
+          }
+        }
+      }
+    };
+    await writeFile(graphPath, `${JSON.stringify(graph, null, 2)}\n`, "utf8");
+    const workerManager = {
+      status() {
+        return {
+          defaults: {
+            cwd: "/tmp/work",
+            sessionPrefix: "codex",
+            codexCommand: "codex",
+            isolation: "off",
+            workspaceRoot: "runs/workspaces",
+            workspaceRetention: "on-failure"
+          },
+          running: 0,
+          stopping: 0,
+          exited: 0,
+          error: 1,
+          retainedWorkers: 1,
+          totalStarted: 1,
+          workers: [{
+            id: "worker-err",
+            session: "codex-worker",
+            status: "error",
+            startedAt: "2026-05-27T00:00:00.000Z",
+            durationMs: 60000,
+            error: "worker failed",
+            logTail: []
+          }]
+        };
+      }
+    };
+
+    const payload = await buildVisualizerPayload(graphPath, workerManager);
+
+    assert.equal(payload.runState.state, "needs-attention");
+    assert.equal(payload.runState.primaryAction.id, "open-attention");
+    assert.deepEqual(payload.workQueue.sectionOrder, ["attention", "ready", "active", "workers"]);
+    assert.equal(payload.workQueue.defaultSection, "attention");
+    assert.deepEqual(payload.workQueue.attention.map((item) => item.id), [
+      "attention:node:FAILED",
+      "attention:node:EXPIRED",
+      "attention:node:BLOCKED",
+      "workers:worker:worker-err"
+    ]);
+    assert.deepEqual(payload.workQueue.ready.map((item) => item.nodeId), ["READY", "CHILD"]);
+    assert.deepEqual(payload.workQueue.active.map((item) => item.nodeId), ["ACTIVE"]);
+    assert.equal(payload.defaultSelection.type, "node");
+    assert.equal(payload.defaultSelection.id, "FAILED");
+    assert.equal(payload.defaultSelection.reason, "failed-node");
+
+    assert.deepEqual(payload.nodeUi.CHILD.parentPath, ["ROOT", "PARENT"]);
+    assert.equal(payload.nodeUi.FAILED.latestEvent.event, "failed");
+    assert.equal(payload.nodeUi.FAILED.latestEvent.details.failureReason, "unit failure");
+    assert.equal(payload.nodeUi.FAILED.recommendedAction.id, "open-report");
+    assert.equal(payload.nodeUi.BLOCKED.recommendedAction.id, "answer");
+    assert.equal(payload.nodeUi.EXPIRED.recommendedAction.id, "release-expired");
+    assert.ok(payload.nodeUi.EXPIRED.leaseRemainingMs <= 0);
+    assert.ok(payload.nodeUi.ACTIVE.leaseRemainingMs > 0);
+    assert.equal(payload.nodeUi.ACTIVE.recommendedAction.id, "monitor");
+    assert.equal(payload.nodeUi.READY.recommendedAction.id, "claim");
+    assert.equal(payload.nodeUi.DONE.recommendedAction.id, "open-diff");
+    assert.equal(payload.ready[0].id, "READY");
+    assert.equal(payload.working.some((node) => node.id === "ACTIVE"), true);
+    assert.equal(payload.nodes.some((node) => node.id === "FAILED"), true);
+    assert.equal(payload.diagnostics.failed[0].id, "FAILED");
+  });
+});
+
+test("visualizer run state follows documented non-attention states", async () => {
+  await withTempGraph(async (graphPath) => {
+    let payload = await buildVisualizerPayload(graphPath);
+    assert.equal(payload.runState.state, "ready-to-run");
+    assert.equal(payload.defaultSelection.reason, "ready-node");
+
+    await claimNode(graphPath, { nodeId: "A", session: "codex-A", leaseSeconds: 3600 });
+    payload = await buildVisualizerPayload(graphPath);
+    assert.equal(payload.runState.state, "running");
+    assert.equal(payload.defaultSelection.reason, "active-node");
+
+    const graph = await readGraph(graphPath);
+    for (const node of Object.values(graph.graph.nodes)) {
+      node.status = "done";
+      delete node.lease;
+    }
+    await writeFile(graphPath, `${JSON.stringify(graph, null, 2)}\n`, "utf8");
+    payload = await buildVisualizerPayload(graphPath);
+    assert.equal(payload.runState.state, "complete");
+    assert.equal(payload.defaultSelection.reason, "graph-root");
+  });
+});
+
 test("visualizer event API filters by node and event like the CLI", async () => {
   await withTempGraph(async (graphPath) => {
     const graph = await readGraph(graphPath);

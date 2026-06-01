@@ -556,6 +556,39 @@ const payload: VisualizerPayload = {
     },
     serverAuthority: "scheduler-mutation-guards"
   },
+  runState: {
+    state: "ready-to-run",
+    severity: "info",
+    message: "Ready work is available.",
+    reason: "Ready work exists and no managed worker or active node is running.",
+    primaryAction: { id: "start-workers", label: "Start workers", kind: "global-action", section: "ready" }
+  },
+  workQueue: {
+    sectionOrder: ["attention", "ready", "active", "workers"],
+    defaultSection: "ready",
+    sort: "deterministic server order",
+    attention: [],
+    ready: [{
+      id: "ready:node:A",
+      type: "node",
+      order: 1,
+      severity: "info",
+      nodeId: "A",
+      status: "pending",
+      title: "Task",
+      recommendedAction: { id: "claim", label: "Claim node", kind: "node-action", nodeActionId: "claim", nodeId: "A" }
+    }],
+    active: [],
+    workers: []
+  },
+  defaultSelection: { type: "node", id: "A", reason: "ready-node" },
+  nodeUi: {
+    A: {
+      parentPath: ["ROOT"],
+      latestEvent: visualizerEvent,
+      recommendedAction: { id: "claim", label: "Claim node", kind: "node-action", nodeActionId: "claim", nodeId: "A" }
+    }
+  },
   attention: {
     failed: { count: 0, nodeIds: [] },
     blocked: { count: 0, nodeIds: [] },

@@ -1157,6 +1157,94 @@ export interface VisualizerActionPolicy {
   serverAuthority: "scheduler-mutation-guards";
 }
 
+export type VisualizerRunStateId =
+  | "needs-attention"
+  | "ready-to-run"
+  | "running"
+  | "complete"
+  | "idle";
+
+export type VisualizerRunStateSeverity = "critical" | "warning" | "info" | "success" | "neutral";
+
+export type VisualizerRecommendedActionKind =
+  | "node-action"
+  | "git-action"
+  | "global-action"
+  | "navigation";
+
+export interface VisualizerRecommendedAction {
+  id: string;
+  label: string;
+  kind: VisualizerRecommendedActionKind;
+  nodeActionId?: VisualizerNodeAction["id"];
+  gitActionId?: VisualizerGitActionId;
+  nodeId?: NodeId;
+  workerId?: string;
+  section?: VisualizerWorkQueueSectionId;
+  disabledReason?: string;
+}
+
+export interface VisualizerRunState {
+  state: VisualizerRunStateId;
+  severity: VisualizerRunStateSeverity;
+  message: string;
+  reason: string;
+  primaryAction?: VisualizerRecommendedAction;
+}
+
+export type VisualizerSelectionReason =
+  | "failed-node"
+  | "blocked-node"
+  | "expired-node"
+  | "worker-error"
+  | "active-node"
+  | "ready-node"
+  | "graph-root";
+
+export interface VisualizerDefaultSelection {
+  type: "node" | "worker";
+  id: string;
+  reason: VisualizerSelectionReason;
+}
+
+export type VisualizerWorkQueueSectionId = "attention" | "ready" | "active" | "workers";
+
+export type VisualizerWorkQueueItemType = "node" | "worker" | "lock";
+
+export interface VisualizerWorkQueueItem {
+  id: string;
+  type: VisualizerWorkQueueItemType;
+  order: number;
+  severity?: VisualizerRunStateSeverity;
+  nodeId?: NodeId;
+  workerId?: string;
+  status?: string;
+  title?: string;
+  reason?: string;
+  ageMs?: number;
+  leaseRemainingMs?: number;
+  latestEvent?: OperationalEventExportEntry;
+  recommendedAction?: VisualizerRecommendedAction;
+}
+
+export interface VisualizerWorkQueue {
+  sectionOrder: VisualizerWorkQueueSectionId[];
+  defaultSection: VisualizerWorkQueueSectionId;
+  sort: string;
+  attention: VisualizerWorkQueueItem[];
+  ready: VisualizerWorkQueueItem[];
+  active: VisualizerWorkQueueItem[];
+  workers: VisualizerWorkQueueItem[];
+}
+
+export interface VisualizerNodeUi {
+  parentPath: NodeId[];
+  latestEvent?: OperationalEventExportEntry;
+  ageMs?: number;
+  leaseRemainingMs?: number;
+  recommendedAction?: VisualizerRecommendedAction;
+}
+
 export interface VisualizerNodeDetail {
   id: NodeId;
   title?: string;
@@ -1203,6 +1291,10 @@ export interface VisualizerPayload {
   nodes: VisualizerNodeDetail[];
   nodeHistoryLimit: number;
   actionPolicy: VisualizerActionPolicy;
+  runState: VisualizerRunState;
+  workQueue: VisualizerWorkQueue;
+  defaultSelection: VisualizerDefaultSelection;
+  nodeUi: Record<NodeId, VisualizerNodeUi>;
   attention: VisualizerAttentionSummary;
   diagnostics: GraphDiagnostics;
   gitFootprint?: GitFootprintSummary;
