@@ -27,6 +27,8 @@ and acceptance workflows in
 [`docs/goal-driven-acceptance-contract.md`](docs/goal-driven-acceptance-contract.md).
 Dynamic predecessor, sibling, and report-summary context rules are in
 [`docs/dynamic-context-flow.md`](docs/dynamic-context-flow.md).
+Visualizer GUI documentation and direction are in
+[`docs/visualizer-gui.md`](docs/visualizer-gui.md).
 
 ## Quickstart
 
@@ -594,7 +596,8 @@ npm run serve -- --graph ./plan-scheduler-priority.graph.json --host 0.0.0.0 --p
 ```
 
 See [`docs/security.md`](docs/security.md) before exposing the visualizer beyond
-loopback.
+loopback. See [`docs/visualizer-gui.md`](docs/visualizer-gui.md) for the
+operator-console documentation and design direction.
 
 ## Worker Usage
 
@@ -860,6 +863,8 @@ dry-run package manifest for that checklist.
 - `docs/release-checklist.md`: release checklist and package contents review.
 - `docs/quality-bar.md`: quality and release hygiene bar.
 - `docs/operational-events.md`: operational event names and history fields.
+- `docs/visualizer-gui.md`: visualizer operator-console documentation and
+  design direction.
 - `docs/lock-strategy-decision.md`: graph lock design decision.
 - `docs/lock-contention-benchmark.md`: manual graph lock contention benchmark.
 - `docs/mutation-ownership.md`: graph field ownership rules for scheduler
@@ -963,6 +968,8 @@ clone; non-Git isolation is intentionally unsupported.
   [`docs/quality-bar.md`](docs/quality-bar.md)
 - Operational events:
   [`docs/operational-events.md`](docs/operational-events.md)
+- Visualizer GUI:
+  [`docs/visualizer-gui.md`](docs/visualizer-gui.md)
 - Locking design:
   [`docs/lock-strategy-decision.md`](docs/lock-strategy-decision.md)
 - Lock contention benchmark:
