@@ -847,11 +847,8 @@ async function activeWorkerPlanner(
   }
   if (settings.adapterMode === "prompt") {
     const adapter = options.promptPlannerAdapter || runtime.promptPlannerAdapter;
-    if (!adapter) {
-      throw new Error("Invalid worker planner configuration: prompt planner adapter requires an injected prompt adapter");
-    }
     return createPromptPlannerRuntime({
-      adapter,
+      adapter: adapter || createCodexPromptPlannerAdapter(graphPath, options),
       templatePath: resolveTemplatePath(
         graphPath,
         settings.templatePath,
@@ -860,6 +857,31 @@ async function activeWorkerPlanner(
     });
   }
   throw new Error("Invalid worker planner configuration: planner mode requires --planner-adapter fixture|prompt or an injected planner runtime");
+}
+
+function createCodexPromptPlannerAdapter(graphPath: string, options: RunWorkerOptions): PromptPlannerAdapter {
+  return {
+    async complete({ prompt, request }) {
+      const run = await runCodexPrompt(prompt, {
+        graphPath,
+        cwd: options.cwd,
+        codexCommand: options.codexCommand,
+        codexArgs: options.codexArgs,
+        timeoutMs: options.timeoutMs,
+        stream: false,
+        logPrefix: `planner:${request.nodeId}`
+      });
+      if (run.code !== 0) {
+        const detail = run.error || run.stderr.trim() || `exit code ${run.code}`;
+        throw new Error(`prompt planner Codex run failed: ${detail}`);
+      }
+      const output = run.stdout.trim();
+      if (!output) {
+        throw new Error("prompt planner Codex run produced no output");
+      }
+      return output;
+    }
+  };
 }
 
 function normalizeWorkerPlannerMode(value: unknown): WorkerPlannerMode {

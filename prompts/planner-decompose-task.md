@@ -12,8 +12,8 @@ schema.
 
 ## Decision Rules
 
-Choose `task` when the work is atomic enough for one worker to claim and finish
-without more planning. Stop and choose `task` when:
+Choose `task` only when the work is atomic enough for one worker to claim and
+finish without more planning. Stop and choose `task` when:
 
 - The deliverables can be completed by one worker using the supplied context.
 - Further decomposition would mostly restate implementation steps inside the
@@ -23,6 +23,12 @@ without more planning. Stop and choose `task` when:
   investigation, tests, or a blocking question.
 - The request is a review, verification, small fix, documentation edit, or
   localized implementation that does not need separate ownership.
+
+For an initial generated goal node, prefer `series` or `parallel` whenever the
+goal spans multiple subsystems, phases, files, or acceptance concerns. The first
+planner pass should make the graph visibly more specific before implementation
+starts. Choose `task` for the initial node only when direct execution is clearly
+smaller than creating child work.
 
 Choose `series` when children must run in order because a later child needs the
 earlier child's output, decision, schema, branch, report, or operator answer.

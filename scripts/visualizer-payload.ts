@@ -121,13 +121,11 @@ function buildVisualizerOperationalView({
     releasableExpiredIds
   });
   const workQueue = buildVisualizerWorkQueue({
-    nodeDetailsById,
     nodeUi,
     diagnostics,
     managerStatus,
     ready,
-    working,
-    nowMs
+    working
   });
   const defaultSelection = buildVisualizerDefaultSelection({
     graph,
@@ -203,21 +201,17 @@ function buildVisualizerNodeUi({
 }
 
 function buildVisualizerWorkQueue({
-  nodeDetailsById,
   nodeUi,
   diagnostics,
   managerStatus,
   ready,
-  working,
-  nowMs
+  working
 }: {
-  nodeDetailsById: Record<string, VisualizerNodeDetail>;
   nodeUi: Record<string, VisualizerNodeUi>;
   diagnostics: GraphDiagnostics;
   managerStatus: WorkerManagerStatus;
   ready: ReturnType<typeof listReadyLeafNodes>;
   working: ReturnType<typeof listWorkingNodes>;
-  nowMs: number;
 }): VisualizerWorkQueue {
   const attention = [
     ...diagnostics.failed.map((node) => queueNodeItem("attention", 100, "critical", node, nodeUi[node.id], node.failureReason || node.nextStep || node.report)),

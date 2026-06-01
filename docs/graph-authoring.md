@@ -198,9 +198,8 @@ worker CLI flags. Keep planner behavior and adapter selection separate:
 `ask-approval`), while `adapterMode` selects the runtime boundary (`fixture`,
 `prompt`, or an injected runtime supplied by API/test callers). Fixture mode
 uses local JSON only and is suitable for deterministic demos and tests. Prompt
-mode renders `templatePath` through the prompt adapter boundary; the scheduler
-does not embed an external model provider or promise provider-specific
-credentials, billing, or network behavior.
+mode renders `templatePath` through an injected prompt adapter when available,
+or through the configured Codex command otherwise.
 
 ```json
 {

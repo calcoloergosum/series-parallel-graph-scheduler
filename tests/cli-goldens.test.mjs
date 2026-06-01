@@ -458,7 +458,12 @@ test("goal graph factory creates a deterministic valid root graph", () => {
     stateFile: "plan.graph.json",
     htmlView: "plan.html",
     reportsDir: "reports",
-    leaseSeconds: 1800
+    leaseSeconds: 1800,
+    workerPlanner: {
+      mode: "auto-decompose",
+      adapterMode: "prompt",
+      requestIdPrefix: "goal-plan"
+    }
   });
   assert.equal(graph.graph.root, "ROOT");
   assert.deepEqual(graph.graph.nodes.ROOT.children, ["PLAN"]);
@@ -1004,6 +1009,8 @@ test("CLI plan-then-run writes the graph and reuses worker execution", async () 
       "plan-runner",
       "--cwd",
       dir,
+      "--planner-mode",
+      "off",
       "--codex-command",
       process.execPath,
       "--codex-arg",
@@ -1132,6 +1139,8 @@ test("generated plan-only graph replays through the worker command", async () =>
       "--quiet",
       "--cwd",
       dir,
+      "--planner-mode",
+      "off",
       "--codex-command",
       process.execPath,
       "--codex-arg",
@@ -1168,6 +1177,8 @@ test("generated plan-only graph replays through the worker command", async () =>
       "--quiet",
       "--cwd",
       dir,
+      "--planner-mode",
+      "off",
       "--codex-command",
       process.execPath,
       "--codex-arg",
@@ -1236,6 +1247,8 @@ test("generated goal fixture resumes after releasing an expired worker lease", a
       "--quiet",
       "--cwd",
       dir,
+      "--planner-mode",
+      "off",
       "--codex-command",
       process.execPath,
       "--codex-arg",

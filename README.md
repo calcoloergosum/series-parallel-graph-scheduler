@@ -243,12 +243,14 @@ For immediate execution, make the opt-in explicit:
 node scripts/plan-scheduler.mjs plan --goal "Ship a searchable audit log" --graph /tmp/spg-audit-log/plan.graph.json --then-run --session codex-A --once --cwd "$PWD"
 ```
 
-For recursive worker decomposition, enable planner preflight on workers. In
+Generated goal graphs enable recursive worker decomposition by default with a
+prompt-backed planner. In
 `auto-decompose`, a worker claims and starts a ready leaf, asks the configured
 planner boundary whether the leaf is atomic, and either runs Codex for `task`
 decisions or applies a valid `series`/`parallel` decomposition for composite
 decisions. The parent is not executed in that pass; later worker claims pick up
-the generated child leaves. This command shape uses a local fixture planner for
+the generated child leaves. Static graphs can opt in with worker flags or
+`scheduler.workerPlanner`. This command shape uses a local fixture planner for
 deterministic demos:
 
 ```bash
@@ -257,8 +259,9 @@ npm run worker -- --graph /tmp/spg-audit-log/plan.graph.json --session codex-A -
 
 Use `--planner-mode ask-approval` when each proposed decomposition should block
 with a preview report for an operator to approve or reject. `fixture` reads
-local JSON only, while `prompt` requires an injected prompt adapter boundary;
-the scheduler core does not include an external model provider integration.
+local JSON only, while `prompt` uses an injected prompt adapter when provided
+and otherwise invokes the configured Codex command with the rendered planner
+prompt.
 
 The meaning of `plan.graph.json` depends on the command mode. For `plan
 --goal`, `--graph PATH` names the output graph to create. If `--graph` is
@@ -703,8 +706,9 @@ Worker options:
   after the preview was stored. Use `reject-preview` to discard the stored
   preview without creating child nodes.
 - `--planner-adapter none|fixture|prompt`: choose the planner runtime boundary.
-  `fixture` reads local JSON and never uses the network. `prompt` requires an
-  injected prompt adapter; the scheduler core does not hard-code a provider.
+  `fixture` reads local JSON and never uses the network. `prompt` uses an
+  injected prompt adapter when provided and otherwise invokes the configured
+  Codex command with the rendered planner prompt.
 - `--planner-fixture PATH`: local planner response object or request-id map for
   deterministic demos and tests; relative paths resolve from the graph
   directory.

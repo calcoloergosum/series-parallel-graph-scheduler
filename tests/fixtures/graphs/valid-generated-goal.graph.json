@@ -15,7 +15,12 @@
     "stateFile": "plan.graph.json",
     "htmlView": "plan.html",
     "reportsDir": "reports",
-    "leaseSeconds": 1800
+    "leaseSeconds": 1800,
+    "workerPlanner": {
+      "mode": "auto-decompose",
+      "adapterMode": "prompt",
+      "requestIdPrefix": "goal-plan"
+    }
   },
   "graph": {
     "root": "ROOT",
@@ -86,7 +91,7 @@
       {
         "heading": "Generated Graph",
         "paragraphs": [
-          "This graph was generated from a single operator goal and starts with one claimable planning or execution task."
+          "This graph was generated from a single operator goal and starts with one claimable planning task that can auto-decompose before execution."
         ]
       }
     ]

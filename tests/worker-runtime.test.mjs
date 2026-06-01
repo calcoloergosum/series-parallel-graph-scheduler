@@ -2650,6 +2650,53 @@ test("worker planner preflight decomposes generated goal fixtures deterministica
   }
 });
 
+test("generated goal worker planner defaults to Codex prompt preflight", async () => {
+  const { dir, graphPath } = await copyGraphFixtureToTemp("valid-generated-goal.graph.json");
+  try {
+    const markerPath = join(dir, "generated-default-codex-ran");
+    const fakeRunnerPath = join(dir, "fake-generated-default-runner.mjs");
+    await writeFile(fakeRunnerPath, `
+import { writeFileSync } from 'node:fs';
+
+const prompt = process.argv.at(-1) || "";
+if (prompt.includes("Planner Decision Request")) {
+  console.log(JSON.stringify({
+    kind: "series",
+    title: "Default generated goal split",
+    children: [
+      { id: "PLAN_DEFAULT_DISCOVER", title: "Discover default planning path" },
+      { id: "PLAN_DEFAULT_VERIFY", title: "Verify default planning path" }
+    ]
+  }));
+} else {
+  writeFileSync(${JSON.stringify(markerPath)}, "ran");
+  console.log("implementation should not run before decomposition");
+}
+`, "utf8");
+
+    const result = await runWorker(graphPath, {
+      session: "codex-generated-default-planner",
+      once: true,
+      cwd: dir,
+      stream: false,
+      codexCommand: process.execPath,
+      codexArgs: [fakeRunnerPath]
+    });
+
+    assert.equal(result.results[0].nodeId, "PLAN");
+    assert.equal(result.results[0].status, "pending");
+    assert.equal(result.results[0].note, "planner decomposed node as series");
+    assert.equal(existsSync(markerPath), false);
+    const updated = await readGraph(graphPath);
+    assert.equal(updated.graph.nodes.PLAN.kind, "series");
+    assert.deepEqual(updated.graph.nodes.PLAN.children, ["PLAN_DEFAULT_DISCOVER", "PLAN_DEFAULT_VERIFY"]);
+    assert.match(updated.graph.nodes.PLAN.workerPlanner.requestId, /^goal-plan-PLAN-run_/);
+    assert.deepEqual(listReadyLeafNodes(updated).map((node) => node.id), ["PLAN_DEFAULT_DISCOVER"]);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
 test("worker planner preflight ask-approval blocks valid decomposition proposals", async () => {
   await withTempGraph(async (graphPath, dir) => {
     const graph = await readGraph(graphPath);

@@ -54,7 +54,12 @@ export function buildGoalGraph(goal: string, options: BuildGoalGraphOptions | st
       stateFile: "plan.graph.json",
       htmlView: "plan.html",
       reportsDir: "reports",
-      leaseSeconds: 1800
+      leaseSeconds: 1800,
+      workerPlanner: {
+        mode: "auto-decompose",
+        adapterMode: "prompt",
+        requestIdPrefix: "goal-plan"
+      }
     },
     graph: {
       root: "ROOT",
@@ -405,7 +410,7 @@ function buildGoalDocument(
   title: string,
   goal: string,
   initialNodeIds: NodeId[] = [goalGraphInitialNodeId],
-  generatedGraphDescription = "This graph was generated from a single operator goal and starts with one claimable planning or execution task."
+  generatedGraphDescription = "This graph was generated from a single operator goal and starts with one claimable planning task that can auto-decompose before execution."
 ): NonNullable<PlanGraphFile["document"]> {
   return {
     pageTitle: title,

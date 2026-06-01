@@ -645,9 +645,9 @@ The worker command should continue to:
 - Validate the worker process boundary before claiming work: command, cwd, and argument values must be non-empty strings without null bytes; command and cwd values are capped at 4096 characters; Codex args are capped at 64 entries and 4096 characters per entry.
 - Validate planner preflight configuration before claiming work. Enabling
   `auto-decompose` or `ask-approval` requires a usable adapter: `fixture` with a
-  local fixture file, `prompt` with an injected prompt adapter, or an injected
-  planner runtime supplied by API/test callers. Scheduler core must not
-  hard-code an external model provider.
+  local fixture file, `prompt` through an injected prompt adapter or the
+  configured Codex command, or an injected planner runtime supplied by API/test
+  callers.
 - Spawn worker and Codex subprocesses with argument arrays and no shell interpolation. User-controlled command strings, args, remotes, paths, and prompt text must never be concatenated into a shell command by the scheduler.
 - Inherit the scheduler process environment for worker and Codex subprocesses. The scheduler is not an environment sandbox; operators should use OS accounts, containers, or wrapper commands to narrow environment access when needed.
 - Renew its lease while Codex is running.
